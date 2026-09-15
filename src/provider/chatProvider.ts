@@ -1,0 +1,420 @@
+/**
+ * 聊天模型供应商：与 Copilot Chat 交互的实现。
+ *
+ * 实现的是 VS Code 的 `LanguageModelChatProvider`（见官方指南
+ * "Language Model Chat Provider API"）。它有三个必须实现的方法：
+ * - `provideLanguageModelChatInformation`：告诉 VS Code 有哪些模型
+ * - `provideLanguageModelChatResponse`：处理一次请求并流式回传
+ * - `provideTokenCount`：为上下文裁剪提供 token 估算
+ *
+ * 这个类是「编排者」：真正的网络交互在 `client`，模型信息整合在 `models`，
+ * 格式转换在 `messages.ts` / `stream.ts`，差异化处理在 `adapter`，
+ * 「用哪份配置连哪个站点」在 `target.ts` / `session.ts`。
+ *
+ * ## 配置从哪来
+ *
+ * VS Code 为每个配置组分别调用本 provider（详见 `target.ts` 的说明）。因此
+ * `provideLanguageModelChatInformation` 必须先从 `options` 里解析出连接目标，
+ * 再取对应的会话；而 `provideLanguageModelChatResponse` 收到的 `model` 里
+ * 带着该模型所属目标的指纹，据此找回同一个会话——这一点很关键，
+ * 否则多组共存时会把 A 站的模型用 B 站的地址去请求。
+ */
+
+import * as vscode from 'vscode';
+import { createRequestState } from '../adapter/adapter';
+import type { AdapterContext } from '../adapter/adapter';
+import type { AdapterRegistry } from '../adapter/registry';
+import { fromCancellationToken } from '../cancellation';
+import { HttpError, isAbortError } from '../client/http';
+import { describeError } from '../client/newApiClient';
+import { MANAGE_MODELS_COMMAND } from '../consts';
+import type { NewApiSettings } from '../config';
+import type { Logger } from '../logger';
+import type { ModelConfig } from '../models/modelConfig';
+import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
+import { convertMessages, convertToolChoice, convertTools } from './messages';
+import type { ProviderSession, SessionRegistry } from './session';
+import { StreamTranslator, extractStreamError } from './stream';
+import type { StreamSummary } from './stream';
+import {
+	createTarget,
+	describeTarget,
+	isTargetUsable,
+	readOptionsConfiguration,
+	readOptionsGroup,
+} from './target';
+import type { ProviderTarget } from './target';
+import { estimateTokens } from './tokenizer';
+
+/**
+ * 提供给 VS Code 的模型信息。
+ *
+ * 通过泛型参数携带额外字段：VS Code 会把 `provideLanguageModelChatInformation`
+ * 返回的对象原样传回 `provideLanguageModelChatResponse`，因此这里挂上的内容
+ * 在响应阶段可以放心使用（也是官方泛型设计的目的）。
+ *
+ * 注意只挂**目标指纹**而不是目标本身：这些字段会随模型元数据留在 VS Code 的
+ * 模型缓存里，而 `ProviderTarget` 含有明文 API Key。
+ */
+export interface NewApiModelInformation extends vscode.LanguageModelChatInformation {
+	/** 整合后的完整配置 */
+	readonly config: ModelConfig;
+	/** 该模型所属连接目标的指纹，用于在响应阶段找回同一个会话 */
+	readonly targetKey: string;
+	/** 目标标签，仅用于错误提示 */
+	readonly targetLabel: string;
+}
+
+/** provider 的依赖。 */
+export interface ChatProviderDeps {
+	readonly logger: Logger;
+	/** 按连接目标分配会话（client + 模型目录） */
+	readonly sessions: SessionRegistry;
+	readonly adapters: AdapterRegistry;
+	/** 取当前设置 */
+	getSettings(): NewApiSettings;
+	/** 上报用量，供状态面板统计 */
+	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, summary: StreamSummary): void;
+}
+
+/** 不允许被 `extraBody` 覆盖的字段。 */
+const PROTECTED_REQUEST_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice']);
+
+/** New API 聊天模型供应商。 */
+export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewApiModelInformation>, vscode.Disposable {
+	private readonly infoChanged = new vscode.EventEmitter<void>();
+	private readonly disposables: vscode.Disposable[] = [];
+
+	/**
+	 * 模型集合发生变化时通知 VS Code 重新拉取。
+	 * 官方指南要求 provider 在可用模型变化时触发该事件（否则选择器不会刷新）。
+	 */
+	readonly onDidChangeLanguageModelChatInformation = this.infoChanged.event;
+
+	constructor(private readonly deps: ChatProviderDeps) {
+		// 任一会话（即任一组）的模型集合变化都要通知 VS Code 重新发现模型，
+		// 因此订阅注册表而不是单个 catalog。
+		this.disposables.push(this.deps.sessions.onDidChange(() => this.infoChanged.fire()));
+	}
+
+	/** 供外部（命令、配置变更、密钥变更）手动触发模型列表刷新。 */
+	notifyModelsChanged(): void {
+		this.infoChanged.fire();
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* 模型发现                                                                */
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * 返回可用模型列表。
+	 *
+	 * `options.silent` 为 `true` 表示 VS Code 只是想知道「现在有没有可用模型」，
+	 * 此时绝不能弹出任何 UI——否则每次打开模型选择器都会弹一次。
+	 */
+	async provideLanguageModelChatInformation(
+		options: vscode.PrepareLanguageModelChatModelOptions,
+		_token: vscode.CancellationToken,
+	): Promise<NewApiModelInformation[]> {
+		const logger = this.deps.logger;
+		const target = this.resolveTarget(options);
+		if (target === undefined) {
+			// 用户还没为本供应商配置站点。这不是错误，只是「暂无可用模型」；
+			// 非静默场景（用户主动进配置界面）才提示去哪里配置。
+			logger.debug('本次调用未携带配置组，暂不提供模型');
+			if (!options.silent) {
+				await this.promptForConfiguration();
+			}
+			return [];
+		}
+
+		if (!isTargetUsable(target)) {
+			logger.warn(`配置不完整，暂不提供模型：${target.issues.join('；')}`);
+			if (!options.silent) {
+				await this.promptForConfiguration(target);
+			}
+			return [];
+		}
+
+		// 会话按目标缓存：同一目标的配置未变就直接复用，变了则重建
+		const session = this.deps.sessions.resolve(target);
+		try {
+			// 刻意不把 CancellationToken 传给模型列表拉取。
+			//
+			// VS Code 会在 UI 更新后立即取消该 token（例如模型选择器收起），
+			// 而模型列表是**共享且带缓存**的资源。把单个调用方的信号接到共享请求上，
+			// 一次取消就会连带取消其他调用方的请求，甚至把「没有模型」写进缓存。
+			// 因此这里交给 catalog 自己的超时与并发合并机制管理生命周期。
+			const snapshot = await session.catalog.getModels();
+			if (snapshot.error !== undefined) {
+				logger.warn(`模型列表可能不完整：${snapshot.error}`);
+			}
+			logger.debug(`向 VS Code 提供 ${snapshot.models.length} 个模型（${describeTarget(target)}）`);
+			return snapshot.models.map(config => toModelInformation(config, target));
+		} catch (error) {
+			// 这里绝不向外抛异常：模型列表加载失败时应该表现为「没有模型」，
+			// 由状态栏与面板负责告诉用户原因。
+			logger.error('获取模型列表失败', error);
+			return [];
+		}
+	}
+
+	/**
+	 * 解析本次调用应使用的连接目标。
+	 *
+	 * VS Code 在调用时把该配置组的解析结果放在 `options.configuration` 里。
+	 * 返回 `undefined` 表示本次调用没有携带配置——即用户还没为本供应商配置站点。
+	 */
+	private resolveTarget(options: vscode.PrepareLanguageModelChatModelOptions): ProviderTarget | undefined {
+		const configuration = readOptionsConfiguration(options);
+		if (configuration === undefined) {
+			return undefined;
+		}
+		const group = readOptionsGroup(options);
+		// trace 级别：这条日志用于确认运行环境是否真的下发了组配置
+		this.deps.logger.trace(`本次调用来自配置组：${group ?? '(未命名)'}`);
+		return createTarget(group, configuration, this.deps.logger);
+	}
+
+	/**
+	 * 取模型所属目标的会话。
+	 *
+	 * 靠模型上带的目标指纹找回——多组共存时不能退回到「默认目标」，
+	 * 否则会把 A 站的模型拿去 B 站请求。
+	 */
+	private resolveSession(model: NewApiModelInformation): ProviderSession {
+		const session = this.deps.sessions.find(model.targetKey);
+		if (session === undefined) {
+			throw new Error(
+				`模型所属的配置（${model.targetLabel}）已变更，请在模型选择器中重新选择该模型。`,
+			);
+		}
+		return session;
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* 处理请求                                                                */
+	/* ---------------------------------------------------------------------- */
+
+	/** 处理一次对话请求，把上游流式响应翻译成响应部件。 */
+	async provideLanguageModelChatResponse(
+		model: NewApiModelInformation,
+		messages: readonly vscode.LanguageModelChatRequestMessage[],
+		options: vscode.ProvideLanguageModelChatResponseOptions,
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+		token: vscode.CancellationToken,
+	): Promise<void> {
+		const logger = this.deps.logger;
+		const settings = this.deps.getSettings();
+		const config = model.config;
+		const abort = fromCancellationToken(token, `chat:${config.id}`);
+		const adapter = this.deps.adapters.resolve(config);
+		const adapterContext: AdapterContext = { model: config, settings: settings.request, logger };
+		const adapterState = createRequestState();
+		const translator = new StreamTranslator(progress, {
+			includeReasoning: settings.request.includeReasoning,
+			logger,
+			modelId: config.id,
+		});
+
+		try {
+			const converted = convertMessages(messages, logger);
+			for (const warning of converted.warnings) {
+				logger.warn(warning);
+			}
+			if (converted.messages.length === 0) {
+				throw new Error('本次请求没有任何可发送的内容');
+			}
+
+			const tools = convertTools(options.tools, logger);
+			const request = buildRequest({
+				config,
+				settings,
+				messages: converted.messages,
+				tools,
+				toolMode: options.toolMode,
+			});
+
+			logger.info(
+				`→ ${config.id}：${converted.messages.length} 条消息，` +
+				`${tools?.length ?? 0} 个工具，适配器 ${adapter.id}，` +
+				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
+			);
+
+			const transformed = adapter.transformRequest
+				? await adapter.transformRequest(request, adapterContext)
+				: request;
+
+			const client = this.resolveSession(model).client;
+			let chunkCount = 0;
+			for await (const rawChunk of client.streamChatCompletion(transformed, abort.signal)) {
+				const streamError = extractStreamError(rawChunk);
+				if (streamError !== undefined) {
+					throw new Error(`上游返回错误：${streamError}`);
+				}
+				// 适配器可选地改写或丢弃 chunk
+				const chunk = adapter.transformChunk
+					? await adapter.transformChunk(rawChunk, adapterContext, adapterState)
+					: rawChunk;
+				if (chunk === undefined) {
+					continue;
+				}
+				chunkCount++;
+				translator.handle(chunk);
+			}
+
+			// 冲刷适配器缓冲
+			if (adapter.finalize) {
+				for (const chunk of await adapter.finalize(adapterContext, adapterState)) {
+					translator.handle(chunk);
+				}
+			}
+
+			const summary = translator.flush();
+			logger.debug(
+				`响应结束：${chunkCount} 个数据块，正文 ${summary.textLength} 字，` +
+				`思考 ${summary.reasoningLength} 字，工具调用 ${summary.toolCallCount} 次，` +
+				`结束原因 ${summary.finishReason ?? '未提供'}`,
+			);
+			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
+		} catch (error) {
+			// 取消是正常流程，不是失败：VS Code 会在用户点「停止」时取消 token
+			if (isAbortError(error) || token.isCancellationRequested) {
+				logger.debug(`请求已取消：${config.id}`);
+				return;
+			}
+			logger.error(`请求失败：${config.id}`, error);
+			throw toLanguageModelError(error);
+		} finally {
+			abort.dispose();
+		}
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* Token 估算                                                              */
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * 估算 token 数。
+	 *
+	 * VS Code 用它决定何时裁剪历史，因此宁可高估（见 tokenizer.ts 的说明）。
+	 */
+	async provideTokenCount(
+		_model: NewApiModelInformation,
+		text: string | vscode.LanguageModelChatRequestMessage,
+		_token: vscode.CancellationToken,
+	): Promise<number> {
+		return Math.max(1, estimateTokens(text));
+	}
+
+	dispose(): void {
+		for (const disposable of this.disposables) {
+			disposable.dispose();
+		}
+		this.infoChanged.dispose();
+	}
+
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * 引导用户去配置站点。
+	 *
+	 * 只在非静默模式下调用，因此不会在后台刷新时弹窗。配置界面由 VS Code 提供
+	 * （本扩展的 `configuration` schema 会被渲染成表单），因此这里只负责把用户送过去。
+	 */
+	private async promptForConfiguration(target?: ProviderTarget): Promise<void> {
+		const detail = target === undefined
+			? '尚未配置 New API 站点'
+			: `${target.label} 还不能使用：${target.issues.join('；')}`;
+		const action = await vscode.window.showWarningMessage(detail, '打开配置界面');
+		if (action === '打开配置界面') {
+			await vscode.commands.executeCommand(MANAGE_MODELS_COMMAND);
+		}
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/* 辅助函数                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** 把内部配置映射成 VS Code 需要的模型信息。 */
+export function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApiModelInformation {
+	return {
+		id: config.id,
+		name: config.name,
+		family: config.family,
+		version: config.version,
+		detail: config.detail,
+		tooltip: config.tooltip,
+		maxInputTokens: config.maxInputTokens,
+		maxOutputTokens: config.maxOutputTokens,
+		capabilities: {
+			imageInput: config.imageInput,
+			// 上游对单次请求的工具数量通常没有硬上限，用布尔值表达「支持」
+			toolCalling: config.toolCalling,
+		},
+		config,
+		// 只带指纹与标签，不带 target 本体（后者含明文密钥）
+		targetKey: target.key,
+		targetLabel: target.label,
+	};
+}
+
+/** 组装请求体。 */
+function buildRequest(input: {
+	config: ModelConfig;
+	settings: NewApiSettings;
+	messages: ChatCompletionRequest['messages'];
+	tools: ChatToolDefinition[] | undefined;
+	toolMode: vscode.LanguageModelChatToolMode;
+}): ChatCompletionRequest {
+	const { config, settings, messages, tools, toolMode } = input;
+	const request: ChatCompletionRequest = { model: config.id, messages };
+
+	const { temperature, topP } = settings.request;
+	if (temperature !== undefined) {
+		request.temperature = temperature;
+	}
+	if (topP !== undefined) {
+		request.top_p = topP;
+	}
+	if (tools !== undefined) {
+		request.tools = tools;
+		const choice = convertToolChoice(toolMode, true);
+		if (choice !== undefined) {
+			request.tool_choice = choice;
+		}
+	}
+
+	// 额外字段：全局在前、模型级在后（模型级优先）。
+	// 结构化字段被排除在外——让一个 JSON 设置项覆盖 `messages` 只会制造无从排查的故障。
+	const extra = { ...settings.request.extraBody, ...config.extraBody };
+	for (const [key, value] of Object.entries(extra)) {
+		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {
+			request[key] = value;
+		}
+	}
+
+	return request;
+}
+
+/**
+ * 把内部错误映射成 VS Code 的模型错误。
+ *
+ * 只使用语义真正吻合的工厂方法：`Blocked` 表示「被策略阻止」，
+ * 与限流/超时不是一回事，强行复用会让用户看到误导性的提示。
+ */
+function toLanguageModelError(error: unknown): Error {
+	const message = describeError(error);
+	if (error instanceof HttpError) {
+		if (error.isAuthError) {
+			return vscode.LanguageModelError.NoPermissions(
+				`New API 拒绝了本次请求（HTTP ${error.status}）：${message}`,
+			);
+		}
+		if (error.isNotFound) {
+			return vscode.LanguageModelError.NotFound(message);
+		}
+	}
+	return new Error(`New API 请求失败：${message}`);
+}

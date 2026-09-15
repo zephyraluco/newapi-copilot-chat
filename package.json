@@ -1,49 +1,295 @@
 {
   "name": "newapi-copilot-chat",
   "displayName": "New API for Copilot Chat",
-  "description": "New API for Copilot Chat",
+  "description": "把 New API（OpenAI 兼容网关）中的模型作为自带密钥（BYOK）供应商接入 GitHub Copilot Chat。",
   "version": "0.0.1",
+  "publisher": "newapi",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.137.0"
   },
   "categories": [
-    "Other"
+    "AI",
+    "Chat"
   ],
-  "activationEvents": [],
+  "keywords": [
+    "copilot",
+    "chat",
+    "new-api",
+    "one-api",
+    "byok",
+    "openai"
+  ],
+  "activationEvents": [
+    "onLanguageModelChatProvider:newapi",
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "newapi",
+        "displayName": "New API",
+        "configuration": {
+          "title": "New API",
+          "properties": {
+            "baseUrl": {
+              "type": "string",
+              "title": "站点地址",
+              "description": "New API 站点根地址，例如 https://api.example.com。只填到站点根目录即可，/v1 与具体端点由扩展自动拼接。",
+              "order": 1
+            },
+            "apiKey": {
+              "type": "string",
+              "title": "API Key",
+              "description": "在 New API 站点上创建的密钥。会保存到系统钥匙串，不会写入配置文件。",
+              "secret": true,
+              "order": 2
+            }
+          },
+          "required": [
+            "baseUrl",
+            "apiKey"
+          ]
+        }
+      }
+    ],
     "commands": [
       {
-        "command": "newapi-copilot-chat.helloWorld",
-        "title": "Hello World"
+        "command": "newapi-copilot-chat.testConnection",
+        "title": "测试连接",
+        "category": "New API"
+      },
+      {
+        "command": "newapi-copilot-chat.refreshModels",
+        "title": "刷新模型列表",
+        "category": "New API"
+      },
+      {
+        "command": "newapi-copilot-chat.showPanel",
+        "title": "打开状态面板",
+        "category": "New API"
+      },
+      {
+        "command": "newapi-copilot-chat.openSettings",
+        "title": "打开设置",
+        "category": "New API"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "New API for Copilot Chat",
+      "properties": {
+        "newapi-copilot-chat.logLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "enumDescriptions": [
+            "不输出任何日志",
+            "只输出错误",
+            "输出错误与警告",
+            "输出常规信息",
+            "输出调试信息（排查问题时使用）",
+            "输出全部细节，包含请求体片段"
+          ],
+          "default": "info",
+          "markdownDescription": "扩展日志级别，日志输出到「输出」面板的 `New API for Copilot Chat` 通道。\n\n注意：该通道自身也有日志级别；若这里的级别更详细而通道级别更低，日志仍会被过滤掉（扩展检测到这种情况时会在日志中提示）。",
+          "order": 1
+        },
+        "newapi-copilot-chat.models.include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "模型白名单，支持 `*` 与 `?` 通配符，大小写不敏感。\n\n留空表示「全部保留」。例如：`[\"gpt-*\", \"claude-*\"]`。",
+          "order": 10
+        },
+        "newapi-copilot-chat.models.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "模型黑名单，语法与白名单一致，**优先级高于白名单**。\n\n例如：`[\"*-vision\", \"*-embedding\"]`。",
+          "order": 11
+        },
+        "newapi-copilot-chat.models.overrides": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "按模型 ID 精确覆盖元数据。\n\n当随包数据表的数值与你的渠道不符时（同一模型在不同中转上的上下文窗口确实可能不同），在这里修正。键为模型 ID，值为要覆盖的字段。\n\n```json\n{\n  \"deepseek-chat\": {\n    \"contextWindow\": 65536,\n    \"maxOutputTokens\": 8192,\n    \"toolCalling\": true\n  }\n}\n```",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "模型选择器中显示的名字；留空则直接显示模型 ID。"
+              },
+              "detail": {
+                "type": "string",
+                "description": "模型选择器中的副标题；留空则按「厂商 · 上下文窗口」自动生成。"
+              },
+              "family": {
+                "type": "string",
+                "description": "模型 family，影响 VS Code 的模型归类。"
+              },
+              "contextWindow": {
+                "type": "number",
+                "description": "上下文窗口（输入 + 输出）。"
+              },
+              "maxInputTokens": {
+                "type": "number",
+                "description": "输入上限；留空则由上下文窗口减去最大输出推导。"
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "description": "单次响应的最大输出 token。"
+              },
+              "imageInput": {
+                "type": "boolean",
+                "description": "是否支持图片输入。"
+              },
+              "toolCalling": {
+                "type": "boolean",
+                "description": "是否支持工具调用（function calling）。"
+              },
+              "description": {
+                "type": "string",
+                "description": "悬浮窗中展示的说明文字。"
+              },
+              "docsUrl": {
+                "type": "string",
+                "description": "悬浮窗中展示的官方文档链接。"
+              },
+              "extraBody": {
+                "type": "object",
+                "description": "仅对该模型生效的额外请求体字段，例如网关特有的思考开关。",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "order": 12
+        },
+        "newapi-copilot-chat.models.cacheTtl": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 5000,
+          "markdownDescription": "模型列表缓存有效期（毫秒），默认 5 分钟。",
+          "order": 13
+        },
+        "newapi-copilot-chat.models.defaultContextWindow": {
+          "type": "number",
+          "default": 128000,
+          "minimum": 2048,
+          "markdownDescription": "未知模型的兜底上下文窗口：当模型数据表与网关都没有给出信息时使用。",
+          "order": 14
+        },
+        "newapi-copilot-chat.models.defaultMaxOutputTokens": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 256,
+          "markdownDescription": "未知模型的兜底最大输出 token。",
+          "order": 15
+        },
+        "newapi-copilot-chat.request.timeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "markdownDescription": "请求超时（毫秒）。\n\n非流式请求是整体超时；流式请求是**两个数据块之间的静默超时**，因此耗时长但持续输出的回答不会被误杀。",
+          "order": 20
+        },
+        "newapi-copilot-chat.request.maxRetries": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "markdownDescription": "失败重试次数（不含首次尝试）。只对网络错误、超时、429 与 5xx 生效，4xx 业务错误不会重试。",
+          "order": 21
+        },
+        "newapi-copilot-chat.request.temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "markdownDescription": "采样温度。留空（`null`）表示不发送该字段，由服务端使用默认值。",
+          "order": 22
+        },
+        "newapi-copilot-chat.request.topP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "markdownDescription": "核采样（top_p）。留空（`null`）表示不发送该字段。",
+          "order": 23
+        },
+        "newapi-copilot-chat.request.includeReasoning": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）作为正文回显。\n\n稳定的 VS Code API 目前没有专门的「思考内容」响应部件，因此开启后思维链会以引用块的形式出现在回答前面。",
+          "order": 24
+        },
+        "newapi-copilot-chat.request.extraBody": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "透传给所有模型的额外请求体字段，用于配置网关特有参数。\n\n`model` / `messages` / `tools` 等协议字段不允许被覆盖。\n\n```json\n{ \"enable_thinking\": false }\n```",
+          "additionalProperties": true,
+          "order": 25
+        },
+        "newapi-copilot-chat.status.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "在状态栏显示连接状态与模型数量。点击可打开状态面板。",
+          "order": 30
+        },
+        "newapi-copilot-chat.status.refreshInterval": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 10000,
+          "markdownDescription": "状态自动刷新间隔（毫秒），最小 10000。",
+          "order": 31
+        }
+      }
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run check-types && npm run lint && node esbuild.js --production",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "package": "vsce package --allow-missing-repository",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
+    "models:openrouter": "node scripts/fetch-openrouter-models.js",
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.137.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "26.x",
-    "typescript-eslint": "^8.61.1",
-    "eslint": "^10.5.0",
-    "esbuild": "^0.28.1",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^7.0.2",
+    "@types/vscode": "^1.137.0",
     "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
+    "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.5.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1"
   },
   "overrides": {
     "diff": "^8.0.4",
