@@ -1,10 +1,6 @@
 /**
- * New API 客户端。
+ * New API 客户端：与 New API 交互的唯一入口（上层只依赖这里的方法与返回类型，不直接碰 HTTP）。
  *
- * 这是「与 New API 交互」的唯一入口：上层（models / status / provider）只依赖这里
- * 的方法与返回类型，不直接碰 HTTP。
- *
- * 覆盖的端点：
  * - `GET  /api/status`           公开状态（探活、站点信息、版本）
  * - `GET  /v1/models`            模型列表
  * - `POST /v1/chat/completions`  对话补全（流式 / 非流式）

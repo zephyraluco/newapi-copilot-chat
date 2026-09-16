@@ -1,13 +1,9 @@
 /**
  * 流式响应翻译：上游 chunk → VS Code 响应部件。
  *
- * 需要处理的几件琐事：
- * 1. **工具调用是分片到达的**：`function.arguments` 会被切成多个片段，
- *    必须按 `index` 归并、按到达顺序拼接，最后才能 parse 成对象。
- * 2. **思维链字段有两种命名**：DeepSeek 用 `reasoning_content`，
- *    OpenRouter 等用 `reasoning`，需要统一。
- * 3. **usage 只在最后一个 chunk 出现**：要单独记下来，用于统计与日志。
- * 4. **多 choice**：VS Code 的响应模型是单条回答，只取 `index === 0`。
+ * 几件琐事：工具调用参数分片到达（按 `index` 归并、按到达顺序拼接，最后才能 parse）；
+ * 思维链字段有两种命名（DeepSeek 的 `reasoning_content` 与 OpenRouter 等的 `reasoning`）；
+ * usage 只在最后一个 chunk 出现，单独记下用于统计；多 choice 时只取 `index === 0`。
  */
 
 import * as vscode from 'vscode';

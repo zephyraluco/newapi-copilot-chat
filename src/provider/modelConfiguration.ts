@@ -1,39 +1,20 @@
 /**
  * 模型配置：VS Code 模型选择器里的可调项。
  *
- * ## 机制
+ * provider 可以为每个模型下发一份 JSON Schema（`configurationSchema`），VS Code 据此渲染控件，
+ * 用户选定的值在下次请求时随 `options.modelConfiguration` 交回。本扩展用它暴露「思考强度」。
  *
- * provider 可以为**每个模型**声明一份 JSON Schema（随模型信息下发的
- * `configurationSchema`），VS Code 据此在模型选择器里渲染出选择控件；
- * 用户选定的值会在下一次请求时随 `options.modelConfiguration` 交回 provider。
- * 本扩展用它暴露「思考强度」——这是唯一需要逐个模型调整的旋钮。
+ * 三条硬性约束（依据 VS Code 实现）：
+ * - 属性**必须带 `enum`** 才会被渲染；`group` 用 `navigation`（模型卡片主控件区）。
+ * - 属性的 `default` 会被合并进模型配置，**每次请求都带上它**。这里填数据表的
+ *   `defaultReasoningEffort`，控件因此能预选出实际生效的档位。
+ * - 因此发请求时**值等于默认档位就不发**（见 `selectReasoningEffort`）：预选只是让界面反映现状，
+ *   不该改变线上行为。数据表没给默认档位时不声明 `default`，控件保持空选中。
  *
- * ## 依据 VS Code 实现的几个硬性约束
- *
- * - 属性**必须带 `enum`** 才会被渲染成控件（其它类型不会出现在界面里）；
- * - `group` 决定控件出现的位置：`navigation` 在模型卡片的主控件区，
- *   `tokens` 在上下文区；
- * - 属性的 `default` 会被 VS Code 合并进模型配置，并且**每一次请求都带上它**。
- *   这里用数据表里的 `defaultReasoningEffort` 作为它，控件因此能预选出实际生效的档位
- *   （否则界面是空选中，用户看不出到底用的是哪一档）。
- *   发请求时，**值等于默认档位就不发**（见 `selectReasoningEffort`）：预选只是让界面
- *   反映现状，不应该改变线上行为。没有默认档位信息时不声明 `default`，控件保持空选中。
- *
- * ## 值怎么进请求体
- *
- * 字段名是 `reasoning_effort`（OpenAI 兼容实现的通行叫法）；需要别的字段名或嵌套形态
- * （例如 `reasoning.effort`）的网关，交给适配器层改写。
- *
- * ## 可选的档位从哪来
- *
- * 全部来自模型数据表里的 `supportsReasoningEffort`（生成脚本从上游的
- * `reasoning.supported_efforts` 拄下来，实测有 `max` / `xhigh` / `high` / `medium` /
- * `low` / `minimal` / `none`）。**没有兜底列表**：数据表没给出档位时不声明控件，
- * 因为凭空造一组值只会发出站点不认的请求（那些模型会思考，但能不能调强度是另一回事）。
- * 取值词汇是上游的，能不能被站点接受取决于站点与它的上游。
- *
- * 控件里显示的选项文字就是这些原值：不翻译、不缩写。搞一套自己的映射，一旦上游出现新档位，
- * 用户看到的就会是一个猜出来的名字；直接看 `xhigh` 反而能对应到站点文档里的写法。
+ * 档位取自数据表的 `supportsReasoningEffort`（生成脚本从上游 `reasoning.supported_efforts` 抄下），
+ * **没有兜底列表**：没给出档位时不声明控件，凭空造一组值只会发出站点不认的请求。
+ * 选项文字就是上游原值，不翻译不缩写（自己维护映射，出现新档位时只会显示一个猜出来的名字）。
+ * 请求体字段名是 `reasoning_effort`；需要别的字段名或嵌套形态的网关交给适配器层改写。
  */
 
 import type { ModelConfig } from '../models/modelConfig';

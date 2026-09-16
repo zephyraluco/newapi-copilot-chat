@@ -1,17 +1,15 @@
 /**
  * 消息格式转换：VS Code ⇄ New API（OpenAI 兼容）。
  *
- * ## 两边的结构差异（这是本文件存在的理由）
- *
  * | 概念 | VS Code | OpenAI 兼容 |
  * | --- | --- | --- |
  * | 角色 | 只有 `User` / `Assistant` | `system` / `user` / `assistant` / `tool` |
- * | 工具调用 | 助手消息里的 `LanguageModelToolCallPart` | 助手消息的 `tool_calls` + 独立的 `role: 'tool'` 消息 |
- * | 工具结果 | 用户消息里的 `LanguageModelToolResultPart` | 必须是独立的 `role: 'tool'` 消息，且带 `tool_call_id` |
+ * | 工具调用 | 助手消息里的 `LanguageModelToolCallPart` | 助手消息的 `tool_calls` |
+ * | 工具结果 | 用户消息里的 `LanguageModelToolResultPart` | **独立**的 `role: 'tool'` 消息，带 `tool_call_id` |
  * | 图片 | `LanguageModelDataPart`（mimeType + Uint8Array） | `image_url`，URL 为 `data:` 形式 |
  *
- * 因此一个 VS Code 消息可能被拆成**多条**上游消息：assistant(tool_calls) 之后必须
- * 紧跟若干条 tool 消息，顺序错了上游会直接报 400。
+ * 因此一个 VS Code 消息可能被拆成**多条**上游消息，且顺序敏感：assistant(tool_calls) 之后
+ * 必须紧跟若干条 tool 消息，顺序错了上游会直接报 400。
  */
 
 import * as vscode from 'vscode';

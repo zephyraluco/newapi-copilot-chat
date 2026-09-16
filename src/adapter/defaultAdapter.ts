@@ -22,7 +22,7 @@ export class DefaultModelAdapter implements ModelAdapter {
 	}
 
 	/*
-	 * 后续实现时，各钩子的典型用途如下（保留在这里作为 TODO 清单）：
+	 * 各钩子的典型用途（新增适配器时可对照）：
 	 *
 	 * transformRequest
 	 *   - 推理模型不接受 temperature，需要删除该字段；

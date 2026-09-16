@@ -1,16 +1,9 @@
 /**
- * VS Code 配置读取。
+ * VS Code 配置读取：把 `contributes.configuration` 的原始值校验成强类型，并广播变化。
  *
- * 职责边界：
- * - 把 `contributes.configuration` 里的原始值（`unknown`）校验、收敛成强类型结构；
- * - 监听配置变化并广播。
- *
- * **站地址与 API Key 不在这里**：它们由 VS Code 的 provider 配置组提供
- * （见 `provider/target.ts`）。这里只有与连接无关的调整项（模型过滤、请求参数、
- * 状态栏、日志级别），因此对所有配置组共享。
- *
- * **模型元数据也不在这里**：它由随包的模型数据表（`data/openrouter-models.json`）提供，
- * 那个文件由生成脚本产出，扩展只读（见 `models/dataset.ts`）。
+ * **站点地址与 API Key 不在这里**（由 provider 配置组提供，见 `provider/target.ts`），
+ * **模型元数据也不在这里**（由只读的模型数据表提供，见 `models/dataset.ts`）。
+ * 这里只有与连接无关的共享调整项：模型过滤、请求参数、状态栏、日志级别。
  */
 
 import * as vscode from 'vscode';

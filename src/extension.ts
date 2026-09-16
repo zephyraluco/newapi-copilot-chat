@@ -1,7 +1,5 @@
 /**
- * 扩展入口：装配所有模块并注册命令。
- *
- * 这里刻意只做「接线」，不放业务逻辑。读这个文件就能看清整体数据流：
+ * 扩展入口：装配模块并注册命令。这里刻意只做接线，不放业务逻辑。
  *
  * ```
  *   VS Code 的配置组 ──▶ ProviderTarget（target.ts）
@@ -12,9 +10,6 @@
  *         │                        └──▶ NewApiChatProvider ──▶ Copilot Chat
  *         └──▶ StatusService ──▶ 状态栏 / 状态面板 ──命令──┘
  * ```
- *
- * 站点地址与 API Key 都由 VS Code 的 provider 配置组提供（见 `provider/target.ts`），
- * 因此这里没有读密钥这类异步步骤。
  */
 
 import * as vscode from 'vscode';

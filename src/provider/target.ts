@@ -1,26 +1,12 @@
 /**
  * 连接目标：一次模型发现 / 对话请求所使用的「站点地址 + API Key」。
  *
- * ## 配置从哪来
+ * 配置完全由 VS Code 提供：`package.json` 的 `contributes.languageModelChatProviders[].configuration`
+ * 声明了一份 JSON Schema，VS Code 据此在「管理模型」界面生成表单（用户可建立多个配置组），
+ * 并随调用传入解析好的值——标了 `secret: true` 的 `apiKey` 已从系统钥匙串解析回明文。
  *
- * 配置完全由 VS Code 提供。`package.json` 里用
- * `contributes.languageModelChatProviders[].configuration` 声明了一份 JSON Schema，
- * VS Code 据此在「管理模型」界面生成本扩展的配置表单，用户可以为不同站点
- * 建立多个**配置组**。VS Code 在调用 provider 时会把解析好的配置交进来：
- *
- * ```ts
- * provideLanguageModelChatInformation({ group, silent, configuration }, token)
- * ```
- *
- * 其中标记了 `secret: true` 的字段（`apiKey`）由 VS Code 存入系统钥匙串，
- * 传入时已经解析回明文。
- *
- * ## 关于密钥
- *
- * `apiKey` 在 `ProviderTarget` 里是**明文**，因为最终要写进 `Authorization` 头。
- * 因此有两条硬性约束：
- * - `key` 必须是**指纹**，绝不能包含明文（它会被用作 Map 键并出现在日志里）；
- * - 日志一律经 `redactSecret`。
+ * `apiKey` 在 `ProviderTarget` 里是明文（最终要写进 `Authorization` 头），因此有两条硬性约束：
+ * `key` 必须是**指纹**（不包含明文，它会被用作 Map 键并出现在日志里）；日志一律经 `redactSecret`。
  */
 
 import { isValidBaseUrl, normalizeBaseUrl } from '../config';

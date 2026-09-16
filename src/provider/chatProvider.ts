@@ -1,23 +1,12 @@
 /**
- * 聊天模型供应商：与 Copilot Chat 交互的实现。
+ * 聊天模型供应商：实现 VS Code 的 `LanguageModelChatProvider`（三个方法：发现模型、
+ * 处理请求并流式回传、估算 token）。
  *
- * 实现的是 VS Code 的 `LanguageModelChatProvider`（见官方指南
- * "Language Model Chat Provider API"）。它有三个必须实现的方法：
- * - `provideLanguageModelChatInformation`：告诉 VS Code 有哪些模型
- * - `provideLanguageModelChatResponse`：处理一次请求并流式回传
- * - `provideTokenCount`：为上下文裁剪提供 token 估算
+ * 这个类是「编排者」：网络交互在 `client`，模型信息整合在 `models`，格式转换在
+ * `messages.ts` / `stream.ts`，差异处理在 `adapter`，会话与连接目标在 `target.ts` / `session.ts`。
  *
- * 这个类是「编排者」：真正的网络交互在 `client`，模型信息整合在 `models`，
- * 格式转换在 `messages.ts` / `stream.ts`，差异化处理在 `adapter`，
- * 「用哪份配置连哪个站点」在 `target.ts` / `session.ts`。
- *
- * ## 配置从哪来
- *
- * VS Code 为每个配置组分别调用本 provider（详见 `target.ts` 的说明）。因此
- * `provideLanguageModelChatInformation` 必须先从 `options` 里解析出连接目标，
- * 再取对应的会话；而 `provideLanguageModelChatResponse` 收到的 `model` 里
- * 带着该模型所属目标的指纹，据此找回同一个会话——这一点很关键，
- * 否则多组共存时会把 A 站的模型用 B 站的地址去请求。
+ * VS Code 为每个配置组分别调用本 provider，因此发现模型时必须先从 `options` 解析出连接目标，
+ * 而处理请求时靠 `model` 里带的指纹找回同一个会话——否则多组共存时会把 A 站的模型用 B 站的地址去请求。
  */
 
 import * as vscode from 'vscode';

@@ -1,25 +1,14 @@
 #!/usr/bin/env node
 /**
- * 抓取 OpenRouter 的公开模型目录，过滤成**本项目可直接使用**的模型元数据清单。
+ * 抓取 OpenRouter 的公开模型目录，生成扩展随包发布的模型数据表
+ * （`data/openrouter-models.json`，由 `src/models/dataset.ts` 载入并按模型 ID 查表）。
  *
- * ## 为什么需要它
- *
- * New API 的 `/v1/models` 只返回 `id` / `object` / `created` / `owned_by`，
- * **不含上下文窗口与能力位**（见 `src/models/modelConfig.ts` 的 `extractRemoteHints`）。
- * 本扩展因此随包附带一份模型数据表（`data/openrouter-models.json`），在激活时由
- * `src/models/dataset.ts` 载入并按模型 ID 查表。
- *
- * OpenRouter 的公开目录恰好提供了这些确切事实：
- * - `top_provider.context_length` —— 上下文窗口
- * - `top_provider.max_completion_tokens` —— 单次响应输出上限
- * - `architecture.input_modalities` —— 输入模态（能不能看图）
- * - `architecture.output_modalities` —— 输出模态（能不能对话）
- * - `supported_parameters` —— 可用参数（`tools` = 工具调用、`reasoning` = 思考）
- * - `reasoning.supported_efforts` / `reasoning.default_effort` —— 思考强度
- *
- * 本脚本把上游的原始条目收敛成一份精简清单，写进 `data/openrouter-models.json`：
- * 这个文件就是扩展运行时要读的模型数据表，因此重新生成一次即完成数据更新
- * （无需改代码；扩展在激活时读取，重载窗口即可看到新值）。
+ * New API 的 `/v1/models` 只有 `id` / `object` / `created` / `owned_by`，不含窗口与能力位，
+ * 而 OpenRouter 的公开目录提供了这些事实：
+ * - `top_provider.context_length` / `top_provider.max_completion_tokens` —— 窗口与输出上限
+ * - `architecture.input_modalities` / `output_modalities` —— 输入输出模态
+ * - `supported_parameters` —— `tools` = 工具调用，`reasoning` = 思考
+ * - `reasoning.supported_efforts` / `reasoning.default_effort` —— 思考档位
  *
  * ## 用法
  *
@@ -59,39 +48,27 @@
  *       ]
  *     }
  *
- * 字段名与 `src/models/dataset.ts` 的 `ModelDatasetEntry` 一一对应，因此生成结果
- * 可以被直接载入：`contextWindow` / `maxOutputTokens` 缺失或非正数的条目会在载入时被丢弃，
- * `imageInput` / `toolCalling` 缺失则收敛为 `false`。`reasoning` 是额外信息，
- * 对应 `newapi-copilot-chat.request.includeReasoning` 关心的思维链能力。
- *
- * `supportsReasoningEffort` 与 `defaultReasoningEffort` 只在**上游确实给出**时才写：
- * 实测 443 条里有 311 条带 `reasoning` 对象，其中 141 条只有 `mandatory` / `default_enabled`
- * 而**没有**强度列表 —— 这类模型只是“会思考”，并不能调强度，因此不写这两个字段。
- *
- * ⚠️ 强度取值用的是**上游自己的词汇**（实测出现过 `max` / `xhigh` / `high` / `medium` /
- * `low` / `minimal` / `none`），不同上游对一些边缘取值（`max`、`none`）的叫法并不一致。
- * 它只是“这个模型能选哪些档”的提示；真正发出去的值是否被站点接受，取决于站点与它的上游。
+ * 字段名与 `src/models/dataset.ts` 的 `ModelDatasetEntry` 一一对应：窗口或输出上限缺失/非正数的
+ * 条目会在载入时被丢弃，能力位缺失则收敛为 `false`。`supportsReasoningEffort` /
+ * `defaultReasoningEffort` 只在**上游确实给出强度列表**时才写——只有 `mandatory` /
+ * `default_enabled` 的模型「会思考但不能调强度」，不写这两个字段（因此消费侧也不会有控件）。
+ * 档位取值是**上游自己的词汇**（`max` / `xhigh` / `high` / `medium` / `low` / `minimal` / `none`），
+ * 只是「能选哪些档」的提示，是否被站点接受取决于站点与它的上游。
  *
  * ## 过滤规则
  *
- * 1. **丢弃变体**：`id` 含 `:` 的（`:free` / `:batch` / `:nitro`）整条丢掉 ——
- *    那是 OpenRouter 特有的计费/调度概念，New API 与 Copilot 都没有对应物。
- *    实测 445 条里有 96 条是变体。
- * 2. **丢弃路由型伪模型**：`openrouter/auto`、`openrouter/fusion`、`openrouter/free`、
- *    `openrouter/pareto-code`、`openrouter/bodybuilder` —— 它们不是真实模型，
- *    且没有输出上限（实测 6 条）。判据用「缺少正数 max_completion_tokens」，
- *    比按厂商名硬编码更稳。
+ * 1. **丢弃变体**：`id` 含 `:` 的（`:free` / `:batch` / `:nitro`）整条丢掉——那是 OpenRouter
+ *    特有的计费/调度概念，New API 与 Copilot 都没有对应物。
+ * 2. **丢弃路由型伪模型**（`openrouter/auto` / `fusion` / `free` / `pareto-code` / `bodybuilder`）：
+ *    判据是「缺少正数 `max_completion_tokens`」，比按厂商名硬编码更稳。
  * 3. **必须有文本输入与文本输出**：不能对话的模型进这份清单没有意义。
  * 4. **必须有上下文窗口**：它是 Copilot 选模型的硬指标（`maxInputTokens`）。
- * 5. **丢弃已过下线日期的模型**：这类模型已经不可用（实测为 0 条）。
- *    注意**不**把 `expiration_date` 当作「即将退役」的信号：上游这个字段不可靠
- *    —— 实测 5 条里有 3 条是 `2098-12-31` 这种哨兵值，按它过滤会误删正常模型。
- * 6. **归一化后去重**：剥掉厂商前缀与变体后缀后，`gpt-6-astra` 与
- *    `gpt-6-astra:batch` 会撞号（实测 86 组），必须去重。
- *    同时 `~` 是 OpenRouter 给 latest 别名加的标记，也一并剥掉；
- *    撞号时优先保留**不带 `~` 的规范条目**。
- * 7. **不按厂商过滤**：所有厂商都进清单。`id` 剥掉前缀后已认不出厂商，
- *    要缩范围不如在消费侧按 `id` 或 `vendor` 做。
+ * 5. **丢弃已过下线日期的模型**。**不**把 `expiration_date` 当作「即将退役」的信号：
+ *    该字段不可靠（存在 `2098-12-31` 这类哨兵值），按它过滤会误删正常模型。
+ * 6. **归一化后去重**：剥掉厂商前缀与变体后缀后会撞号（`gpt-6-astra` 与
+ *    `gpt-6-astra:batch`），必须去重；`~` 是 latest 别名标记，也一并剥掉，撞号时优先保留
+ *    **不带 `~` 的规范条目**。
+ * 7. **不按厂商过滤**：缩范围交给消费侧按 `id` 或 `vendor` 做。
  *
  * 无外部依赖：只用 Node 内置的 `fetch`（Node 18+）。退出码非 0 表示失败。
  */

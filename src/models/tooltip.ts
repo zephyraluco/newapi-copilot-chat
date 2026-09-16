@@ -1,12 +1,9 @@
 /**
  * 模型信息悬浮窗（tooltip）内容生成。
  *
- * VS Code 会把 `LanguageModelChatInformation.tooltip` 当作 **Markdown** 渲染，
- * 因此这里输出 Markdown 而不是纯文本。
- *
- * 内容取舍：tooltip 是「鼠标悬停一瞥」的场景，不放长文。所以只保留
- * 用户真正会用来判断「这个模型能不能干这件事」的信息，并**明确标注每个数值的来源**——
- * 数据表是生成时的快照，会随厂商调整而过时，用户需要知道该不该相信它。
+ * VS Code 会把 `LanguageModelChatInformation.tooltip` 当作 **Markdown** 渲染，因此这里输出 Markdown。
+ * tooltip 是「鼠标悬停一瞥」的场景，只保留用户用来判断「这个模型能不能干这件事」的信息，
+ * 并**标注每个数值的来源**——数据表会过时，用户需要知道该不该相信它。
  */
 
 import { escapeMarkdown, formatTokens, formatUnixSeconds } from '../format';

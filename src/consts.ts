@@ -15,11 +15,8 @@ export const EXTENSION_ID = 'newapi-copilot-chat';
 
 /**
  * 注册到 VS Code 的聊天模型供应商 ID（vendor）。
- *
- * 三处必须完全一致，改动时请同步：
- * 1. package.json → `contributes.languageModelChatProviders[].vendor`
- * 2. 激活事件 → `onLanguageModelChatProvider:<VENDOR_ID>`
- * 3. `vscode.lm.registerLanguageModelChatProvider(VENDOR_ID, provider)`
+ * 三处必须一致：`contributes.languageModelChatProviders[].vendor`、激活事件
+ * `onLanguageModelChatProvider:<VENDOR_ID>`、`registerLanguageModelChatProvider(VENDOR_ID, ...)`。
  */
 export const VENDOR_ID = 'newapi';
 
@@ -41,12 +38,7 @@ export const COMMANDS = {
 	openSettings: `${EXTENSION_ID}.openSettings`,
 } as const;
 
-/**
- * VS Code 内置的「管理语言模型」界面。
- *
- * 用户在这里为各供应商配置站点与密钥（本扩展的 `configuration` 贡献点会被渲染成表单），
- * 因此配置不完整时的引导都指向它。
- */
+/** VS Code 内置的「管理语言模型」界面：用户在这里配置站点与密钥（本扩展的 `configuration` 贡献点会被渲染成表单），配置不完整时的引导都指向它。 */
 export const MANAGE_MODELS_COMMAND = 'workbench.action.chat.manage';
 
 /** OpenAI 兼容端点（相对于 baseUrl）。New API 同时提供公开状态端点与兼容端点。 */
@@ -72,10 +64,8 @@ export const STATUS_BAR_PRIORITY = 100;
 export const PANEL_VIEW_TYPE = `${EXTENSION_ID}.panel`;
 
 /**
- * 运行时信息。
- *
- * 真实版本号在 `activate()` 时由 extension.ts 从 `context.extension.packageJSON.version`
- * 写入——别在这里硬编码版本号，否则一定会和 package.json 漂移。
+ * 运行时信息。版本号在 `activate()` 时由 extension.ts 从 `package.json` 写入，
+ * 因此不要在这里硬编码。
  */
 export const runtimeInfo: { extensionVersion: string; userAgent: string } = {
 	extensionVersion: '0.0.0',
@@ -88,22 +78,15 @@ export function initRuntimeInfo(extensionVersion: string): void {
 	runtimeInfo.userAgent = `${EXTENSION_ID}/${extensionVersion}`;
 }
 
-/**
- * 思考强度（thinking effort）在 VS Code 模型配置里的属性名。
- *
- * 这个名字只在本扩展内部使用：它既是模型选择器里那个控件的键，
- * 也是 VS Code 每次请求回传给 provider 时所用的键。
- */
+/** 思考强度在 VS Code 模型配置里的属性名：既是选择器里那个控件的键，也是请求回传时的键。 */
 export const REASONING_EFFORT_KEY = 'reasoningEffort';
 
 /** 思考强度在请求体中的默认字段名。 */
 export const DEFAULT_REASONING_EFFORT_FIELD = 'reasoning_effort';
 
 /**
- * 不允许被外部配置覆盖的请求体字段。
- *
- * `messages` / `model` / `tools` 这类字段是协议的骨架，让一个 JSON 设置项或模型配置
- * 盖住它们只会制造无从排查的故障（写坏 `messages` 会得到一个与上下文无关的请求）。
+ * 不允许被外部配置覆盖的请求体字段：`messages` / `model` / `tools` 是协议骨架，
+ * 被 JSON 设置项或模型配置盖住只会制造无从排查的故障。
  */
 export const PROTECTED_REQUEST_KEYS: ReadonlySet<string> = new Set([
 	'model',
@@ -115,10 +98,8 @@ export const PROTECTED_REQUEST_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * 硬编码兜底值。
- *
- * 只有在「模型数据表没有命中」且「New API 也没返回可用元数据」两个条件同时成立时
- * 才会用到，因此取值应当保守：宁可估小，也不要让 VS Code 以为上下文很大而把超长请求塞进来。
+ * 兜底默认值：只在「数据表未命中」且「网关没返回可用元数据」同时成立时才用到，
+ * 因此取值保守——宁可估小，也不要让 VS Code 以为上下文很大而塞进超长请求。
  */
 export const DEFAULTS = {
 	/** 未知模型的上下文窗口 */

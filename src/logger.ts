@@ -1,14 +1,10 @@
 /**
- * 日志。
+ * 日志。基于 VS Code 的 `LogOutputChannel`：用户在「输出」面板里可直接调整级别、
+ * 也能拿到时间戳与来源渲染，不需要自己实现一套日志 UI。
  *
- * 基于 VS Code 的 LogOutputChannel（`createOutputChannel(name, { log: true })`）：
- * 用户在「输出」面板里可以直接调整该通道的日志级别、也能拿到时间戳与来源渲染，
- * 不需要我们自己实现一套日志 UI。
- *
- * 这里额外做两件事：
- * 1. 提供 `newapi-copilot-chat.logLevel` 设置，让我们自己的级别闸门可以在不改
- *    用户全局设置的前提下调整（通道级别仍然生效，见 `warnIfChannelLevelBlocks`）。
- * 2. 提供 `redactSecret` / `redactText`，确保 API Key 永远不会写进日志。
+ * 额外做两件事：一是 `newapi-copilot-chat.logLevel` 设置（我们自己的级别闸门，
+ * 与通道级别是两回事，见 `warnIfChannelLevelBlocks`）；二是 `redactSecret` / `redactText`，
+ * 确保 API Key 永远不会写进日志。
  */
 
 import * as vscode from 'vscode';
