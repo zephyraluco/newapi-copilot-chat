@@ -2,27 +2,25 @@
  * 模型信息悬浮窗（tooltip）内容生成。
  *
  * VS Code 会把 `LanguageModelChatInformation.tooltip` 当作 **Markdown** 渲染，因此这里输出 Markdown。
- * tooltip 是「鼠标悬停一瞥」的场景，只保留用户用来判断「这个模型能不能干这件事」的信息，
- * 并**标注每个数值的来源**——数据表会过时，用户需要知道该不该相信它。
+ * tooltip 是「鼠标悬停一瞥」的场景，因此只回答两件事：**这是哪个模型**、**它有多大、能干什么**。
+ * 数值从哪来、与数据表冲突时已采用谁、有哪些思考强度可选——这些各有归属（状态面板里能看到来源，
+ * 档位在模型选择器里就能选），在这里复述只会把每次悬停都变成读一张表。
+ *
+ * 刻意**不写标题**：悬浮卡片自己会渲染模型名，再写一遍就是两行同一个东西；第一行直接是身份。
+ *
+ * 布局上每项独占一行，且「键」与「值」各自成列：挤成一行时折行位置由悬浮窗宽度决定，会出现「读到
+ * 一半被折断」的错觉；标签长度再不一时，取值又是参差的锯齿。对齐办法见 `padLabel`。
  */
 
-import { escapeMarkdown, formatTokens, formatUnixSeconds } from '../format';
+import { escapeMarkdown, formatTokens } from '../format';
 import type { ModelConfigSource } from './modelConfig';
 
 /** 构建 tooltip 所需的全部事实。由 `modelConfig.ts` 汇总后传入。 */
 export interface ModelTooltipFacts {
-	/** 模型 ID（New API 中的原始标识） */
+	/** 模型 ID（New API 中的原始标识，也是回传给站点的那个名字） */
 	readonly id: string;
-	/** 规范展示名（来自模型数据表或网关） */
-	readonly displayName?: string;
-	/** 规范 family 名 */
-	readonly family: string;
-	/** 归属方（来自 `/v1/models` 的 `owned_by`） */
-	readonly ownedBy?: string;
 	/** 厂商（来自模型数据表或网关） */
 	readonly vendor?: string;
-	/** 模型创建时间（Unix 秒） */
-	readonly created?: number;
 	/** 校正后的上下文窗口 */
 	readonly contextWindow: number;
 	/** 校正后的输入上限 */
@@ -33,17 +31,6 @@ export interface ModelTooltipFacts {
 	readonly toolCalling: boolean;
 	/** 模型是否具备思考（思维链）能力 */
 	readonly reasoning: boolean;
-	/** 该模型可选的思考强度；`reasoning` 为 `false` 时不展示 */
-	readonly reasoningEfforts: readonly string[];
-	/** 不指定思考强度时的上游默认取值 */
-	readonly defaultReasoningEffort?: string;
-	readonly description?: string;
-	/** 命中的模型数据表键 */
-	readonly datasetKey?: string;
-	/** 各字段的来源 */
-	readonly provenance: Readonly<Record<string, ModelConfigSource>>;
-	/** 需要提醒用户的事项（数值冲突、被校正等） */
-	readonly notes: readonly string[];
 }
 
 /** 来源的中文说明。导出给状态面板复用，保证两处口径一致。 */
@@ -57,80 +44,30 @@ export const MODEL_SOURCE_LABEL: Record<ModelConfigSource, string> = {
 export function buildModelTooltip(facts: ModelTooltipFacts): string {
 	const lines: string[] = [];
 
-	lines.push(`### ${escapeMarkdown(facts.displayName ?? facts.id)}`);
-	lines.push(`\`${facts.id}\``);
-
-	const metaParts: string[] = [];
+	// 第一行是身份：ID 用等宽字体（它是回传给站点的那个名字），厂商作为补充信息跟在后边
+	const identity = [`\`${facts.id}\``];
 	if (facts.vendor) {
-		metaParts.push(escapeMarkdown(facts.vendor));
+		identity.push(escapeMarkdown(facts.vendor));
 	}
-	if (facts.ownedBy && facts.ownedBy !== facts.vendor) {
-		metaParts.push(`归属 ${escapeMarkdown(facts.ownedBy)}`);
-	}
-	if (facts.family) {
-		metaParts.push(`family \`${facts.family}\``);
-	}
-	if (metaParts.length > 0) {
+	lines.push(identity.join(' · '));
+
+	// 每个项目独占一行（空行分隔 = Markdown 的段落，保证渲染后真的换行）
+	const rows: TooltipFact[] = [
+		{ label: '输入上限', value: formatTokens(facts.maxInputTokens) },
+		{ label: '上下文窗口', value: formatTokens(facts.contextWindow) },
+		{ label: '最大输出', value: formatTokens(facts.maxOutputTokens) },
+		{ label: '图片输入', value: yesNo(facts.imageInput) },
+		{ label: '工具调用', value: yesNo(facts.toolCalling) },
+		{ label: '思考', value: yesNo(facts.reasoning) },
+	];
+	// 标签补齐后再加一个全角间隙：取值列对齐，最长的标签也有明确间隔
+	const labelWidth = Math.max(...rows.map(row => [...row.label].length));
+	for (const row of rows) {
 		lines.push('');
-		lines.push(metaParts.join(' · '));
+		lines.push(`${padLabel(row.label, labelWidth)}${PAD}${row.value}`);
 	}
-
-	lines.push('');
-	lines.push(`| 项目 | 值 | 来源 |`);
-	lines.push(`| --- | --- | --- |`);
-	lines.push(
-		`| 上下文窗口 | ${formatTokens(facts.contextWindow)} | ${sourceLabel(facts.provenance.contextWindow)} |`,
-	);
-	lines.push(
-		`| 输入上限 | ${formatTokens(facts.maxInputTokens)} | ${sourceLabel(facts.provenance.maxInputTokens)} |`,
-	);
-	lines.push(
-		`| 最大输出 | ${formatTokens(facts.maxOutputTokens)} | ${sourceLabel(facts.provenance.maxOutputTokens)} |`,
-	);
-	lines.push(`| 图片输入 | ${yesNo(facts.imageInput)} | ${sourceLabel(facts.provenance.imageInput)} |`);
-	lines.push(`| 工具调用 | ${yesNo(facts.toolCalling)} | ${sourceLabel(facts.provenance.toolCalling)} |`);
-	lines.push(`| 思考 | ${yesNo(facts.reasoning)} | ${sourceLabel(facts.provenance.reasoning)} |`);
-	if (facts.created !== undefined) {
-		lines.push(`| 创建时间 | ${formatUnixSeconds(facts.created)} | 网关返回值 |`);
-	}
-
-	if (facts.description) {
-		lines.push('');
-		lines.push(escapeMarkdown(facts.description));
-	}
-
-	if (facts.datasetKey) {
-		lines.push('');
-		lines.push(`> 模型数据表命中：\`${facts.datasetKey}\``);
-	}
-
-	if (facts.reasoningEfforts.length > 0) {
-		// 用原值：取值词汇是上游的，翻译过的档位名反而对不上站点文档
-		const options = facts.reasoningEfforts.map(effort => escapeMarkdown(effort)).join(' / ');
-		const fallback = facts.defaultReasoningEffort === undefined
-			? ''
-			: `未选择时 ${factName(facts)} 自身的默认值是 ${escapeMarkdown(facts.defaultReasoningEffort)}。`;
-		lines.push('');
-		lines.push(`> 可在模型选择器里调整「思考强度」：${options}。${fallback}`);
-	}
-
-	if (facts.notes.length > 0) {
-		lines.push('');
-		for (const note of facts.notes) {
-			lines.push(`> ⚠️ ${escapeMarkdown(note)}`);
-		}
-	}
-
-	lines.push('');
-	lines.push('---');
-	lines.push('数值来自随包的模型数据表（`npm run models:openrouter` 生成），可能与站点实际情况有出入。');
 
 	return lines.join('\n');
-}
-
-/** 说明里用的模型称呼：有展示名就用它，否则用 ID（转义后用于 Markdown）。 */
-function factName(facts: ModelTooltipFacts): string {
-	return escapeMarkdown(facts.displayName ?? facts.id);
 }
 
 /** 生成模型选择器中显示的一行副标题。 */
@@ -152,10 +89,31 @@ export function buildModelDetail(facts: {
 	return parts.join(' · ');
 }
 
-function sourceLabel(source: ModelConfigSource | undefined): string {
-	return source === undefined ? '未知' : MODEL_SOURCE_LABEL[source];
-}
-
 function yesNo(value: boolean): string {
 	return value ? '✅' : '❌';
+}
+
+/** 一行事实：标签与取值。 */
+interface TooltipFact {
+	readonly label: string;
+	readonly value: string;
+}
+
+/**
+ * 全角空格：补位用。
+ *
+ * 半角空格在 Markdown 里会被折叠成一个（且宽度远小于汉字），撑不出列宽；
+ * 全角空格与汉字等宽，才能让补齐真的对齐。
+ */
+const PAD = '\u3000';
+
+/**
+ * 把标签补到等宽，使取值列对齐。
+ *
+ * tooltip 用比例字体、宽度只有 300px，但中文与全角空格在字体里等宽，因此补齐后每一行的取值都落在
+ * 同一列上——标签长短不再表现为参差的锯齿，键与值之间也有了统一可读的间隙。
+ */
+function padLabel(label: string, width: number): string {
+	const length = [...label].length;
+	return length >= width ? label : label + PAD.repeat(width - length);
 }

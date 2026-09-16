@@ -608,7 +608,7 @@
       "defaultReasoningEffort": "high"
     },
     {
-      "id": "deepseek-v4.1-flash",
+      "id": "deepseek-flash",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4.1 Flash",
       "contextWindow": 1048576,

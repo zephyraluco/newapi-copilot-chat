@@ -9,6 +9,7 @@ import type { ModelDatasetEntry } from '../models/dataset';
 import { installModelDataset } from '../models/dataset';
 import type { ModelSettings } from '../config';
 import { Logger, LoggerService } from '../logger';
+import type { LogLevelName } from '../logger';
 import type { NewApiModel } from '../types';
 
 /**
@@ -53,6 +54,51 @@ export function testLogger(): Logger {
 		loggerCache = new Logger(new LoggerService('off'), 'test');
 	}
 	return loggerCache;
+}
+
+/** 捕获到的一行日志。 */
+export interface CapturedLog {
+	readonly level: Exclude<LogLevelName, 'off'>;
+	readonly scope: string;
+	readonly message: string;
+}
+
+/**
+ * 把日志行收集起来的测试用日志服务。
+ *
+ * `LoggerService.write` 是所有 Logger 的唯一出口，覆盖它就能拿到「写了什么」，
+ * 而不必碰真实的输出通道。同时也绕过了级别闸门——用例关心的是「有没有留下痕迹」，
+ * 不是这条日志最终会不会被渲染。
+ */
+class CapturingLoggerService extends LoggerService {
+	readonly lines: CapturedLog[] = [];
+
+	override write(level: Exclude<LogLevelName, 'off'>, scope: string, message: string): void {
+		this.lines.push({ level, scope, message });
+	}
+}
+
+/** 日志捕获器：既能当 Logger 用，也能查「哪些行被写出来了」。 */
+export interface CapturingLogger {
+	readonly logger: Logger;
+	/** 全部写出的日志行，顺序与实际写入一致 */
+	readonly lines: readonly CapturedLog[];
+	/** 只取某个级别的消息文本，避免用例被其他级别的噪声干扰 */
+	messages(level: Exclude<LogLevelName, 'off'>): string[];
+}
+
+/**
+ * 取得一个会把日志行收集下来的 Logger。
+ *
+ * 用于断言「不该静默发生的事确实有了出口」——例如数值被网关覆盖、被一致性校正。
+ */
+export function capturingLogger(): CapturingLogger {
+	const service = new CapturingLoggerService('off');
+	return {
+		logger: new Logger(service, 'test'),
+		lines: service.lines,
+		messages: (level) => service.lines.filter(line => line.level === level).map(line => line.message),
+	};
 }
 
 /** 构造模型设置，只覆盖用例关心的字段。 */

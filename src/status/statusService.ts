@@ -15,6 +15,7 @@ import type { ProviderSession, SessionRegistry } from '../provider/session';
 import { isTargetUsable } from '../provider/target';
 import type { ChatUsage } from '../types';
 import type { StreamSummary } from '../provider/stream';
+import { readUsageDelta } from './usage';
 
 /** 单个目标的模型列表概要。 */
 export interface ModelSummary {
@@ -67,6 +68,12 @@ export interface UsageStats {
 	readonly promptTokens: number;
 	readonly completionTokens: number;
 	readonly totalTokens: number;
+	/** 命中前缀缓存的输入 token 数 */
+	readonly cachedTokens: number;
+	/** 是否见过携帯缓存字段的响应（用于区分「没命中」与「上游不报缓存」） */
+	readonly cacheReported: boolean;
+	/** 思维链 token 数 */
+	readonly reasoningTokens: number;
 	/** 工具调用次数 */
 	readonly toolCalls: number;
 	/** 最近一次请求时间 */
@@ -125,6 +132,9 @@ export class StatusService implements vscode.Disposable {
 		promptTokens: 0,
 		completionTokens: 0,
 		totalTokens: 0,
+		cachedTokens: 0,
+		cacheReported: false,
+		reasoningTokens: 0,
 		toolCalls: 0,
 	};
 
@@ -247,11 +257,15 @@ export class StatusService implements vscode.Disposable {
 		usage: ChatUsage | undefined,
 		summary: StreamSummary,
 	): void {
+		const delta = readUsageDelta(usage);
 		this.usage = {
 			requests: this.usage.requests + 1,
-			promptTokens: this.usage.promptTokens + (usage?.prompt_tokens ?? 0),
-			completionTokens: this.usage.completionTokens + (usage?.completion_tokens ?? 0),
-			totalTokens: this.usage.totalTokens + (usage?.total_tokens ?? 0),
+			promptTokens: this.usage.promptTokens + delta.promptTokens,
+			completionTokens: this.usage.completionTokens + delta.completionTokens,
+			totalTokens: this.usage.totalTokens + delta.totalTokens,
+			cachedTokens: this.usage.cachedTokens + delta.cachedTokens,
+			cacheReported: this.usage.cacheReported || delta.reportsCache,
+			reasoningTokens: this.usage.reasoningTokens + delta.reasoningTokens,
 			toolCalls: this.usage.toolCalls + summary.toolCallCount,
 			lastRequestAt: Date.now(),
 			lastModelId: modelId,
@@ -267,6 +281,9 @@ export class StatusService implements vscode.Disposable {
 			promptTokens: 0,
 			completionTokens: 0,
 			totalTokens: 0,
+			cachedTokens: 0,
+			cacheReported: false,
+			reasoningTokens: 0,
 			toolCalls: 0,
 		};
 		this.emit();

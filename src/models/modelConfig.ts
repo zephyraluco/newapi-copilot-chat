@@ -10,7 +10,10 @@
  * ```
  *
  * 优先级：**网关返回值 > 数据表 > 默认值**——网关最清楚自己那条链路，数据表只是生成时的
- * 快照。两者显著不一致时会写成 note，在 tooltip 里说明已采用网关值。
+ * 快照。两者显著不一致时以网关为准（`meta.provenance` 记下来源），差异本身写进日志。
+ *
+ * 「数值被谁覆盖、被怎么校正」只有两个出口：**状态面板**（来源列）与**日志**（debug 级）。
+ * 模型信息里刻意不带这类说明：tooltip 是「悬停一瞥」，塞满解释就没人看了。
  */
 
 import { DEFAULTS } from '../consts';
@@ -18,7 +21,6 @@ import { formatTokens } from '../format';
 import {
 	asBoolean,
 	asNonEmptyString,
-	asNumber,
 	asStringArray,
 	isRecord,
 	pickBoolean,
@@ -61,31 +63,24 @@ export interface RemoteModelHints {
 	reasoning?: true;
 	/** 网关给出的展示名 */
 	displayName?: string;
-	/** 网关给出的描述 */
-	description?: string;
 	/** 网关给出的 family */
 	family?: string;
 	/** 网关给出的版本号 */
 	version?: string;
 }
 
-/** 整合后的模型元数据（供面板与 tip 使用，不参与 VS Code 协议）。 */
+/** 整合后的模型元数据（供状态面板展示，不参与 VS Code 协议）。 */
 export interface ModelConfigMeta {
 	/** `/v1/models` 中的 `owned_by` */
 	readonly ownedBy?: string;
-	/** 模型创建时间（Unix 秒） */
-	readonly created?: number;
 	/** 厂商 */
 	readonly vendor?: string;
 	/** 规范展示名 */
 	readonly displayName?: string;
-	readonly description?: string;
 	/** 命中的模型数据表键 */
 	readonly datasetKey?: string;
 	/** 每个字段的取值来源 */
 	readonly provenance: Readonly<Record<string, ModelConfigSource>>;
-	/** 需要提示用户的注意事项 */
-	readonly notes: readonly string[];
 }
 
 /**
@@ -97,7 +92,12 @@ export interface ModelConfigMeta {
 export interface ModelConfig {
 	/** 模型 ID，必须原样回传给 `/v1/chat/completions` */
 	readonly id: string;
-	/** 模型选择器里显示的名字 */
+	/**
+	 * 模型选择器里显示的名字：优先展示名，没有则用 ID。
+	 *
+	 * ID（`anthropic/claude-sonnet-4.5` 这种）是给程序看的，拿它当列表项没人愿意读；
+	 * 但 ID 也不会丢——悬浮提示的第一行、状态面板的副标题都带着它。
+	 */
 	readonly name: string;
 	/** 模型选择器里的副标题 */
 	readonly detail: string;
@@ -257,7 +257,6 @@ export function extractRemoteHints(model: NewApiModel): RemoteModelHints {
 
 	// ---- 文本字段 --------------------------------------------------------
 	hints.displayName = pickString(model, ['display_name', 'model_name', 'label']);
-	hints.description = pickString(model, ['description', 'summary', 'desc']);
 	hints.family = pickString(model, ['family', 'model_family']);
 	hints.version = pickString(model, ['version']);
 
@@ -290,7 +289,8 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	const { settings, logger } = options;
 	const remote = extractRemoteHints(model);
 	const dataset = matchModelDataset(model.id);
-	const notes: string[] = [];
+	// 冲突与被校正的数值：只在日志里交代，不进模型信息（见文件头）
+	const adjustments: string[] = [];
 	const provenance: Record<string, ModelConfigSource> = {};
 
 	// ---- 上下文窗口 ------------------------------------------------------
@@ -302,7 +302,7 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	}
 	if (remote.contextWindow !== undefined) {
 		if (dataset && isSignificantlyDifferent(remote.contextWindow, dataset.entry.contextWindow)) {
-			notes.push(
+			adjustments.push(
 				`网关报告的上下文窗口（${formatTokens(remote.contextWindow)}）与模型数据表（${formatTokens(dataset.entry.contextWindow)}）不一致，已采用网关值。`,
 			);
 		}
@@ -341,7 +341,7 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	}
 	if (remote.imageInput !== undefined) {
 		if (dataset && dataset.entry.imageInput !== remote.imageInput) {
-			notes.push(
+			adjustments.push(
 				`网关报告${remote.imageInput ? '支持' : '不支持'}图片输入，模型数据表认为${dataset.entry.imageInput ? '支持' : '不支持'}，已采用网关值。`,
 			);
 		}
@@ -388,9 +388,7 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		maxOutputTokens,
 		maxInputTokens: hasExplicitMaxInput ? maxInputTokens : undefined,
 	});
-	if (reconciled.notes.length > 0) {
-		notes.push(...reconciled.notes);
-	}
+	adjustments.push(...reconciled.adjustments);
 
 	// ---- 名字与 family ---------------------------------------------------
 	const vendor = dataset?.entry.vendor;
@@ -399,44 +397,36 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 
 	const meta: ModelConfigMeta = {
 		ownedBy: asNonEmptyString(model.owned_by),
-		created: asNumber(model.created),
 		vendor,
 		displayName,
-		description: remote.description,
 		datasetKey: dataset?.key,
 		provenance,
-		notes,
 	};
 
 	const facts = {
 		id: model.id,
-		displayName,
-		family,
-		ownedBy: meta.ownedBy,
 		vendor,
-		created: meta.created,
 		contextWindow: reconciled.contextWindow,
 		maxInputTokens: reconciled.maxInputTokens,
 		maxOutputTokens: reconciled.maxOutputTokens,
 		imageInput,
 		toolCalling,
 		reasoning,
-		reasoningEfforts,
-		defaultReasoningEffort,
-		description: meta.description,
-		datasetKey: meta.datasetKey,
-		provenance,
-		notes,
 	};
 
 	logger.trace(
 		`模型 ${model.id}：窗口 ${facts.contextWindow}，输入 ${facts.maxInputTokens}，输出 ${facts.maxOutputTokens}，` +
 		`图片 ${imageInput}，工具 ${toolCalling}，思考 ${reasoning}`,
 	);
+	if (adjustments.length > 0) {
+		// 数值被网关覆盖过、或被校正过：这类事实必须有出口，否则用户碰到
+		// 「站点明明支持更大窗口」时无从排查。debug 级：平时不吵，需要时能查。
+		logger.debug(`模型 ${model.id} 的数值差异或校正：${adjustments.join(' ')}`);
+	}
 
 	return {
 		id: model.id,
-		name: model.id,
+		name: displayName ?? model.id,
 		detail: buildModelDetail({ vendor, ownedBy: meta.ownedBy, contextWindow: facts.contextWindow, toolCalling }),
 		family,
 		version: remote.version ?? '1',
@@ -471,18 +461,19 @@ function isSignificantlyDifferent(a: number, b: number): boolean {
  *
  * 三层来源合起来很容易得到自相矛盾的数值（例如数据表说窗口 8K，网关却说输出上限 16K），
  * 直接透传给 VS Code 会导致请求被上游拒绝，或者出现「输入上限 > 上下文窗口」的怪状态。
- * 这里统一收敛，并把每一次修正记录成 note 供用户查看。
+ * 这里统一收敛，并把每一次修正记录成一行说明——由调用方写进日志。
+ * 校正**不能静默**：用户看到被下调的数字时，得有个地方能查出原因。
  */
 function reconcileLimits(input: {
 	contextWindow: number;
 	maxOutputTokens: number;
 	maxInputTokens: number | undefined;
-}): { contextWindow: number; maxOutputTokens: number; maxInputTokens: number; notes: string[] } {
-	const notes: string[] = [];
+}): { contextWindow: number; maxOutputTokens: number; maxInputTokens: number; adjustments: string[] } {
+	const adjustments: string[] = [];
 
 	let contextWindow = Math.round(input.contextWindow);
 	if (!Number.isFinite(contextWindow) || contextWindow < DEFAULTS.minContextWindow) {
-		notes.push(`上下文窗口 ${input.contextWindow} 过小，已按最小值 ${DEFAULTS.minContextWindow} 处理。`);
+		adjustments.push(`上下文窗口 ${input.contextWindow} 过小，已按最小值 ${DEFAULTS.minContextWindow} 处理。`);
 		contextWindow = DEFAULTS.minContextWindow;
 	}
 
@@ -496,7 +487,7 @@ function reconcileLimits(input: {
 	if (contextWindow - maxOutputTokens < minInput) {
 		const clamped = Math.max(MIN_OUTPUT_TOKENS, contextWindow - minInput);
 		if (clamped !== maxOutputTokens) {
-			notes.push(
+			adjustments.push(
 				`最大输出 ${formatTokens(maxOutputTokens)} 会挤占输入空间，已下调为 ${formatTokens(clamped)}。`,
 			);
 			maxOutputTokens = clamped;
@@ -508,13 +499,13 @@ function reconcileLimits(input: {
 		? ceiling
 		: Math.max(DEFAULTS.minInputTokens, Math.min(Math.round(input.maxInputTokens), contextWindow));
 	if (input.maxInputTokens !== undefined && maxInputTokens > ceiling) {
-		notes.push(
+		adjustments.push(
 			`输入上限 ${formatTokens(input.maxInputTokens)} 与上下文窗口冲突，已收敛为 ${formatTokens(ceiling)}。`,
 		);
 		maxInputTokens = ceiling;
 	}
 
-	return { contextWindow, maxOutputTokens, maxInputTokens, notes };
+	return { contextWindow, maxOutputTokens, maxInputTokens, adjustments };
 }
 
 /**

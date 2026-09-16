@@ -75,17 +75,6 @@ export function formatRelativeTime(timestamp: number | undefined, now = Date.now
 	return days === 1 ? '昨天' : `${days} 天前`;
 }
 
-/** 把 Unix 秒级时间戳格式化为本地时间字符串；无效时返回 `未知`。 */
-export function formatUnixSeconds(seconds: number | undefined): string {
-	if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
-		return '未知';
-	}
-	// New API 的 start_time 是秒级，但部分网关会给毫秒，这里做个量级纠正。
-	const ms = seconds > 1e11 ? seconds : seconds * 1000;
-	const date = new Date(ms);
-	return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString();
-}
-
 /**
  * 转义 Markdown 中会被解释为语法的字符（用于 tooltip 里的动态文本）。
  */

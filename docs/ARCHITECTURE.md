@@ -79,7 +79,7 @@ flowchart TD
 | `consts.ts` | 162 | 命令 ID、端点、默认值、思考强度键名、运行时版本 |
 | `types.ts` | 268 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
-| `format.ts` | 94 | token / 时长 / 相对时间格式化、Markdown 转义 |
+| `format.ts` | 83 | token / 时长 / 相对时间格式化、Markdown 转义 |
 | `logger.ts` | 282 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
@@ -89,8 +89,8 @@ flowchart TD
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 233 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
-| `modelConfig.ts` | 588 | 多来源合并、一致性校正、远端字段提取 |
-| `tooltip.ts` | 161 | 悬浮窗 Markdown（含数据来源标注） |
+| `modelConfig.ts` | 579 | 多来源合并、一致性校正、远端字段提取 |
+| `tooltip.ts` | 119 | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
 | `catalog.ts` | 218 | 拉取编排、缓存、并发合并、失败降级 |
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
@@ -103,11 +103,12 @@ flowchart TD
 | **`adapter/`** 差异出口 | | |
 | `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 196 | 钩子接口、注册与解析、恒等实现 |
 | **`status/`** UI | | |
-| `statusService.ts` | 335 | 状态的唯一真相来源，按配置组聚合 |
-| `statusBar.ts` | 157 | 状态栏渲染 |
-| `panel.ts` | 598 | Webview 面板（HTML + 手写 DOM 脚本） |
+| `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
+| `usage.ts` | 101 | 会话用量的读出：缓存命中与思维链 token、各网关字段名兼容 |
+| `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
+| `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.test.ts` + `test/helpers.ts` | 1,336 | 111 个用例，只覆盖纯函数与装配 |
+| `test/*.test.ts` + `test/helpers.ts` | 1,799 | 140 个用例，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -199,8 +200,31 @@ flowchart LR
 
 优先级：**① 网关返回的扩展字段（remote）> ② 随包数据表按 ID 查表（dataset）> ③ 兜底默认值（default）**。
 越靠前的越可信：网关最清楚自己那条链路，数据表只是生成时的快照（同一模型在不同中转上的窗口确实可能不同）。
-两者显著不一致时写成 note，在 tooltip 里说明「已采用网关值」。`resolveModelConfig` 把每个字段的来源记进
-`meta.provenance`，tooltip 与面板都会展示并在冲突时提示——用户看到数值不符时能知道该不该相信它。
+两者显著不一致时以网关为准，并把这个事实写进**日志**（debug 级）；`resolveModelConfig` 把每个字段的
+来源记进 `meta.provenance`，由**状态面板**的「窗口来源」列展示——用户看到数值不符时能知道该不该相信它。
+
+**模型信息有三个出口，各管一段**：tooltip 回答「这是什么模型、能干什么」（一行身份 `id · vendor`，
+再逐项列出规模与能力）；面板回答「这个数值从哪来」（来源列）；日志回答「为什么是这个值」
+（网关覆盖了数据表、数值被校正）。tooltip 里刻意不堆解释：来源、档位、校正提醒各有归属，
+塞进来只会把「鼠标一掠」变成读一张表。
+
+**选择器里的主名是展示名**：`ModelConfig.name` 取 `displayName ?? id`，`id` 单独留在 `id` 字段里
+回传请求。VS Code 的列表行把 `name` 当主文字、`detail`（`vendor · 窗口 · 工具`）当副标题，
+拿 ID（`anthropic/claude-sonnet-4.5`）当主名没人愿意读。随包数据表里 343 条展示名互不重复，
+所以同名混淆不会出现；网关只给 ID 时回退到 ID，界面不会出现空名字。
+
+**tooltip 不写标题**：悬浮卡片自己会渲染模型名（即上面的展示名），重复写就是两行同一个东西。
+身份行改用 `id`（回传给站点的那个名字、等宽字体）——它才是能拿去搜站点文档、对账单的字符串，
+正好与卡片标题互补。
+
+**tooltip 的排版按传播环境定**：VS Code 在模型悬浮卡片里把 tooltip 当 Markdown 渲染，
+容器只有 `max-width: 300px`、`font-size: 12px`，且 `p { margin: 0 }`。因此**一项一个段落**
+（空行分隔，靠零段落间距贴紧成清单），不用 `·` 把多项串成一行——那样折行位置取决于宽度，
+在 300px 里会把「输入上限」和「图片输入」折到同一行上。单 `\n` 不行：Markdown 的软换行会被折叠成空格。
+
+**键与值分列**（`padLabel`）：标签长短不一（`思考` / `上下文窗口`）时取值会参差，因此标签用
+**全角空格**补到等宽，再另加一个全角间隙。选全角空格是因为中文与它等宽，在比例字体里也能对齐；
+半角空格会被 Markdown 折叠、宽度也只有汉字的三分之一，补不出列宽。
 
 **例外是思考能力**：远端只能给出「肯定」，因此**数据表先落地、网关的肯定最后覆盖**——既不会把表里
 已知的能力抹掉，也不会因为表里写了 `false` 而隐藏站点声明支持的选项。
@@ -209,7 +233,10 @@ flowchart LR
 
 三路来源合起来容易出现自相矛盾的数值（例如窗口 8K 却声称输出 16K）。`reconcileLimits` 统一收敛：
 `maxInputTokens + maxOutputTokens <= contextWindow`、输出上限不挤占输入空间（至少给输入留 1/4 窗口）、
-各项不低于合理下限。每次修正都写入 `meta.notes` 并显示在 tooltip 里——**静默修正数值比不修正更糟**。
+各项不低于合理下限。每次修正都收集到 `adjustments` 里，最后由 `resolveModelConfig` 写成一行 `debug` 日志
+（`reconcileLimits` 自身不碰 logger，保持纯函数）——**静默修正数值比不修正更糟**，被下调的数字
+必须在日志里查得到原因。这也是测试唯一能断言「校正留下了痕迹」的地方，因此测试辅助里有
+`capturingLogger()`（覆盖 `LoggerService.write` 收集日志行）。
 
 ### 远端字段提取
 
@@ -348,7 +375,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
   ——静默发出站点不认的取值，用户只会看到一句无从排查的报错。
 - **字段名是常量 `reasoning_effort`**，不逐模型可配：网关用别的叫法（例如 `reasoning.effort`）或需要嵌套
   形态时交给适配器层改写。`applyReasoningEffort` 会拒写 `PROTECTED_REQUEST_KEYS`（`model` / `messages` …）。
-  默认强度同时写进属性的 `description` 与 tooltip（「默认 high（来自模型数据表）」），
+  默认强度同时写进属性的 `description`（「默认 high（来自模型数据表）」），
   并随 `AdapterContext.reasoningEffort` 传给适配器。
 
 `modelOptions` 与 `modelConfiguration` 都不是 stable typings 的字段，因此做运行时探测；
@@ -403,10 +430,36 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 
 ## 10. `status/` —— 状态栏与面板
 
-- **状态栏**只有一格，只回答「能不能用」：文本极短（`$(cloud) 12 模型`），细节放进 Markdown tooltip，
-  只在需要用户行动时着色（尚未配置、或已配置的站点连不上），避免变成常亮的警告灯。
-- **面板**回答「为什么」：各配置组的状态、模型清单（含每个数值的来源）、被过滤的模型、会话用量、
-  适配器链、日志入口。
+**分工：状态栏讲「这一次花了多少」，面板讲「站点与模型是什么样」。** 状态栏只有一格、鼠标一停就要
+给出答案，因此悬浮提示只放本次会话的用量：请求次数、工具调用、输入/输出 token、缓存命中、
+最近一次请求的模型；站点地址、网关版本、延迟、模型数量、列表来源这些**站点细节全在面板**里
+（那里铺得开，还能手动刷新）。
+
+提示只在**有话可说**时出现（`buildTooltip` 返回 `undefined` 就不设 `tooltip`，VS Code 连悬浮框一起省掉）：
+有会话用量、或有问题需要处理、或站点都没配置。空闲时悬停给一句「还没有请求」是纯噪声，
+还容易被当成扩展出错；状态栏文本自己就说明了可用性。唯一留在提示里的站点信息是
+**「哪里出了问题」**——状态栏此时已被着色，用户需要一个理由，所以配置不完整与连不上的站点
+会各占一行（带可操作建议）。
+
+- **状态栏**文本极短（`$(cloud) 12 模型`），只在需要用户行动时着色（尚未配置、或已配置的站点连不上），
+  避免变成常亮的警告灯。
+- **面板**回答「为什么」：各配置组的状态与细节、模型清单（含每个数值的来源）、被过滤的模型、
+  会话用量、适配器链、日志入口。
+
+### 会话用量（`usage.ts`）
+
+只做算术、不碰 UI，因此可以被单测直接覆盖。需要在这层吸收三类差异：
+
+- **缓存命中的字段名不统一**：OpenAI / New API 放在 `prompt_tokens_details.cached_tokens`，
+  DeepSeek 用 `prompt_cache_hit_tokens`，两者都认。
+- **总量与分项可能缺一个**：互为兜底。命中数会被钳到输入量以内，否则上游一次自相矛盾的返回
+  就能显示出「命中 200%）」这种数字。
+- **`usage` 可能整个缺失**（流式请求尤其常见，除非显式要求）。「没报告」与「报告了 0」必须区分：
+  `cacheReported` 只在响应真的带了缓存字段时为 `true`，否则界面会显示一个不存在的「命中 0」。
+  同理，总 token 为 0 时不显示一行 0，而是说明上游未返回。
+
+命中率的分母是**输入**（缓存只作用于 prompt，拿总量当分母会得到偏低的假数字），
+文案由 `describeCacheHit` 统一产出，状态栏与面板口径因此一致。
 
 配置组可以有多个，因此状态是**按目标聚合**的：`targets` 每个元素对应一个组，整体可用性取
 「是否存在任一可用目标」（`anyUsable`），状态栏的模型数是各组之和。这样某个组临时挂掉只会让那一行
@@ -433,7 +486,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
   （带 `enum` 才会被渲染）→ `chatProvider` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的
-  `default`（并保证它在 `enum` 里）→ 补测试与 tooltip / 面板展示。
+  `default`（并保证它在 `enum` 里）→ 补测试与面板展示。
   注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema（见 §8 思考强度）。
 - **新增配置组字段（站点 / 密钥类）**：这类字段**不是**设置项，声明在
   `contributes.languageModelChatProviders[].configuration` 里——`package.json` 加字段（密钥类 `secret: true`）
@@ -442,7 +495,9 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 - **新增命令**：`consts.ts` 的 `COMMANDS` 加键 → `package.json` 的 `contributes.commands` 加条目 →
   `extension.ts` 里 `registerCommand`。
 - **新增一个探测 / 展示字段**：`client/newApiClient.ts` 的 `getStatus` / `ModelCatalogSnapshot` →
-  `status/statusService.ts` 的 `TargetStatus` → `statusBar.ts` 与 `panel.ts` 渲染。
+  `status/statusService.ts` 的 `TargetStatus` → `panel.ts` 渲染（站点细节都在面板；
+  只有「需要用户动手的问题」会同时出现在状态栏悬浮提示里）。**会话用量的字段**则走
+  `status/usage.ts` 的 `UsageDelta` → `UsageStats` → 状态栏与面板两处。
   注意面板脚本是**字符串里的 JS**，不受 TypeScript 检查。
 
 ## 12. 已知取舍
@@ -464,7 +519,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-111 个用例，只覆盖**纯函数与装配**：
+140 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -473,6 +528,8 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
+| `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母 |
+| `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、主题图标开关 |
 
 刻意不测的部分：真实网络交互（需要可用的 New API 站点）、Webview 渲染（需人工验收）、
 VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意三点：需要日志时用

@@ -1,15 +1,22 @@
 /**
  * 状态栏 UI：只做渲染，不发请求、不做判断（状态全部来自 `StatusService`）。
  *
- * 状态栏只有一格位置，因此文本必须极短（`$(cloud) 12 模型`），细节放进 Markdown tooltip；
- * 颜色只在「需要用户行动」时使用（尚未配置、或已配置的站点连不上）。
+ * 状态栏只有一格位置，因此文本必须极短（`$(cloud) 12 模型`）。悬浮提示讲的是**本次会话**：
+ * 请求次数、输入输出 token、缓存命中——用户盯的是「刚刚这一下贵不贵」。站点地址、网关版本、
+ * 延迟、模型数量这些**站点细节在状态面板**里（那里铺得开，还能刷新），这里不复述。
+ *
+ * 两件刻意的事：
+ *
+ * - **没有会话数据时不弹提示**。空闲时悬停给出一句「还没有请求」是纯噪声，还容易被当成出错。
+ * - 提示里唯一保留的站点信息是「哪里出了问题」，因为状态栏此时已被着色，用户需要一个理由。
  */
 
 import * as vscode from 'vscode';
 import { COMMANDS, MANAGE_MODELS_COMMAND, STATUS_BAR_PRIORITY } from '../consts';
-import { formatDurationMs, formatRelativeTime, formatTokens } from '../format';
+import { formatRelativeTime, formatTokens } from '../format';
 import type { Logger } from '../logger';
-import type { StatusState, TargetStatus } from './statusService';
+import type { StatusState, TargetStatus, UsageStats } from './statusService';
+import { describeCacheHit } from './usage';
 
 /** 状态栏项。 */
 export class NewApiStatusBar implements vscode.Disposable {
@@ -36,6 +43,7 @@ export class NewApiStatusBar implements vscode.Disposable {
 		this.item.backgroundColor = needsAttention(state)
 			? new vscode.ThemeColor('statusBarItem.warningBackground')
 			: undefined;
+		// `undefined` 表示「这次没什么可说的」，VS Code 会连悬浮框一起省掉
 		this.item.tooltip = buildTooltip(state);
 		this.show();
 	}
@@ -89,69 +97,115 @@ function isRefreshing(state: StatusState): boolean {
 	return state.targets.some(target => target.refreshing) && state.totalModels === 0;
 }
 
-/** 悬浮提示。这里是用户了解细节的入口，可以详细一些。 */
-function buildTooltip(state: StatusState): vscode.MarkdownString {
-	const tooltip = new vscode.MarkdownString();
-	tooltip.supportThemeIcons = true;
-	tooltip.appendMarkdown('**New API for Copilot Chat**\n\n');
-
+/**
+ * 悬浮提示：只讲本次会话的消耗，外加需要用户动手的问题。
+ *
+ * **没有会话数据、也没有问题时返回 `undefined`**——那样悬停不该弹出任何东西。空壳提示
+ * （一句「还没有请求」）既没信息量，又让人以为扩展在报错；状态栏文本自己就说明了可用性。
+ *
+ * 导出供测试：它需要 `vscode` 才能构造 MarkdownString，但逻辑是纯的（同输入同输出），
+ * 而「空闲时不弹提示」正是容易在后续改动中被弄丢的约定。
+ */
+export function buildTooltip(state: StatusState): vscode.MarkdownString | undefined {
+	// 还没配置站点是唯一「悬停就该知道怎么办」的场景：状态栏本身只有「New API」两个字
 	if (state.targets.length === 0) {
+		const tooltip = createTooltip();
 		tooltip.appendMarkdown('$(warning) **尚未配置任何站点**\n\n');
 		tooltip.appendMarkdown('点击开始配置，或执行命令「New API: 管理模型」。');
 		return tooltip;
 	}
 
-	for (const target of state.targets) {
-		appendTarget(tooltip, target);
-	}
-
+	const blocks: string[] = [];
 	if (state.usage.requests > 0) {
-		const tokens = state.usage.totalTokens > 0
-			? `${formatTokens(state.usage.totalTokens)} token`
-			: '用量未返回';
-		tooltip.appendMarkdown(`\n会话用量：${state.usage.requests} 次请求 / ${tokens}\n`);
+		blocks.push(describeUsage(state.usage));
+	}
+	const problems = state.targets.flatMap(describeProblems);
+	if (problems.length > 0) {
+		blocks.push(problems.join('\n'));
+	}
+	if (blocks.length === 0) {
+		return undefined;
 	}
 
-	tooltip.appendMarkdown('\n点击打开状态面板。');
+	blocks.push('点击打开状态面板，查看站点与模型详情。');
+	const tooltip = createTooltip();
+	tooltip.appendMarkdown(blocks.join('\n\n'));
 	return tooltip;
 }
 
-/** 追加一个目标的详情。 */function appendTarget(tooltip: vscode.MarkdownString, target: TargetStatus): void {
-	tooltip.appendMarkdown(`**${target.label}**\n\n`);
+/** 空提示：带标题与主题图标支持。图标（`$(warning)` 等）没有这个开关会按字面显示。 */
+function createTooltip(): vscode.MarkdownString {
+	const tooltip = new vscode.MarkdownString();
+	tooltip.supportThemeIcons = true;
+	tooltip.appendMarkdown('**New API for Copilot Chat**\n\n');
+	return tooltip;
+}
 
-	if (!target.usable) {
-		for (const issue of target.issues) {
-			tooltip.appendMarkdown(`- $(warning) ${issue}\n`);
-		}
-		tooltip.appendMarkdown('\n');
-		return;
+/**
+ * 本次会话的消耗。
+ *
+ * 全程用**空行**分段（Markdown 里单个 `\n` 只是软换行，渲染时会并成一行）。
+ */
+function describeUsage(usage: UsageStats): string {
+	const counts = [`${usage.requests} 次请求`];
+	if (usage.toolCalls > 0) {
+		counts.push(`${usage.toolCalls} 次工具调用`);
 	}
 
-	tooltip.appendMarkdown(`- 站点：\`${target.baseUrl}\`\n`);
-	if (target.siteName !== undefined) {
-		const version = target.gatewayVersion === undefined ? '' : ` (v${target.gatewayVersion})`;
-		tooltip.appendMarkdown(`- 网关：${target.siteName}${version}\n`);
-	}
-	if (target.refreshing) {
-		tooltip.appendMarkdown('- 状态：$(sync~spin) 正在刷新…\n');
-	} else if (target.models.error !== undefined) {
-		tooltip.appendMarkdown(`- 状态：$(error) ${target.models.error}\n`);
-		if (target.models.hint !== undefined) {
-			tooltip.appendMarkdown(`- 建议：${target.models.hint}\n`);
-		}
+	const lines = [`**本次会话**：${counts.join(' · ')}`, ''];
+	// 上游没返回 usage 时不要显示一排 0：那看起来像是真的没消耗
+	if (usage.totalTokens === 0) {
+		lines.push('- 上游未返回 token 用量');
 	} else {
-		tooltip.appendMarkdown('- 状态：$(pass) 可用\n');
+		lines.push(`- 输入：${formatTokens(usage.promptTokens)}`);
+		lines.push(`- 输出：${formatTokens(usage.completionTokens)}`);
+		const cache = describeCache(usage);
+		if (cache !== undefined) {
+			lines.push(`- 缓存命中：${cache}`);
+		}
+		if (usage.reasoningTokens > 0) {
+			lines.push(`- 其中思考：${formatTokens(usage.reasoningTokens)}`);
+		}
 	}
-	if (target.latencyMs !== undefined) {
-		tooltip.appendMarkdown(`- 延迟：${formatDurationMs(target.latencyMs)}\n`);
+
+	if (usage.lastRequestAt !== undefined) {
+		const model = usage.lastModelId === undefined ? '' : ` · ${usage.lastModelId}`;
+		lines.push('', `最近请求：${formatRelativeTime(usage.lastRequestAt)}${model}`);
 	}
-	tooltip.appendMarkdown(`- 模型：${target.models.count} 个`);
-	if (target.models.filteredCount > 0) {
-		tooltip.appendMarkdown(`（已过滤 ${target.models.filteredCount} 个）`);
+	return lines.join('\n');
+}
+
+/**
+ * 缓存命中一行；不该显示时返回 `undefined`。
+ *
+ * 「命中 0」与「上游不报缓存」是两件事：前者说明缓存没帮上忙（可能有价值，比如上下文每次都在变），
+ * 后者说明这个数字根本不存在。前者值得显示，后者显示出来只会让人怀疑扩展坏了。
+ */
+function describeCache(usage: UsageStats): string | undefined {
+	if (!usage.cacheReported) {
+		return undefined;
 	}
-	tooltip.appendMarkdown('\n');
-	if (target.models.fetchedAt !== undefined) {
-		tooltip.appendMarkdown(`- 最近刷新：${formatRelativeTime(target.models.fetchedAt)}\n`);
+	// 命中数已经大于 0 却拿不到输入量时，`describeCacheHit` 会只给数量不编比例
+	return usage.cachedTokens === 0
+		? '无'
+		: describeCacheHit(usage.cachedTokens, usage.promptTokens);
+}
+
+/**
+ * 只列需要用户动手的问题。
+ *
+ * 健康的站点不在这里出现——它的细节（地址、网关版本、延迟、模型数）都在面板里。
+ */
+function describeProblems(target: TargetStatus): string[] {
+	if (!target.usable) {
+		return [`$(warning) ${target.label} 配置不完整：${target.issues.join('；')}`];
 	}
-	tooltip.appendMarkdown('\n');
+	if (target.models.error === undefined) {
+		return [];
+	}
+	const lines = [`$(error) ${target.label}：${target.models.error}`];
+	if (target.models.hint !== undefined) {
+		lines.push(`　　建议：${target.models.hint}`);
+	}
+	return lines;
 }

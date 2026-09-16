@@ -13,6 +13,7 @@ import { findFilteringPattern, globToRegExp, matchAnyGlob } from '../models/matc
 import { buildModelConfigs, deriveFamily, extractRemoteHints, resolveModelConfig } from '../models/modelConfig';
 import type { NewApiModel } from '../types';
 import {
+	capturingLogger,
 	clearTestDataset,
 	createModel,
 	createSettings,
@@ -100,6 +101,19 @@ function findDatasetFile(): string | undefined {
 		dir = path.dirname(dir);
 	}
 	return undefined;
+}
+
+/** 全角空格：tooltip 用它把标签补到等宽（见 `models/tooltip.ts` 的 `padLabel`）。 */
+const PAD = '\u3000';
+
+/**
+ * 匹配 tooltip 里的一行事实。
+ *
+ * 标签是被补齐过的，标签与取值之间的间隙是全角空格、数量随标签长度变化，
+ * 因此不能写死字面量——这里只要求「同一行的标签 + 若干全角空格 + 取值」。
+ */
+function factRow(label: string, value: string): RegExp {
+	return new RegExp(`^${label}${PAD}+${value}$`, 'm');
 }
 
 suite('models / 本地模型数据表', () => {
@@ -294,6 +308,8 @@ suite('models / 配置整合', () => {
 		assert.strictEqual(config.meta.provenance.contextWindow, 'default');
 		assert.strictEqual(config.meta.datasetKey, undefined);
 		assert.strictEqual(config.imageInput, false);
+		// 没有展示名可用时，选择器里只能显示 ID
+		assert.strictEqual(config.name, 'totally-unknown-model');
 	});
 
 	test('数据表命中时采用数据表数值', () => {
@@ -309,18 +325,107 @@ suite('models / 配置整合', () => {
 		assert.strictEqual(config.meta.datasetKey, 'gpt-4o');
 		// 输入上限由「窗口 - 输出」推导
 		assert.strictEqual(config.maxInputTokens, 128_000 - 16_384);
-		assert.ok(config.tooltip.includes('模型数据表命中'), 'tooltip 应说明命中的数据表键');
+		// 选择器里显示展示名（ID 那种机器名没人愿意读），ID 仍留在 id 字段里回传
+		assert.strictEqual(config.name, 'GPT-4o');
+		assert.strictEqual(config.id, 'gpt-4o');
 	});
 
-	test('网关返回值覆盖数据表，并在冲突时给出提示', () => {
+	test('tooltip 逐项一行，来源与校正提醒不在里面', () => {
+		// 「数值可不可信、冲突时采用了谁」在状态面板里看，细节写进日志；tooltip 只回答
+		// 「这是什么模型、能干什么」——把提醒塞进来会让每次悬停都变成读一张表。
+		const captured = capturingLogger();
 		const config = resolveModelConfig(createModel('gpt-4o', { context_length: 64_000 }), {
+			settings: createSettings(),
+			logger: captured.logger,
+		});
+		// 冲突不能静默：不写进模型信息，就必须落在日志里
+		assert.ok(
+			captured.messages('debug').some(line => line.includes('上下文窗口') && line.includes('不一致')),
+			`冲突应写进日志，实际：${captured.messages('debug').join(' | ')}`,
+		);
+		// 不写标题（悬浮卡片自己渲染模型名），第一段直接是身份：`id` · 厂商
+		assert.ok(
+			config.tooltip.startsWith('`gpt-4o` · OpenAI\n'),
+			`第一行应是身份，实际：${config.tooltip}`,
+		);
+		assert.ok(!config.tooltip.includes('### '), '不应再有标题');
+		assert.ok(!config.tooltip.includes('GPT-4o'), '展示名不再出现在 tooltip 里');
+		assert.ok(factRow('上下文窗口', '64K').test(config.tooltip), `应采用网关的窗口，实际：${config.tooltip}`);
+		// 能力位仍要在 tooltip 里可见
+		assert.ok(factRow('图片输入', '✅').test(config.tooltip), `实际：${config.tooltip}`);
+		assert.ok(factRow('工具调用', '✅').test(config.tooltip), `实际：${config.tooltip}`);
+		assert.ok(!config.tooltip.includes('⚠️'), '校正提醒不进 tooltip');
+		assert.ok(!config.tooltip.includes('数据表命中'), '命中的数据表键不进 tooltip');
+	});
+
+	test('网关给出展示名时优先用它', () => {
+		// 数据表里没有这个模型，只能靠网关的名字
+		const config = resolveModelConfig(createModel('some-relay-model', { display_name: 'Friendly Name' }), {
 			settings: createSettings(),
 			logger: testLogger(),
 		});
+		assert.strictEqual(config.name, 'Friendly Name');
+		assert.strictEqual(config.id, 'some-relay-model');
+	});
+
+	test('键与值分列：标签补到等宽，取值列对齐', () => {
+		const config = resolveModelConfig(createModel('gpt-4o'), {
+			settings: createSettings(),
+			logger: testLogger(),
+		});
+		// 每个项目各自成段：段落数 = 身份 + 6 行事实。若把事实挤成一行，段落数会变少
+		assert.strictEqual(
+			config.tooltip.split('\n\n').length,
+			7,
+			`每个项目应当各自成段，实际：${JSON.stringify(config.tooltip)}`,
+		);
+		// 一行事实 = 无全角空格的标签 + 若干全角空格 + 取值（取值里不含全角空格）
+		const rows = config.tooltip
+			.split('\n')
+			.map(line => /^(\S+?)(\u3000+)(\S+)$/.exec(line))
+			.filter((match): match is RegExpExecArray => match !== null);
+		assert.strictEqual(rows.length, 6, `应恰有 6 行事实，实际：${config.tooltip}`);
+		// 标签宽度 + 间隙宽度逐行相等，取值才会落在同一列上
+		const valueColumns = rows.map(match => [...match[1]].length + [...match[2]].length);
+		assert.strictEqual(
+			new Set(valueColumns).size,
+			1,
+			`取值列应当对齐，实际列位：${valueColumns.join(' / ')}\n${config.tooltip}`,
+		);
+		// 键与值之间必须有间隙（不能因为补齐而黏在一起）
+		for (const match of rows) {
+			assert.ok(match[2].length >= 1, `标签与取值之间应有间隙，实际：${match[0]}`);
+		}
+	});
+
+	test('网关返回值覆盖数据表，差异记进日志', () => {
+		const captured = capturingLogger();
+		const config = resolveModelConfig(createModel('gpt-4o', { context_length: 64_000 }), {
+			settings: createSettings(),
+			logger: captured.logger,
+		});
 		assert.strictEqual(config.contextWindow, 64_000);
 		assert.strictEqual(config.meta.provenance.contextWindow, 'remote');
-		// 差异显著时应在 tooltip 里提醒用户
-		assert.ok(config.meta.notes.some(note => note.includes('不一致') && note.includes('已采用网关值')));
+		// 差异显著时要在日志里留痕（用户排查「站点明明支持更大窗口」时的唯一线索）
+		assert.ok(
+			captured.messages('debug').some(line => line.includes('不一致') && line.includes('已采用网关值')),
+			`应记录差异，实际：${captured.messages('debug').join(' | ')}`,
+		);
+	});
+
+	test('数值没有差异时不会多写一条日志', () => {
+		const captured = capturingLogger();
+		resolveModelConfig(createModel('gpt-4o'), {
+			settings: createSettings(),
+			logger: captured.logger,
+		});
+		// trace 行证明这个模型确实走完了流程，避免「一条日志都没写也算通过」
+		assert.strictEqual(captured.messages('trace').length, 1);
+		assert.deepStrictEqual(
+			captured.messages('debug'),
+			[],
+			`本例不应有任何提示，实际：${captured.messages('debug').join(' | ')}`,
+		);
 	});
 
 	test('数据表连条目都没有时退回网关与默认值', () => {
@@ -338,9 +443,10 @@ suite('models / 配置整合', () => {
 	test('输出过大时会被压回，保证输入空间', () => {
 		// 数据表里 gpt-4 的窗口是 8192，这里让这条记录声称能输出 8000
 		installTestDataset([datasetEntry('gpt-4', { contextWindow: 8_192, maxOutputTokens: 8_000 })]);
+		const captured = capturingLogger();
 		const config = resolveModelConfig(createModel('gpt-4'), {
 			settings: createSettings(),
-			logger: testLogger(),
+			logger: captured.logger,
 		});
 		assert.strictEqual(config.contextWindow, 8_192);
 		assert.ok(config.maxOutputTokens < 8_000, '输出上限应被下调');
@@ -349,7 +455,11 @@ suite('models / 配置整合', () => {
 			config.maxInputTokens + config.maxOutputTokens <= config.contextWindow,
 			'输入 + 输出不应超过上下文窗口',
 		);
-		assert.ok(config.meta.notes.some(note => note.includes('挤占')));
+		// 修正不能静默：被下调的数字要能在日志里查到原因
+		assert.ok(
+			captured.messages('debug').some(line => line.includes('挤占')),
+			`应记录下调原因，实际：${captured.messages('debug').join(' | ')}`,
+		);
 	});
 
 	test('输入上限超过窗口时会被收敛', () => {
@@ -421,14 +531,14 @@ suite('models / 思考能力', () => {
 		const config = resolve('deepseek-reasoner');
 		assert.strictEqual(config.reasoning, true);
 		assert.strictEqual(config.meta.provenance.reasoning, 'dataset');
-		assert.ok(config.tooltip.includes('思考强度'), 'tooltip 应告诉用户可以去选择思考强度');
+		assert.ok(factRow('思考', '✅').test(config.tooltip), `思考能力要能一眼看到，实际：${config.tooltip}`);
 	});
 
 	test('数据表未命中且网关没表态时为不支持', () => {
 		const config = resolve('totally-unknown-reasoner');
 		assert.strictEqual(config.reasoning, false);
 		assert.strictEqual(config.meta.provenance.reasoning, 'default');
-		assert.ok(!config.tooltip.includes('思考强度'));
+		assert.ok(factRow('思考', '❌').test(config.tooltip));
 	});
 
 	test('网关列出推理参数时视为支持思考', () => {
@@ -481,25 +591,20 @@ suite('models / 思考能力', () => {
 		assert.strictEqual(config.reasoning, true, '它确实支持思考');
 		assert.deepStrictEqual(config.reasoningEfforts, []);
 		assert.strictEqual(config.defaultReasoningEffort, undefined);
-		assert.ok(!config.tooltip.includes('思考强度'), '没有档位就不该提示去调整');
 	});
 
-	test('tooltip 用原值列出该模型的档位与默认强度', () => {
+	test('tooltip 不复述档位（档位在模型选择器里就能选）', () => {
 		installTestDataset([datasetEntry('wide', {
 			reasoning: true,
 			supportsReasoningEffort: ['max', 'high'],
 			defaultReasoningEffort: 'high',
 		})]);
-		const tooltip = resolve('wide').tooltip;
-		// 不翻译、不缩写：上游词汇就是站点文档里的写法；也不含任何占位选项
-		assert.ok(tooltip.includes('思考强度」：max / high。'), `应只列出真实档位，实际：${tooltip}`);
-		assert.ok(tooltip.includes('默认值是 high'), `应说明默认强度原值，实际：${tooltip}`);
-	});
-
-	test('没有默认强度时 tooltip 不编造默认值', () => {
-		installTestDataset([datasetEntry('mystery-reasoner', { reasoning: true, supportsReasoningEffort: ['high'] })]);
-		const tooltip = resolve('mystery-reasoner').tooltip;
-		assert.ok(tooltip.includes('思考强度」：high。'));
-		assert.ok(!tooltip.includes('默认值'));
+		const config = resolve('wide');
+		// 档位本身仍要解析出来给选择器用，只是不再抄进 tooltip
+		assert.deepStrictEqual(config.reasoningEfforts, ['max', 'high']);
+		assert.strictEqual(config.defaultReasoningEffort, 'high');
+		assert.ok(factRow('思考', '✅').test(config.tooltip));
+		assert.ok(!config.tooltip.includes('max'), `不该列出档位，实际：${config.tooltip}`);
+		assert.ok(!config.tooltip.includes('high'), `不该列出默认档位，实际：${config.tooltip}`);
 	});
 });

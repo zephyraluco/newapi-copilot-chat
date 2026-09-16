@@ -1,7 +1,8 @@
 /**
  * 状态面板 UI（Webview）。
  *
- * 状态栏只回答「能不能用」，面板回答「为什么」：站点信息、配置问题、模型清单
+ * 分工：状态栏的悬浮提示只讲**本次会话的消耗**，站点与模型的细节都落在这里——
+ * 站点信息（地址、网关版本、延迟、最近刷新、列表来源）、配置问题、模型清单
  * （含每个数值的来源）、会话用量、适配器链、日志入口。
  *
  * 渲染：HTML 骨架只生成一次，状态通过 `postMessage` 增量下发；模型清单可能上百条，
@@ -418,15 +419,37 @@ function buildHtml(webview: vscode.Webview): string {
 			if (target.usable && target.models.error) {
 				statusDetail = h('div', { class: 'muted', text: target.models.hint || target.models.error });
 			}
+			var modelDetail = (target.models.filteredCount || target.models.invalidCount)
+				? h('div', {
+					class: 'muted',
+					text: '过滤 ' + (target.models.filteredCount || 0) + ' · 无效 ' + (target.models.invalidCount || 0),
+				})
+				: null;
+			// 列表是从网关新拉的还是沿用缓存，决定了「看到的数量」有多新鲜
+			var fetchedDetail = target.models.fetchedAt
+				? h('div', {
+					class: 'muted',
+					text: target.models.source === 'cache' ? '沿用缓存' : '本次拉取',
+				})
+				: null;
 			return h('tr', {}, [
 				h('td', {}, [
 					h('div', { text: target.label }),
-					target.siteName ? h('div', { class: 'muted', text: target.siteName }) : null,
+					target.siteName
+						? h('div', {
+							class: 'muted',
+							text: target.siteName + (target.gatewayVersion ? ' (v' + target.gatewayVersion + ')' : ''),
+						})
+						: null,
 				]),
 				h('td', {}, [h('code', { text: target.baseUrl || '(未配置)' })]),
 				h('td', {}, [statusCell, statusDetail]),
-				h('td', { text: target.models.count + ' / ' + (target.models.rawCount || 0) }),
+				h('td', {}, [h('div', { text: target.models.count + ' / ' + (target.models.rawCount || 0) }), modelDetail]),
 				h('td', { text: target.latencyMs === undefined ? '—' : fmtDuration(target.latencyMs) }),
+				h('td', { class: 'muted' }, [
+					h('div', { text: target.models.fetchedAt ? fmtRelative(target.models.fetchedAt) : '—' }),
+					fetchedDetail,
+				]),
 				capabilities,
 			]);
 		});
@@ -437,6 +460,7 @@ function buildHtml(webview: vscode.Webview): string {
 				h('th', { text: '状态' }),
 				h('th', { text: '模型（可用 / 网关返回）' }),
 				h('th', { text: '延迟' }),
+				h('th', { text: '最近刷新' }),
 				h('th', { text: '可选端点' }),
 			])]),
 			h('tbody', {}, rows),
@@ -461,10 +485,21 @@ function buildHtml(webview: vscode.Webview): string {
 		var tokens = usage.totalTokens > 0
 			? fmtTokens(usage.promptTokens) + ' 输入 + ' + fmtTokens(usage.completionTokens) + ' 输出'
 			: '上游未返回用量';
+		// 缓存与思考只在真实存在时出现："命中 0" 与 "上游不报缓存" 是两件事（口径见 status/usage.ts）
+		var cache = !usage.cacheReported
+			? null
+			: usage.cachedTokens > 0
+				? fmtTokens(usage.cachedTokens)
+					+ (usage.promptTokens > 0
+						? '（' + Math.round(usage.cachedTokens / usage.promptTokens * 100) + '%）'
+						: '')
+				: '无命中';
 		return factList([
 			['请求次数', String(usage.requests)],
 			['工具调用', String(usage.toolCalls)],
 			['Token', tokens],
+			['缓存命中', cache],
+			['其中思考', usage.reasoningTokens > 0 ? fmtTokens(usage.reasoningTokens) : null],
 			['最近请求', usage.lastRequestAt
 				? fmtRelative(usage.lastRequestAt)
 					+ (usage.lastModelId ? '（' + usage.lastModelId + '）' : '')
