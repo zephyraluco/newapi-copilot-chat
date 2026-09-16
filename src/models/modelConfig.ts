@@ -75,8 +75,6 @@ export interface ModelConfigMeta {
 	readonly ownedBy?: string;
 	/** 厂商 */
 	readonly vendor?: string;
-	/** 规范展示名 */
-	readonly displayName?: string;
 	/** 命中的模型数据表键 */
 	readonly datasetKey?: string;
 	/** 每个字段的取值来源 */
@@ -398,7 +396,6 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	const meta: ModelConfigMeta = {
 		ownedBy: asNonEmptyString(model.owned_by),
 		vendor,
-		displayName,
 		datasetKey: dataset?.key,
 		provenance,
 	};
