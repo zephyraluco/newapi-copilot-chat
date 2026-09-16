@@ -8,6 +8,7 @@ import {
 	matchModelDataset,
 	parseModelDataset,
 } from '../models/dataset';
+import type { ModelDatasetEntry } from '../models/dataset';
 import { findFilteringPattern, globToRegExp, matchAnyGlob } from '../models/matcher';
 import { buildModelConfigs, deriveFamily, extractRemoteHints, resolveModelConfig } from '../models/modelConfig';
 import type { NewApiModel } from '../types';
@@ -124,6 +125,30 @@ suite('models / 本地模型数据表', () => {
 		assert.strictEqual(matchModelDataset(`${first.id}@official`)?.key, first.id);
 	});
 
+	test('随包数据表里的思考强度字段自洽', () => {
+		const file = findDatasetFile();
+		assert.ok(file !== undefined, `未找到 data/${MODEL_DATASET_FILE}`);
+		const dataset = installModelDataset(safeJsonParse(readFileSync(file, 'utf8')));
+
+		type EntryWithEfforts = ModelDatasetEntry & { readonly supportsReasoningEffort: readonly string[] };
+		const withEfforts = dataset.entries.filter(
+			(entry): entry is EntryWithEfforts => entry.supportsReasoningEffort !== undefined,
+		);
+		assert.ok(withEfforts.length > 10, `带强度列表的条目过少：${withEfforts.length}`);
+		for (const entry of withEfforts) {
+			// 生成脚本从上游原样抄下 `supported_efforts` 与 `default_effort`，
+			// 因此这两条应当成立；一旦不成立就说明生成侧或载入侧漂了
+			assert.ok(entry.supportsReasoningEffort.length > 0, `${entry.id} 的列表不应为空`);
+			assert.strictEqual(entry.reasoning, true, `${entry.id} 能调强度就应当支持思考`);
+			const fallback = entry.defaultReasoningEffort;
+			assert.ok(fallback !== undefined, `${entry.id} 有强度列表却没有默认强度`);
+			assert.ok(
+				entry.supportsReasoningEffort.includes(fallback),
+				`${entry.id} 的默认强度应当落在自己的列表里`,
+			);
+		}
+	});
+
 	test('精确命中优先，不会被剥掉后缀后的候选抢走', () => {
 		installTestDataset([
 			datasetEntry('gpt-4o'),
@@ -166,6 +191,32 @@ suite('models / 本地模型数据表', () => {
 		const dataset = parseModelDataset([{ id: 'x', contextWindow: 1_000, maxOutputTokens: 100 }]);
 		assert.strictEqual(dataset.entries[0].imageInput, false);
 		assert.strictEqual(dataset.entries[0].toolCalling, false);
+	});
+
+	test('思考强度列表被收拢：去空白、去重、全空视为没有', () => {
+		const dataset = parseModelDataset({
+			models: [
+				{
+					id: 'a',
+					contextWindow: 1_000,
+					maxOutputTokens: 100,
+					supportsReasoningEffort: [' high ', 'low', 'high', 7, '  '],
+					defaultReasoningEffort: ' high ',
+				},
+				{
+					id: 'b',
+					contextWindow: 1_000,
+					maxOutputTokens: 100,
+					supportsReasoningEffort: ['   '],
+					defaultReasoningEffort: '   ',
+				},
+			],
+		});
+		assert.deepStrictEqual(dataset.entries[0].supportsReasoningEffort, ['high', 'low']);
+		assert.strictEqual(dataset.entries[0].defaultReasoningEffort, 'high');
+		// 全空列表等于「没有这个信息」，而不是「一个选项都没有」
+		assert.strictEqual(dataset.entries[1].supportsReasoningEffort, undefined);
+		assert.strictEqual(dataset.entries[1].defaultReasoningEffort, undefined);
 	});
 
 	test('清空数据表后查不到任何记录', () => {
@@ -258,10 +309,10 @@ suite('models / 配置整合', () => {
 		assert.strictEqual(config.meta.datasetKey, 'gpt-4o');
 		// 输入上限由「窗口 - 输出」推导
 		assert.strictEqual(config.maxInputTokens, 128_000 - 16_384);
-		assert.ok(config.tooltip.includes('本地模型数据表命中'), 'tooltip 应说明命中的数据表键');
+		assert.ok(config.tooltip.includes('模型数据表命中'), 'tooltip 应说明命中的数据表键');
 	});
 
-	test('网关返回值覆盖数据表', () => {
+	test('网关返回值覆盖数据表，并在冲突时给出提示', () => {
 		const config = resolveModelConfig(createModel('gpt-4o', { context_length: 64_000 }), {
 			settings: createSettings(),
 			logger: testLogger(),
@@ -269,27 +320,25 @@ suite('models / 配置整合', () => {
 		assert.strictEqual(config.contextWindow, 64_000);
 		assert.strictEqual(config.meta.provenance.contextWindow, 'remote');
 		// 差异显著时应在 tooltip 里提醒用户
-		assert.ok(config.meta.notes.some(note => note.includes('不一致')));
+		assert.ok(config.meta.notes.some(note => note.includes('不一致') && note.includes('已采用网关值')));
 	});
 
-	test('用户覆盖的优先级最高', () => {
-		const config = resolveModelConfig(
-			createModel('gpt-4o', { context_length: 64_000 }),
-			{
-				settings: createSettings({
-					overrides: { 'gpt-4o': { contextWindow: 32_000, toolCalling: false } },
-				}),
-				logger: testLogger(),
-			},
-		);
+	test('数据表连条目都没有时退回网关与默认值', () => {
+		installTestDataset([]);
+		const config = resolveModelConfig(createModel('nowhere-to-be-found', { context_length: 32_000 }), {
+			settings: createSettings(),
+			logger: testLogger(),
+		});
 		assert.strictEqual(config.contextWindow, 32_000);
-		assert.strictEqual(config.toolCalling, false);
-		assert.strictEqual(config.meta.provenance.contextWindow, 'override');
+		assert.strictEqual(config.meta.provenance.contextWindow, 'remote');
+		assert.strictEqual(config.maxOutputTokens, 8_192);
+		assert.strictEqual(config.meta.provenance.maxOutputTokens, 'default');
 	});
 
 	test('输出过大时会被压回，保证输入空间', () => {
-		// 数据表里 gpt-4 的窗口是 8192，这里让网关声称能输出 8000
-		const config = resolveModelConfig(createModel('gpt-4', { max_output_tokens: 8_000 }), {
+		// 数据表里 gpt-4 的窗口是 8192，这里让这条记录声称能输出 8000
+		installTestDataset([datasetEntry('gpt-4', { contextWindow: 8_192, maxOutputTokens: 8_000 })]);
+		const config = resolveModelConfig(createModel('gpt-4'), {
 			settings: createSettings(),
 			logger: testLogger(),
 		});
@@ -346,5 +395,111 @@ suite('models / 批量构建与过滤', () => {
 		);
 		assert.strictEqual(result.configs.length, 1);
 		assert.strictEqual(result.invalidCount, 1);
+	});
+});
+
+suite('models / 思考能力', () => {
+	const DATASET = [
+		datasetEntry('deepseek-reasoner', {
+			reasoning: true,
+			supportsReasoningEffort: ['low', 'medium', 'high'],
+		}),
+		datasetEntry('gpt-4o'),
+	];
+
+	setup(() => installTestDataset(DATASET));
+	teardown(clearTestDataset);
+
+	function resolve(id: string, extra: Record<string, unknown> = {}) {
+		return resolveModelConfig(createModel(id, extra), {
+			settings: createSettings(),
+			logger: testLogger(),
+		});
+	}
+
+	test('数据表命中时采用数据表的思考能力', () => {
+		const config = resolve('deepseek-reasoner');
+		assert.strictEqual(config.reasoning, true);
+		assert.strictEqual(config.meta.provenance.reasoning, 'dataset');
+		assert.ok(config.tooltip.includes('思考强度'), 'tooltip 应告诉用户可以去选择思考强度');
+	});
+
+	test('数据表未命中且网关没表态时为不支持', () => {
+		const config = resolve('totally-unknown-reasoner');
+		assert.strictEqual(config.reasoning, false);
+		assert.strictEqual(config.meta.provenance.reasoning, 'default');
+		assert.ok(!config.tooltip.includes('思考强度'));
+	});
+
+	test('网关列出推理参数时视为支持思考', () => {
+		const config = resolve('some-model', { supported_parameters: ['tools', 'reasoning'] });
+		assert.strictEqual(config.reasoning, true);
+		assert.strictEqual(config.meta.provenance.reasoning, 'remote');
+	});
+
+	test('网关没列推理参数不会抹掉数据表的能力', () => {
+		// New API 的 /v1/models 根本不返回 supported_parameters，
+		// 因此「列不出来」只能理解为「没暴露参数」，不能推断模型不会思考。
+		const config = resolve('deepseek-reasoner', { supported_parameters: ['tools'] });
+		assert.strictEqual(config.reasoning, true);
+		assert.strictEqual(config.meta.provenance.reasoning, 'dataset');
+	});
+
+	test('数据表没写时靠网关未表态而判定为不支持', () => {
+		// 数据表只有明确写了 false 才算否定（见下个用例）；没写则只能靠网关
+		installTestDataset([datasetEntry('mystery', { reasoning: false })]);
+		const config = resolve('mystery');
+		assert.strictEqual(config.reasoning, false);
+		assert.strictEqual(config.meta.provenance.reasoning, 'dataset');
+	});
+
+	test('网关声明支持思考时优先于数据表', () => {
+		// 数据表里没有这个模型，而网关自己说支持——以网关为准
+		installTestDataset([datasetEntry('talkative', { reasoning: false })]);
+		const config = resolve('talkative', { supported_parameters: ['reasoning'] });
+		assert.strictEqual(config.reasoning, true);
+		assert.strictEqual(config.meta.provenance.reasoning, 'remote');
+	});
+
+	test('数据表给出强度列表时采用它', () => {
+		// 上游词汇比任何固定的三档都宽（实测有 max / xhigh / minimal / none）
+		installTestDataset([datasetEntry('wide', {
+			reasoning: true,
+			supportsReasoningEffort: ['max', 'xhigh', 'high', 'low'],
+			defaultReasoningEffort: 'high',
+		})]);
+		const config = resolve('wide');
+		assert.deepStrictEqual(config.reasoningEfforts, ['max', 'xhigh', 'high', 'low']);
+		assert.strictEqual(config.defaultReasoningEffort, 'high');
+	});
+
+	test('数据表没有强度列表时就是空列表，不回退到任何内置档位', () => {
+		// 「会思考但不能调强度」的模型（上游只给 mandatory / default_enabled）就属于这种。
+		// 凭空造一组合适的值只会发出站点不认的请求
+		installTestDataset([datasetEntry('narrow', { reasoning: true })]);
+		const config = resolve('narrow');
+		assert.strictEqual(config.reasoning, true, '它确实支持思考');
+		assert.deepStrictEqual(config.reasoningEfforts, []);
+		assert.strictEqual(config.defaultReasoningEffort, undefined);
+		assert.ok(!config.tooltip.includes('思考强度'), '没有档位就不该提示去调整');
+	});
+
+	test('tooltip 用原值列出该模型的档位与默认强度', () => {
+		installTestDataset([datasetEntry('wide', {
+			reasoning: true,
+			supportsReasoningEffort: ['max', 'high'],
+			defaultReasoningEffort: 'high',
+		})]);
+		const tooltip = resolve('wide').tooltip;
+		// 不翻译、不缩写：上游词汇就是站点文档里的写法；也不含任何占位选项
+		assert.ok(tooltip.includes('思考强度」：max / high。'), `应只列出真实档位，实际：${tooltip}`);
+		assert.ok(tooltip.includes('默认值是 high'), `应说明默认强度原值，实际：${tooltip}`);
+	});
+
+	test('没有默认强度时 tooltip 不编造默认值', () => {
+		installTestDataset([datasetEntry('mystery-reasoner', { reasoning: true, supportsReasoningEffort: ['high'] })]);
+		const tooltip = resolve('mystery-reasoner').tooltip;
+		assert.ok(tooltip.includes('思考强度」：high。'));
+		assert.ok(!tooltip.includes('默认值'));
 	});
 });

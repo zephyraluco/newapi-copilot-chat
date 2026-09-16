@@ -15,10 +15,11 @@
  * - `architecture.input_modalities` —— 输入模态（能不能看图）
  * - `architecture.output_modalities` —— 输出模态（能不能对话）
  * - `supported_parameters` —— 可用参数（`tools` = 工具调用、`reasoning` = 思考）
+ * - `reasoning.supported_efforts` / `reasoning.default_effort` —— 思考强度
  *
  * 本脚本把上游的原始条目收敛成一份精简清单，写进 `data/openrouter-models.json`：
  * 这个文件就是扩展运行时要读的模型数据表，因此重新生成一次即完成数据更新
- * （无需改代码；文件在激活时读取，开发宿主里重载窗口即可看到新值）。
+ * （无需改代码；扩展在激活时读取，重载窗口即可看到新值）。
  *
  * ## 用法
  *
@@ -51,7 +52,9 @@
  *           "maxOutputTokens": 128000,
  *           "imageInput": true,
  *           "toolCalling": true,
- *           "reasoning": true
+ *           "reasoning": true,
+ *           "supportsReasoningEffort": ["max", "high", "medium", "low"],
+ *           "defaultReasoningEffort": "high"
  *         }
  *       ]
  *     }
@@ -60,6 +63,14 @@
  * 可以被直接载入：`contextWindow` / `maxOutputTokens` 缺失或非正数的条目会在载入时被丢弃，
  * `imageInput` / `toolCalling` 缺失则收敛为 `false`。`reasoning` 是额外信息，
  * 对应 `newapi-copilot-chat.request.includeReasoning` 关心的思维链能力。
+ *
+ * `supportsReasoningEffort` 与 `defaultReasoningEffort` 只在**上游确实给出**时才写：
+ * 实测 443 条里有 311 条带 `reasoning` 对象，其中 141 条只有 `mandatory` / `default_enabled`
+ * 而**没有**强度列表 —— 这类模型只是“会思考”，并不能调强度，因此不写这两个字段。
+ *
+ * ⚠️ 强度取值用的是**上游自己的词汇**（实测出现过 `max` / `xhigh` / `high` / `medium` /
+ * `low` / `minimal` / `none`），不同上游对一些边缘取值（`max`、`none`）的叫法并不一致。
+ * 它只是“这个模型能选哪些档”的提示；真正发出去的值是否被站点接受，取决于站点与它的上游。
  *
  * ## 过滤规则
  *
@@ -112,9 +123,10 @@ function printHelp() {
 			'  --help              显示本帮助',
 			'',
 			'输出字段：id / vendor / displayName / contextWindow / maxOutputTokens /',
-			'          imageInput / toolCalling / reasoning',
+			'          imageInput / toolCalling / reasoning / supportsReasoningEffort /',
+			'          defaultReasoningEffort',
 			'（id 已剥掉厂商前缀与变体后缀；丢弃变体与路由型伪模型、非对话模型、',
-			'  缺少上下文窗口与输出上限的模型）',
+			'  缺少上下文窗口与输出上限的模型；后两个字段仅在上游给出时才会出现）',
 		].join('\n'),
 	);
 }
@@ -205,6 +217,23 @@ function asPositiveNumber(value) {
 /** 取字符串数组。 */
 function asStringArray(value) {
 	return Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
+}
+
+/**
+ * 收拢思考强度列表：去空白、去重、保序（上游是按由强到弱排的，有语义）。
+ *
+ * 全空时返回 `undefined`：这样调用方可以直接用它在输出里决定“写不写这个字段”。
+ */
+function normalizeEfforts(value) {
+	const list = asStringArray(value);
+	const result = [];
+	for (const item of list) {
+		const trimmed = item.trim();
+		if (trimmed.length > 0 && !result.includes(trimmed)) {
+			result.push(trimmed);
+		}
+	}
+	return result.length > 0 ? result : undefined;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -361,6 +390,17 @@ function convert(model, options, now) {
 	const vendor = resolveVendor(model);
 	const displayName = resolveDisplayName(model, vendor);
 
+	// 思考强度：`reasoning.supported_efforts` 是「能选哪几档」，`default_effort` 是不指定时的取值。
+	// 上游实测 311/443 条有 `reasoning` 对象，其中 141 条只有 `mandatory` / `default_enabled`
+	// —— 这类模型会思考但不能调强度，因此不写那两个字段。
+	const reasoningInfo = isRecord(model.reasoning) ? model.reasoning : undefined;
+	const supportsReasoningEffort = reasoningInfo === undefined
+		? undefined
+		: normalizeEfforts(reasoningInfo.supported_efforts);
+	const defaultReasoningEffort = reasoningInfo === undefined
+		? undefined
+		: asNonEmptyString(reasoningInfo.default_effort);
+
 	const record = {
 		id,
 		vendor: vendor ?? '未知',
@@ -369,7 +409,12 @@ function convert(model, options, now) {
 		maxOutputTokens,
 		imageInput: inputModalities.includes('image'),
 		toolCalling: supportedParameters.includes('tools'),
-		reasoning: supportedParameters.includes('reasoning') || supportedParameters.includes('include_reasoning'),
+		// `reasoning` 对象本身就是「支持思考」的强证据，参数列表只是另一条线索
+		reasoning: reasoningInfo !== undefined
+			|| supportedParameters.includes('reasoning')
+			|| supportedParameters.includes('include_reasoning'),
+		...(supportsReasoningEffort === undefined ? {} : { supportsReasoningEffort }),
+		...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
 	};
 
 	return { ok: true, model: record, canonical: !rawId.startsWith('~') };

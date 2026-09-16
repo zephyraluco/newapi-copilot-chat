@@ -32,6 +32,8 @@ export interface PanelModelRow {
 	readonly maxOutputTokens: number;
 	readonly imageInput: boolean;
 	readonly toolCalling: boolean;
+	/** 是否具备思考能力（模型选择器里会出现思考强度选项） */
+	readonly reasoning: boolean;
 	readonly vendor?: string;
 	readonly ownedBy?: string;
 	/** 命中的本地模型数据表键（未命中时为空） */
@@ -500,7 +502,8 @@ function buildHtml(webview: vscode.Webview): string {
 				var caps = h('span', { class: 'caps' }, [
 					h('span', { text: row.imageInput ? '🖼' : '', title: row.imageInput ? '支持图片输入' : undefined }),
 					h('span', { text: row.toolCalling ? '🔧' : '', title: row.toolCalling ? '支持工具调用' : undefined }),
-					h('span', { text: (!row.imageInput && !row.toolCalling) ? '📝' : '', title: '纯文本' }),
+					h('span', { text: row.reasoning ? '🧠' : '', title: row.reasoning ? '支持思考强度调整' : undefined }),
+					h('span', { text: (!row.imageInput && !row.toolCalling && !row.reasoning) ? '📝' : '', title: '纯文本' }),
 				]);
 				var nameCell = h('div', {}, [
 					h('div', { text: row.name }),

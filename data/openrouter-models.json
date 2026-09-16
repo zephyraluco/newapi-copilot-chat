@@ -1,11 +1,11 @@
 {
   "source": "https://openrouter.ai/api/v1/models",
-  "generatedAt": "2026-09-15T12:45:41.310Z",
-  "totalFetched": 445,
+  "generatedAt": "2026-09-16T04:23:51.081Z",
+  "totalFetched": 443,
   "count": 343,
   "dropped": {
     "invalidEntry": 0,
-    "variant": 96,
+    "variant": 94,
     "noTextInput": 0,
     "noTextOutput": 0,
     "noContextWindow": 0,
@@ -73,7 +73,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-fable-5.1",
@@ -83,7 +91,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-fable-latest",
@@ -93,7 +109,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-haiku-4.5",
@@ -153,7 +177,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-opus-4.7",
@@ -163,7 +194,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-opus-4.8",
@@ -173,7 +212,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-opus-5",
@@ -183,7 +230,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-opus-latest",
@@ -193,7 +248,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-sonnet-4",
@@ -223,7 +286,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "claude-sonnet-5",
@@ -233,7 +303,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "claude-sonnet-latest",
@@ -243,7 +321,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "codestral-2508",
@@ -343,7 +429,13 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-pro-latest",
@@ -353,7 +445,13 @@
       "maxOutputTokens": 384000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-r1",
@@ -423,7 +521,12 @@
       "maxOutputTokens": 384000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4-flash-0731",
@@ -433,7 +536,13 @@
       "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4-flash-latest",
@@ -443,7 +552,13 @@
       "maxOutputTokens": 393216,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4-flash-vision-exp",
@@ -453,7 +568,13 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4-pro",
@@ -463,7 +584,12 @@
       "maxOutputTokens": 393216,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4-pro-0813",
@@ -473,7 +599,13 @@
       "maxOutputTokens": 384000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "deepseek-v4.1-flash",
@@ -483,7 +615,13 @@
       "maxOutputTokens": 384000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "devstral-2512",
@@ -523,7 +661,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "fugu-ultra",
@@ -533,7 +677,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "fugu-ultra-v2",
@@ -543,7 +693,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "gemini-2.5-flash",
@@ -603,7 +759,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3-pro-image",
@@ -633,7 +796,12 @@
       "maxOutputTokens": 32768,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.1-flash-image-preview",
@@ -643,7 +811,12 @@
       "maxOutputTokens": 58982,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.1-flash-lite",
@@ -653,7 +826,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.1-flash-lite-image",
@@ -663,7 +843,12 @@
       "maxOutputTokens": 58982,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -673,7 +858,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -683,7 +875,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3.1-pro-preview-customtools",
@@ -693,7 +891,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3.5-flash",
@@ -703,7 +907,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3.5-flash-lite",
@@ -713,7 +924,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-3.6-flash",
@@ -723,7 +941,14 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3.7-flash",
@@ -733,7 +958,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-3.8-flash",
@@ -743,7 +974,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-flash-latest",
@@ -753,7 +990,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemini-pro-latest",
@@ -763,7 +1006,13 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gemma-2-27b-it",
@@ -933,7 +1182,12 @@
       "maxOutputTokens": 128000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "glm-5.3",
@@ -943,7 +1197,13 @@
       "maxOutputTokens": 943717,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "glm-5.3-flash",
@@ -953,7 +1213,13 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "glm-5v-turbo",
@@ -973,7 +1239,13 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "glm-latest",
@@ -983,7 +1255,13 @@
       "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "gpt-3.5-turbo",
@@ -1143,7 +1421,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5-image",
@@ -1173,7 +1458,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5-nano",
@@ -1183,7 +1475,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5-pro",
@@ -1193,7 +1492,11 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "gpt-5.1",
@@ -1203,7 +1506,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "none"
     },
     {
       "id": "gpt-5.1-codex",
@@ -1213,7 +1523,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.1-codex-max",
@@ -1223,7 +1539,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.1-codex-mini",
@@ -1233,7 +1556,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.2",
@@ -1243,7 +1572,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.2-chat",
@@ -1263,7 +1600,14 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.2-pro",
@@ -1273,7 +1617,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.3-codex",
@@ -1283,7 +1633,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.4",
@@ -1293,7 +1651,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.4-image-2",
@@ -1303,7 +1669,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.4-mini",
@@ -1313,7 +1687,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.4-nano",
@@ -1323,7 +1705,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.4-pro",
@@ -1333,7 +1723,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.5",
@@ -1343,7 +1739,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.5-pro",
@@ -1353,7 +1757,13 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-luna",
@@ -1363,7 +1773,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-luna-pro",
@@ -1373,7 +1792,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-sol",
@@ -1383,7 +1811,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-sol-pro",
@@ -1393,7 +1830,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-terra",
@@ -1403,7 +1849,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-5.6-terra-pro",
@@ -1413,7 +1868,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-6-astra",
@@ -1423,7 +1887,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-6-astra-pro",
@@ -1433,7 +1905,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-astra-latest",
@@ -1443,7 +1923,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-audio",
@@ -1483,7 +1971,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-mini-latest",
@@ -1493,7 +1990,15 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-oss-120b",
@@ -1503,7 +2008,13 @@
       "maxOutputTokens": 117964,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-oss-20b",
@@ -1513,7 +2024,13 @@
       "maxOutputTokens": 117964,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-oss-safeguard-20b",
@@ -1533,7 +2050,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-terra-latest",
@@ -1543,7 +2069,16 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "granite-4.0-h-micro",
@@ -1563,7 +2098,13 @@
       "maxOutputTokens": 117964,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "grok-4.20",
@@ -1583,7 +2124,14 @@
       "maxOutputTokens": 1800000,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "grok-4.3",
@@ -1593,7 +2141,14 @@
       "maxOutputTokens": 900000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "low"
     },
     {
       "id": "grok-4.5",
@@ -1603,7 +2158,13 @@
       "maxOutputTokens": 450000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "grok-4.6",
@@ -1613,7 +2174,14 @@
       "maxOutputTokens": 450000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "grok-build-0.1",
@@ -1633,7 +2201,14 @@
       "maxOutputTokens": 450000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "hermes-3-llama-3.1-405b",
@@ -1713,7 +2288,13 @@
       "maxOutputTokens": 128000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "hy3-preview",
@@ -1723,7 +2304,13 @@
       "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "hy4-preview",
@@ -1733,7 +2320,13 @@
       "maxOutputTokens": 64000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "inkling",
@@ -1743,7 +2336,16 @@
       "maxOutputTokens": 471859,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "inkling-small",
@@ -1753,7 +2355,16 @@
       "maxOutputTokens": 262144,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "kat-coder-pro-v2",
@@ -1843,7 +2454,13 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "kimi-latest",
@@ -1853,7 +2470,13 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "l3-lunaris-8b",
@@ -2063,7 +2686,14 @@
       "maxOutputTokens": 50000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "mercury-2.5",
@@ -2073,7 +2703,14 @@
       "maxOutputTokens": 65536,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "mimo-v2.5",
@@ -2253,7 +2890,12 @@
       "maxOutputTokens": 209715,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "mistral-medium-3.1",
@@ -2303,7 +2945,12 @@
       "maxOutputTokens": 209715,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "mistral-small-3.1-24b-instruct",
@@ -2319,7 +2966,7 @@
       "id": "mistral-small-3.2-24b-instruct",
       "vendor": "Mistral",
       "displayName": "Mistral Small 3.2 24B",
-      "contextWindow": 128000,
+      "contextWindow": 256000,
       "maxOutputTokens": 16384,
       "imageInput": true,
       "toolCalling": true,
@@ -2363,7 +3010,14 @@
       "maxOutputTokens": 117964,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "muse-spark-1.1",
@@ -2373,7 +3027,15 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "muse-spark-1.2",
@@ -2383,7 +3045,15 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "muse-spark-1.2-contributor",
@@ -2393,7 +3063,15 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "muse-spark-1.3",
@@ -2403,7 +3081,16 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "muse-spark-1.3-contributor",
@@ -2413,7 +3100,16 @@
       "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "mythomax-l2-13b",
@@ -2443,17 +3139,27 @@
       "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "nemotron-3-ultra-550b-a55b",
       "vendor": "NVIDIA",
       "displayName": "Nemotron 3 Ultra",
-      "contextWindow": 202800,
-      "maxOutputTokens": 182520,
+      "contextWindow": 256000,
+      "maxOutputTokens": 32768,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "nemotron-3.5-content-safety",
@@ -2573,7 +3279,11 @@
       "maxOutputTokens": 100000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "o3-pro",
@@ -2603,7 +3313,11 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "palmyra-x5",
@@ -2683,7 +3397,7 @@
       "maxOutputTokens": 32768,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": false
+      "reasoning": true
     },
     {
       "id": "qwen2.5-vl-72b-instruct",
@@ -2843,7 +3557,7 @@
       "maxOutputTokens": 65536,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": false
+      "reasoning": true
     },
     {
       "id": "qwen3-max-thinking",
@@ -2899,8 +3613,8 @@
       "id": "qwen3-vl-30b-a3b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen3 VL 30B A3B Instruct",
-      "contextWindow": 262144,
-      "maxOutputTokens": 16384,
+      "contextWindow": 131072,
+      "maxOutputTokens": 32768,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": false
@@ -3113,7 +3827,13 @@
       "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "qwen3.8-27b",
@@ -3123,7 +3843,13 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "qwen3.8-flash",
@@ -3143,7 +3869,15 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "reka-edge",
@@ -3153,7 +3887,7 @@
       "maxOutputTokens": 14745,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": false
+      "reasoning": true
     },
     {
       "id": "reka-flash-3",
@@ -3203,7 +3937,12 @@
       "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "schematron-v2-small",
@@ -3263,7 +4002,13 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "seed-2.0-lite",
@@ -3273,7 +4018,14 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "seed-2.0-mini",
@@ -3283,7 +4035,14 @@
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "skyfall-36b-v2",
@@ -3383,7 +4142,13 @@
       "maxOutputTokens": 230400,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "trinity-large-thinking",

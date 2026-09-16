@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import type { ModelDatasetEntry } from '../models/dataset';
 import { resolveModelConfig } from '../models/modelConfig';
 import { toModelInformation } from '../provider/chatProvider';
 import { SessionRegistry } from '../provider/session';
@@ -8,7 +9,7 @@ import {
 	readOptionsConfiguration,
 	readOptionsGroup,
 } from '../provider/target';
-import { createModel, createSettings, testLogger } from './helpers';
+import { createModel, createSettings, datasetEntry, installTestDataset, testLogger } from './helpers';
 
 /**
  * 这些测试覆盖「配置从哪来、如何归一、会不会串台」。
@@ -236,5 +237,47 @@ suite('provider / 模型信息不外泄密钥', () => {
 		assert.strictEqual(info.targetLabel, target.label);
 		// 这个对象会被 VS Code 长期缓存在模型元数据里，绝不能带明文密钥
 		assert.ok(!JSON.stringify(info).includes(secret), '模型信息不得包含明文密钥');
+	});
+});
+
+suite('provider / 模型信息里的思考强度控件', () => {
+	/** 造一份交给 VS Code 的模型信息。 */
+	function infoFor(id: string, entry: Partial<ModelDatasetEntry> = {}) {
+		installTestDataset([datasetEntry(id, entry)]);
+		const config = resolveModelConfig(createModel(id), {
+			settings: createSettings(),
+			logger: testLogger(),
+		});
+		return toModelInformation(config, createTarget('g', configuration(), testLogger()));
+	}
+
+	teardown(() => installTestDataset([]));
+
+	test('有可选档位时才带上 configurationSchema', () => {
+		const info = infoFor('wide', {
+			reasoning: true,
+			supportsReasoningEffort: ['high', 'low'],
+			defaultReasoningEffort: 'high',
+		});
+		const property = info.configurationSchema?.properties.reasoningEffort;
+		assert.deepStrictEqual(property?.enum, ['high', 'low']);
+		// 预选项来自数据表，控件因此不是空选中状态
+		assert.strictEqual(property?.default, 'high');
+	});
+
+	test('数据表没给默认档位时控件不带预选项', () => {
+		const info = infoFor('wide', { reasoning: true, supportsReasoningEffort: ['high', 'low'] });
+		assert.ok(!('default' in (info.configurationSchema?.properties.reasoningEffort ?? {})));
+	});
+
+	test('档位为空时不带 configurationSchema（模型选择器里不会出现控件）', () => {
+		// 这是「会思考但不可调」的模型：给它一个没有选项的控件比不给控件更糟
+		const info = infoFor('narrow', { reasoning: true });
+		assert.strictEqual(info.configurationSchema, undefined);
+	});
+
+	test('不支持思考的模型同样不带 configurationSchema', () => {
+		const info = infoFor('plain', { reasoning: false });
+		assert.strictEqual(info.configurationSchema, undefined);
 	});
 });

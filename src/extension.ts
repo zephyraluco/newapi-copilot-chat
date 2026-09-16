@@ -39,6 +39,11 @@ import { StatusPanel, type PanelModelRow, type PanelModelsPayload } from './stat
 import { NewApiStatusBar } from './status/statusBar';
 import { StatusService } from './status/statusService';
 
+/** 模型数据表文件的绝对路径。 */
+function datasetFile(context: vscode.ExtensionContext): string {
+	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE).fsPath;
+}
+
 /**
  * 读取随包附带的模型数据表。
  *
@@ -48,18 +53,18 @@ import { StatusService } from './status/statusService';
  * 不影响扩展其余部分。
  */
 function loadModelDataset(context: vscode.ExtensionContext, logger: Logger): void {
-	const file = vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE);
+	const file = datasetFile(context);
 	let raw: unknown;
 	try {
-		raw = safeJsonParse(readFileSync(file.fsPath, 'utf8'));
+		raw = safeJsonParse(readFileSync(file, 'utf8'));
 	} catch (error) {
-		logger.warn(
-			`未能读取模型数据表 ${file.fsPath}：${error instanceof Error ? error.message : String(error)}`,
-		);
+		logger.warn(`未能读取模型数据表 ${file}：${error instanceof Error ? error.message : String(error)}`);
+		installModelDataset(undefined);
 		return;
 	}
 	if (raw === undefined) {
-		logger.warn(`模型数据表不是合法 JSON，已忽略：${file.fsPath}`);
+		logger.warn(`模型数据表不是合法 JSON，已忽略：${file}`);
+		installModelDataset(undefined);
 		return;
 	}
 
@@ -89,6 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	loggerService.warnIfChannelLevelBlocks();
 	logger.debug('初始配置', config.summary());
 
+	const dataset = datasetFile(context);
 	loadModelDataset(context, logger);
 
 	const adapters = createDefaultAdapterRegistry(logger.child('adapter'));
@@ -151,6 +157,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		void statusService.refresh({ forceModels: true }).then(() => provider.notifyModelsChanged());
 	});
 
+	// 数据表是随包发布的生成产物，因此在激活时读一次即可（要更新就重跑生成脚本）
+
 	// ---------------------------------------------------------------------
 	// 命令
 	// ---------------------------------------------------------------------
@@ -202,6 +210,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					maxOutputTokens: model.maxOutputTokens,
 					imageInput: model.imageInput,
 					toolCalling: model.toolCalling,
+					reasoning: model.reasoning,
 					vendor: model.meta.vendor,
 					ownedBy: model.meta.ownedBy,
 					datasetKey: model.meta.datasetKey,

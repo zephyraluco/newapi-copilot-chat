@@ -119,63 +119,6 @@
           "markdownDescription": "模型黑名单，语法与白名单一致，**优先级高于白名单**。\n\n例如：`[\"*-vision\", \"*-embedding\"]`。",
           "order": 11
         },
-        "newapi-copilot-chat.models.overrides": {
-          "type": "object",
-          "default": {},
-          "markdownDescription": "按模型 ID 精确覆盖元数据。\n\n当随包数据表的数值与你的渠道不符时（同一模型在不同中转上的上下文窗口确实可能不同），在这里修正。键为模型 ID，值为要覆盖的字段。\n\n```json\n{\n  \"deepseek-chat\": {\n    \"contextWindow\": 65536,\n    \"maxOutputTokens\": 8192,\n    \"toolCalling\": true\n  }\n}\n```",
-          "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "模型选择器中显示的名字；留空则直接显示模型 ID。"
-              },
-              "detail": {
-                "type": "string",
-                "description": "模型选择器中的副标题；留空则按「厂商 · 上下文窗口」自动生成。"
-              },
-              "family": {
-                "type": "string",
-                "description": "模型 family，影响 VS Code 的模型归类。"
-              },
-              "contextWindow": {
-                "type": "number",
-                "description": "上下文窗口（输入 + 输出）。"
-              },
-              "maxInputTokens": {
-                "type": "number",
-                "description": "输入上限；留空则由上下文窗口减去最大输出推导。"
-              },
-              "maxOutputTokens": {
-                "type": "number",
-                "description": "单次响应的最大输出 token。"
-              },
-              "imageInput": {
-                "type": "boolean",
-                "description": "是否支持图片输入。"
-              },
-              "toolCalling": {
-                "type": "boolean",
-                "description": "是否支持工具调用（function calling）。"
-              },
-              "description": {
-                "type": "string",
-                "description": "悬浮窗中展示的说明文字。"
-              },
-              "docsUrl": {
-                "type": "string",
-                "description": "悬浮窗中展示的官方文档链接。"
-              },
-              "extraBody": {
-                "type": "object",
-                "description": "仅对该模型生效的额外请求体字段，例如网关特有的思考开关。",
-                "additionalProperties": true
-              }
-            },
-            "additionalProperties": false
-          },
-          "order": 12
-        },
         "newapi-copilot-chat.models.cacheTtl": {
           "type": "number",
           "default": 300000,

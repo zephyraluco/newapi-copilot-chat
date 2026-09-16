@@ -82,9 +82,9 @@ flowchart TD
 
 | 文件 | 行数 | 职责 |
 | --- | ---: | --- |
-| `extension.ts` | 320 | 激活与装配。**只做接线**，读它能看清整体数据流 |
+| `extension.ts` | 329 | 激活与装配。**只做接线**，读它能看清整体数据流 |
 | **基础层** | | |
-| `consts.ts` | 137 | 命令 ID、端点、默认值、运行时版本 |
+| `consts.ts` | 162 | 命令 ID、端点、默认值、思考强度键名、运行时版本 |
 | `types.ts` | 272 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
 | `format.ts` | 94 | token / 时长 / 相对时间格式化、Markdown 转义 |
@@ -95,15 +95,16 @@ flowchart TD
 | `sse.ts` | 251 | SSE 解析、静默超时、非 SSE 降级读取 |
 | `newApiClient.ts` | 407 | 端点封装、模型列表解析、失败建议 |
 | **`models/`** 模型信息整合 | | |
-| `dataset.ts` | 219 | 本地模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
+| `dataset.ts` | 255 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 51 | 极简 glob 匹配与 include/exclude 判定 |
-| `modelConfig.ts` | 559 | 多来源合并、一致性校正、远端字段提取 |
-| `tooltip.ts` | 149 | 悬浮窗 Markdown（含数据来源标注） |
+| `modelConfig.ts` | 592 | 多来源合并、一致性校正、远端字段提取 |
+| `tooltip.ts` | 164 | 悬浮窗 Markdown（含数据来源标注） |
 | `catalog.ts` | 223 | 拉取编排、缓存、并发合并、失败降级 |
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 139 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 175 | 按配置组缓存 client + catalog |
-| `chatProvider.ts` | 420 | 实现 `LanguageModelChatProvider` |
+| `chatProvider.ts` | 449 | 实现 `LanguageModelChatProvider` |
+| `modelConfiguration.ts` | 179 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 336 | VS Code ⇄ OpenAI 兼容的消息转换 |
 | `stream.ts` | 276 | 流式 chunk → 响应部件（工具调用分片合并、思维链） |
 | `tokenizer.ts` | 112 | token 估算（刻意高估） |
@@ -112,9 +113,9 @@ flowchart TD
 | **`status/`** UI | | |
 | `statusService.ts` | 340 | 状态的唯一真相来源，按配置组聚合 |
 | `statusBar.ts` | 160 | 状态栏渲染 |
-| `panel.ts` | 599 | Webview 面板（HTML + 手写 DOM 脚本） |
+| `panel.ts` | 603 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.test.ts` + `test/helpers.ts` | 770 | 71 个用例，只覆盖纯函数与装配 |
+| `test/*.test.ts` + `test/helpers.ts` | 1,336 | 111 个用例，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -260,24 +261,33 @@ VS Code 用 `CancellationToken`，网络 API 用 `AbortSignal`。集中在这里
 
 这是最能体现「为什么要多加一层」的模块。
 
-### 四个来源的优先级
+### 三个来源的优先级
 
 ```
-① 用户在设置里按模型 ID 做的精确覆盖        （override）
-② 网关返回的扩展字段                        （remote）
-③ 随包的数据表按模型 ID 查表                 （dataset）
-④ 兜底默认值                                  （default）
+① 网关返回的扩展字段                        （remote）
+② 随包的模型数据表按模型 ID 查表            （dataset）
+③ 兜底默认值                                  （default）
 ```
 
-**越靠前的越可信**：用户最了解自己渠道的实际情况；网关返回的窗口通常比通用数据表更准确
-（同一模型在不同中转上的窗口确实不同）。
+**越靠前的越可信**：网关最清楚自己那条链路，而数据表只是生成时的快照
+（同一模型在不同中转上的窗口确实不同）。两者显著不一致时会写成 note，
+在 tooltip 里说明「已采用网关值」。
 
 `resolveModelConfig` 为每个字段记录来源到 `meta.provenance`，tooltip 与状态面板都会展示，
-并在来源冲突时给出提示。用户看到数值不符时，能立刻知道该不该相信它、以及该去哪里改。
+并在来源冲突时给出提示。用户看到数值不符时，能立刻知道该不该相信它、以及该去哪里看。
+
+一个例外是**思考能力**：远端只能给出「肯定」（见下节），因此数据表先落地、网关的肯定最后覆盖，
+这样既不会把数据表里已知的能力抹掉，也不会因为表里写了 `false` 而隐藏站点已经声明支持的选项。
+
+`ModelDatasetEntry` 里只有 `reasoning` / `supportsReasoningEffort` / `defaultReasoningEffort` /
+`vendor` / `displayName` 可选，其余字段由生成脚本固定写出：数据表不是手工维护的文件，
+因此「缺字段」不是需要兼容的常态。前两个思考字段只在**上游确实给出**时才写——
+实测 311/443 条有 `reasoning` 对象，其中 141 条只有 `mandatory` / `default_enabled`，
+即「会思考但不能调强度」（这类模型没有可选档位，因此不会出现思考强度控件）。
 
 ### 一致性校正
 
-四个来源合起来很容易得到自相矛盾的数值（例如数据表说窗口 8K，网关却说输出上限 16K）。
+三个来源合起来很容易得到自相矛盾的数值（例如数据表说窗口 8K，却声称输出上限 16K）。
 `reconcileLimits` 统一收敛，保证：
 
 - `maxInputTokens + maxOutputTokens <= contextWindow`；
@@ -294,13 +304,34 @@ vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
 
 一个刻意的保守决定：New API 的 `/v1/models` 会返回 `max_tokens`，但它的语义含糊
 （可能是输出上限，也可能被上游当成上下文长度）。代码**不据此臆测上下文窗口**，
-只当作输出上限——上下文窗口留给模型数据表或用户覆盖。
+只当作输出上限——上下文窗口留给模型数据表。
 
-### 本地模型数据表（`dataset.ts` + `data/openrouter-models.json`）
+同样的保守思路也用在**思考能力**上：`supported_parameters` 里出现 `reasoning` / `reasoning_effort`
+等参数说明支持，但**没出现不说明不支持**（New API 压根不返回该字段）。
+因此远端只能把它置为 `true`；想关掉某个模型的思考选项得从数据表（即生成脚本）入手。
+
+### 模型数据表（`dataset.ts` + `data/openrouter-models.json`）
 
 数据表是一个随包发布的 JSON 文件（约 340 条记录，覆盖主流厂商与国产模型），由
-`npm run models:openrouter` 从公开模型目录生成；`extension.ts` 在激活时读入，
+`npm run models:openrouter` 从公开模型目录生成。`extension.ts` 在激活时用 `readFileSync` 读入，
 `dataset.ts` 负责校验、建索引与查找。
+
+生成脚本对应的上游字段（都在 `scripts/fetch-openrouter-models.js` 里有注释）：
+
+| 上游 | 数据表 |
+| --- | --- |
+| `top_provider.context_length` | `contextWindow` |
+| `top_provider.max_completion_tokens` | `maxOutputTokens` |
+| `architecture.input_modalities` | `imageInput` |
+| `supported_parameters`（`tools`） | `toolCalling` |
+| `supported_parameters`（`reasoning`）+ `reasoning` 对象 | `reasoning` |
+| `reasoning.supported_efforts` | `supportsReasoningEffort` |
+| `reasoning.default_effort` | `defaultReasoningEffort` |
+
+**它是生成产物，扩展只读**：没有「用户覆盖」这类设置项，也没有打开/监听数据表的命令——
+否则就变成“两份需要同步的数据”或者“一份不知道谁改过的数据”。
+要更新数据就重跑生成脚本（`data/` 随包发布，见 `.vscodeignore`），要修个别模型就改生成脚本
+或上游数据源。
 
 几个关键取舍：
 
@@ -311,8 +342,8 @@ vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
 - **匹配从精确到宽松**：表里的 `id` 是规范化过的，而网关的 ID 常带渠道与日期后缀
   （`gpt-4o@official`、`gpt-4o-2024-08-06`）。查找先精确命中，命中不了才逐层剥掉厂商前缀、
   变体后缀、渠道后缀与日期后缀。「先精确」的次序保证 `gpt-4o-2024-08-06` 不会挑中 `gpt-4o`。
-- **数据表只是优先级中的一环**：它是生成时的快照，厂商会调整、渠道有差异，
-  因此用户随时可以用 `models.overrides` 覆盖。
+- **载入失败不沿用旧数据**：文件缺失或不是合法 JSON 时显式清空（`installModelDataset(undefined)`），
+  宁可退回「网关返回值 + 默认值」。
 
 ### 缓存与失败降级（`catalog.ts`）
 
@@ -374,6 +405,72 @@ stable 的 `PrepareLanguageModelChatModelOptions` 类型目前只声明了 `sile
 
 `toModelInformation` 通过泛型 `LanguageModelChatProvider<T>` 把内部 `ModelConfig`
 一并交给 VS Code——它会把这个对象原样传回响应方法，因此响应阶段能拿到已解析的能力与窗口。
+
+### 模型配置：思考强度（`modelConfiguration.ts`）
+
+provider 可以随模型信息下发一份 `configurationSchema`，VS Code 据此在模型选择器里渲染出
+**模型级控件**；用户选定的值在下次请求时随 `options.modelConfiguration` 交回来。
+本扩展用它暴露「思考强度」——需要逐个模型调整的旋钮只有这一个。
+
+> **为什么不能用 `chatLanguageModels.json` 里的 `supportsReasoningEffort` / `defaultReasoningEffort`**
+>
+> 那对字段确实能换来一个「思考强度」控件，但**只对内置 Copilot 的 BYOK 供应商生效**
+> （`customoai` / `customendpoint` 等）。核实过的证据：
+> - 核心把已知供应商列成白名单
+>   （`openai` / `anthropic` / `gemini` / `ollama` / `openrouter` / `azure` / `xai` /
+>   `customoai` / `customendpoint`），**其余第三方一律映射成 `3p-extension`**；
+> - 整个 workbench 核心包里 `supportsReasoningEffort` **一次都没有出现**；唯一一处
+>   `defaultReasoningEffort` 是在读 `configurationSchema.properties.reasoningEffort.default`，
+>   也就是下面这条通道；
+> - 渲染路径（`getModelConfigurationActions` → `_renderChoiceSection`）要求
+>   `configurationSchema.properties` 存在且属性带 `enum`，否则直接不渲染。
+>
+> 换句话说：控件的数据源**必须**由 provider 自己声明。内置供应商把这份 schema 从配置文件的
+> 模型条目里合成出来，而本扩展从随包数据表合成——机制相同，只是数据来源不同。
+
+流程：
+
+```
+数据表 supportsReasoningEffort ──▶ ModelConfig.reasoningEfforts
+数据表 defaultReasoningEffort  ──▶ ModelConfig.defaultReasoningEffort ──▶ schema 的 default
+ModelConfig.reasoning ──▶ buildModelConfigurationSchema()  ──▶ configurationSchema（下发给 VS Code）
+用户在选择器里选一个值（默认预选 = defaultReasoningEffort）
+options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReasoningEffort() ──▶ 请求体
+                                └─ 等于默认档位则不发送
+                                                          └──▶ AdapterContext.reasoningEffort
+```
+
+几个踩点：
+
+- **属性必须带 `enum`** 才会被渲染成控件；`group: 'navigation'` 决定它出现在模型卡片的主控件区。
+- **`default` 取数据表里的 `defaultReasoningEffort`**：VS Code 会据此在控件里预选该档位，
+  并把它合并进模型配置（`_resolveModelConfigurationWithDefaults` 总是 `{...defaults, ...stored}`），
+  于是每次请求都会带着它。因此 `selectReasoningEffort` **把这个值当「未修改」处理**：
+  等于默认档位就**不发送**该字段（见下一个踩点）。预选只是让界面反映现状，不改变线上行为。
+- **只有真的改了档位才发字段**：`raw === config.defaultReasoningEffort` 直接返回「不发送」。
+  常见状态是“保持默认”，而那个值本来就是站点自己在用的，显式发出没有意义。
+  数据表没给默认档位时控件是空选中，用户选什么都算明确意图，照发。
+  默认值还必须落在 `enum` 里，否则 VS Code 会预选一个不存在的档位——
+  这条不变量在 `resolveModelConfig` 里守住（不在列表就当作没有）。
+- **档位是逐模型的且没有兜底**：候选项就是 `config.reasoningEfforts`（不拼接任何占位项），
+  来自数据表的 `supportsReasoningEffort`（生成脚本从上游 `reasoning.supported_efforts` 拄下）；
+  **列表为空时不声明 schema**（即“会思考但我们不知道能调哪些档”，上游实测 141 条如此），
+  因为凭空造一组合适的值只会发出站点不认的请求。控件初始状态是“没有任何选中项”。
+- **选项不经翻译**：只声明 `enum`（不声明 `enumItemLabels` / `enumDescriptions`），
+  因此控件里显示的就是数据表里的原值（`max` / `xhigh` / `minimal` / `none` …）。
+  上游词汇就是站点文档里的写法；自己维护一套映射，一旦出现新档位就会显示一个猜出来的名字。
+- **默认强度同时用在两处**：`defaultReasoningEffort` 既是 schema 的 `default`（预选项），
+  也写进属性的 `description` 与 tooltip（「默认 high（来自模型数据表）」）。
+- **取值按当前模型校验**：不在 `config.reasoningEfforts` 里的选择会被拒绝并记一条警告，
+  而不是默默发出去——静默发出一个站点不认的取值，用户只会看到一句无从排查的报错。
+- **字段名是常量 `reasoning_effort`**，不逐模型可配：网关用别的叫法（例如 `reasoning.effort`）
+  或需要嵌套形态时，交给适配器层改写——数据表是生成产物，不适合承载请求改写规则。
+  `applyReasoningEffort` 仍会拒绍写入 `PROTECTED_REQUEST_KEYS`（`model` / `messages` …），
+  避免以后有人把常量改成协议字段。
+- **适配器上下文里也带一份**，供以后需要把强度换算成别的形式（例如 `budget_tokens`）的适配器使用。
+
+`modelOptions` 与 `modelConfiguration` 都不是 stable typings 的字段，因此做运行时探测；
+通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
 
 ### 消息转换（`messages.ts`）
 
@@ -469,9 +566,9 @@ CJK 按 1 字符 ≈ 1 token，其余按 4 字符 ≈ 1 token，再加消息/工
 
 ### 补一个模型的元数据
 
-改数据表而不是改代码：跑 `npm run models:openrouter` 重新生成 `data/openrouter-models.json`。
-若上游目录里没有这个模型，或某个渠道的数值确实不同，让用户用 `models.overrides` 覆盖，
-而不是把渠道差异写进数据表。
+改数据而不是改代码：跑 `npm run models:openrouter` 重新生成 `data/openrouter-models.json`。
+上游目录里没有这个模型时，改生成脚本（加个别名或回退取值），不要手工往文件里加条目——
+它是生成产物，下次生成会全部覆盖。
 
 ### 让某个模型的行为不一样（新增适配器）
 
@@ -488,6 +585,21 @@ CJK 按 1 字符 ≈ 1 token，其余按 4 字符 ≈ 1 token，再加消息/工
 3. 在对应的 Settings 接口里加字段；
 4. 若影响模型配置，改 `models/modelConfig.ts`；若影响请求，改 `provider/chatProvider.ts`
    的 `buildRequest`。
+
+### 新增模型级配置项（模型选择器里的控件）
+
+这类选项不是设置项，而是随模型信息下发的 schema：
+
+1. `models/modelConfig.ts` → 把该能力纳入 `ModelConfig`（记得写 `meta.provenance`，
+   并遵从上节的优先级）；
+2. `provider/modelConfiguration.ts` → 在 `buildModelConfigurationSchema()` 里加属性，
+   并在 `readModelConfiguration()` 的取值侧加解析（带 `enum` 才会被渲染）；
+3. `provider/chatProvider.ts` → 在 `buildRequest` 里把选中的值写进请求体；
+4. 有默认项时把它写进 schema 的 `default`（记得保证它在 `enum` 里），没有就不写；
+5. 补测试（见 `test/modelConfiguration.test.ts`）与 tooltip / 面板的展示。
+
+注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema——渲染一个空控件
+比不渲染更糟（见上节思考强度的处理）。
 
 ### 新增配置组字段（用户要填的站点/密钥类字段）
 
@@ -516,8 +628,11 @@ CJK 按 1 字符 ≈ 1 token，其余按 4 字符 ≈ 1 token，再加消息/工
 | 取舍 | 原因 | 将来的出口 |
 | --- | --- | --- |
 | 思考内容只能作为正文回显，包成 Markdown 引用块 | 稳定的 VS Code API 没有「思考内容」响应部件 | 有专用部件后只需改 `stream.ts` 的 `emitReasoning` |
+| 思考强度默认「不指定」，用户选过才发 | VS Code 会把 schema 的 `default` 带进每一次请求，不能替用户改请求 | 出现更细粒度的默认值机制后再调整 |
+| 思考档位逐模型且**不经翻译**（直接用上游的 `max` / `xhigh` / `minimal` / `none` …） | 上游词汇就是站点文档里的写法；编一套映射只会在出现新档位时显示一个猜出来的名字 | 某个取值被站点拒时，在适配器里映射（见 §9） |
+| 思考强度的字段名固定 `reasoning_effort` | 数据表是生成产物，不适合承载逐模型的请求改写规则；且 VS Code 的模型配置只能从我们声明的枚举里选 | 网关叫法不同时写适配器（见 §9） |
 | token 用字符数启发式估算 | 拿不到真实分词器 | 若上游能给出精确计数接口，替换 `tokenizer.ts` |
-| 随包的数据表会过期 | 厂商会调整窗口与能力 | 重跑 `npm run models:openrouter`；`models.overrides` 覆盖；数据表只是优先级的一环 |
+| 随包的数据表会过期 | 厂商会调整窗口与能力 | 重跑 `npm run models:openrouter`；数据表只是优先级中的一环 |
 | 面板脚本是手写 DOM，不用框架 | 状态量小，引入构建步骤不值得 | 面板复杂度明显上升时再考虑 |
 | 会话用量统计是全局累加的 | 单一计数器足够回答「这次会话花了多少」 | 需要分组统计时按 `targetLabel` 分桶 |
 | 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者提供站点名与延迟；两个请求开销都很小 | 若站点众多，改为只刷新当前可见的组 |
@@ -527,12 +642,13 @@ CJK 按 1 字符 ≈ 1 token，其余按 4 字符 ≈ 1 token，再加消息/工
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-71 个用例，只覆盖**纯函数与装配**：
+111 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、批量过滤 |
+| `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
 | `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析 |
+| `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
 

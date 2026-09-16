@@ -89,11 +89,36 @@ export function initRuntimeInfo(extensionVersion: string): void {
 }
 
 /**
+ * 思考强度（thinking effort）在 VS Code 模型配置里的属性名。
+ *
+ * 这个名字只在本扩展内部使用：它既是模型选择器里那个控件的键，
+ * 也是 VS Code 每次请求回传给 provider 时所用的键。
+ */
+export const REASONING_EFFORT_KEY = 'reasoningEffort';
+
+/** 思考强度在请求体中的默认字段名。 */
+export const DEFAULT_REASONING_EFFORT_FIELD = 'reasoning_effort';
+
+/**
+ * 不允许被外部配置覆盖的请求体字段。
+ *
+ * `messages` / `model` / `tools` 这类字段是协议的骨架，让一个 JSON 设置项或模型配置
+ * 盖住它们只会制造无从排查的故障（写坏 `messages` 会得到一个与上下文无关的请求）。
+ */
+export const PROTECTED_REQUEST_KEYS: ReadonlySet<string> = new Set([
+	'model',
+	'messages',
+	'stream',
+	'stream_options',
+	'tools',
+	'tool_choice',
+]);
+
+/**
  * 硬编码兜底值。
  *
- * 只有在「用户没有配置覆盖」且「本地模型数据表没有命中」且「New API 也没返回可用元数据」
- * 三个条件同时成立时才会用到，因此取值应当保守：宁可估小，也不要让 VS Code
- * 以为上下文很大而把超长请求塞进来。
+ * 只有在「模型数据表没有命中」且「New API 也没返回可用元数据」两个条件同时成立时
+ * 才会用到，因此取值应当保守：宁可估小，也不要让 VS Code 以为上下文很大而把超长请求塞进来。
  */
 export const DEFAULTS = {
 	/** 未知模型的上下文窗口 */

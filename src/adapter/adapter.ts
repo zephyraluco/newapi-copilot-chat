@@ -37,6 +37,14 @@ export interface AdapterContext {
 	/** 当前请求相关设置 */
 	readonly settings: RequestSettings;
 	readonly logger: Logger;
+	/**
+	 * 用户在模型选择器里选定的思考强度；未选择（或不适用）时为 `undefined`。
+	 *
+	 * provider 已经按固定的 `reasoning_effort` 字段名把它写进请求体，
+	 * 这里再传一份是为了让「字段名或取值词汇与本扩展不同」的网关能被适配器改写
+	 * （例如改成 `{ thinking: { type: 'enabled', budget_tokens: ... } }`）。
+	 */
+	readonly reasoningEffort?: string;
 }
 
 /**

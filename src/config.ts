@@ -6,8 +6,11 @@
  * - 监听配置变化并广播。
  *
  * **站地址与 API Key 不在这里**：它们由 VS Code 的 provider 配置组提供
- * （见 `provider/target.ts`）。这里只有与连接无关的调整项（模型过滤与覆盖、
- * 请求参数、状态栏、日志级别），因此对所有配置组共享。
+ * （见 `provider/target.ts`）。这里只有与连接无关的调整项（模型过滤、请求参数、
+ * 状态栏、日志级别），因此对所有配置组共享。
+ *
+ * **模型元数据也不在这里**：它由随包的模型数据表（`data/openrouter-models.json`）提供，
+ * 那个文件由生成脚本产出，扩展只读（见 `models/dataset.ts`）。
  */
 
 import * as vscode from 'vscode';
@@ -18,7 +21,6 @@ import {
 } from './consts';
 import {
 	asBoolean,
-	asNonEmptyString,
 	asNumber,
 	asStringArray,
 	isRecord,
@@ -26,40 +28,12 @@ import {
 import type { Logger, LogLevelName } from './logger';
 import { parseLogLevelName } from './logger';
 
-/** `models.overrides` 中单个模型的覆盖项。所有字段可选，未设置则沿用下层结果。 */
-export interface ModelOverride {
-	/** 覆盖展示名（模型选择器里显示的名字） */
-	name?: string;
-	/** 覆盖副标题（模型选择器里跟在名字后面的说明） */
-	detail?: string;
-	/** 覆盖 family，影响 VS Code 的模型归类 */
-	family?: string;
-	/** 覆盖上下文窗口 */
-	contextWindow?: number;
-	/** 直接覆盖 maxInputTokens（优先于由 contextWindow 推导） */
-	maxInputTokens?: number;
-	/** 覆盖最大输出 token */
-	maxOutputTokens?: number;
-	/** 覆盖图片输入能力 */
-	imageInput?: boolean;
-	/** 覆盖工具调用能力 */
-	toolCalling?: boolean;
-	/** tooltip 中展示的描述文本 */
-	description?: string;
-	/** tooltip 中展示的文档链接 */
-	docsUrl?: string;
-	/** 透传给该模型的额外请求体字段（例如网关特有的思考开关） */
-	extraBody?: Record<string, unknown>;
-}
-
 /** 模型发现与过滤相关设置。 */
 export interface ModelSettings {
 	/** 白名单 glob；为空表示全部保留 */
 	readonly include: readonly string[];
 	/** 黑名单 glob；优先级高于 include */
 	readonly exclude: readonly string[];
-	/** 按模型 ID 精确覆盖 */
-	readonly overrides: Readonly<Record<string, ModelOverride>>;
 	/** 模型列表缓存有效期 */
 	readonly cacheTtlMs: number;
 	/** 未知模型的兜底上下文窗口 */
@@ -142,39 +116,6 @@ function readRecord(config: vscode.WorkspaceConfiguration, key: string): Record<
 	return isRecord(value) ? value : {};
 }
 
-/** 解析 `models.overrides`。非法条目会被记录并跳过，不会让整份配置失效。 */
-function readModelOverrides(
-	config: vscode.WorkspaceConfiguration,
-	logger: Logger,
-): Record<string, ModelOverride> {
-	const raw = readRecord(config, 'models.overrides');
-	const result: Record<string, ModelOverride> = {};
-	for (const [modelId, entry] of Object.entries(raw)) {
-		const id = modelId.trim();
-		if (id.length === 0) {
-			continue;
-		}
-		if (!isRecord(entry)) {
-			logger.warn(`配置 models.overrides.${modelId} 不是对象，已忽略`);
-			continue;
-		}
-		result[id] = {
-			name: asNonEmptyString(entry.name),
-			detail: asNonEmptyString(entry.detail),
-			family: asNonEmptyString(entry.family),
-			contextWindow: asNumber(entry.contextWindow),
-			maxInputTokens: asNumber(entry.maxInputTokens),
-			maxOutputTokens: asNumber(entry.maxOutputTokens),
-			imageInput: asBoolean(entry.imageInput),
-			toolCalling: asBoolean(entry.toolCalling),
-			description: asNonEmptyString(entry.description),
-			docsUrl: asNonEmptyString(entry.docsUrl),
-			extraBody: isRecord(entry.extraBody) ? entry.extraBody : undefined,
-		};
-	}
-	return result;
-}
-
 /** 读取温度：合法范围 0–2，越界视为未设置。 */
 function readTemperature(config: vscode.WorkspaceConfiguration, logger: Logger): number | undefined {
 	const value = asNumber(config.get('request.temperature'));
@@ -219,7 +160,6 @@ export function readSettings(logger: Logger): NewApiSettings {
 		models: {
 			include: asStringArray(config.get('models.include')) ?? [],
 			exclude: asStringArray(config.get('models.exclude')) ?? [],
-			overrides: readModelOverrides(config, logger),
 			cacheTtlMs: readPositiveInt(config.get('models.cacheTtl'), DEFAULTS.modelCacheTtlMs, 5_000),
 			defaultContextWindow: readPositiveInt(
 				config.get('models.defaultContextWindow'),
@@ -285,7 +225,6 @@ export class ConfigService implements vscode.Disposable {
 			models: {
 				include: models.include,
 				exclude: models.exclude,
-				overrideCount: Object.keys(models.overrides).length,
 				cacheTtlMs: models.cacheTtlMs,
 			},
 			request: {

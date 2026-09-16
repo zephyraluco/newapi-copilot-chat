@@ -216,7 +216,6 @@ export function fingerprintOf(settings: ModelSettings): string {
 	return safeJsonStringify({
 		include: [...settings.include].sort(),
 		exclude: [...settings.exclude].sort(),
-		overrides: settings.overrides,
 		defaultContextWindow: settings.defaultContextWindow,
 		defaultMaxOutputTokens: settings.defaultMaxOutputTokens,
 	}) ?? '';

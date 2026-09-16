@@ -8,11 +8,10 @@
  * 估得过小会白白浪费上下文，估得过大则会被上游直接拒绝请求。
  *
  * 因此扩展随包附带一份模型数据表（`data/openrouter-models.json`），由
- * `npm run models:openrouter` 从公开的模型目录生成。它只是优先级中的一环
- * （见 `modelConfig.ts`）：网关返回值与用户覆盖都比它更可信，因为同一模型在不同渠道
- * 的窗口确实可能不同，而网关最清楚自己那条链路。
+ * `npm run models:openrouter` 从公开的模型目录生成，在激活时读入内存。它是**只读的生成产物**：
+ * 要更新数据就重跑生成脚本，而不是手工编辑它。
  *
- * ## 为什么不是源码里的常量表
+ * ## 为什么是独立文件而不是源码里的常量表
  *
  * 表的规模在几百条量级，且随厂商发布持续变动。做成独立数据文件的好处：
  * - 更新数据不必改代码，重新生成文件即可；
@@ -21,7 +20,7 @@
  *
  * ## 数据是「不可信输入」
  *
- * 文件由外部脚本生成，可能缺失、被手工编辑或被截断。因此每条记录都要过一遍类型收窄：
+ * 文件由外部脚本生成，可能缺失、被截断，甚至被别的工具重写。因此每条记录都要过一遍类型收窄：
  * 缺 `id`、或缺正数 `contextWindow` / `maxOutputTokens` 的条目直接丢弃并计数，
  * 绝不会因为一条坏记录让整张表失效。表为空时的效果等于「没有这张表」。
  *
@@ -31,10 +30,17 @@
  * 而网关返回的 ID 常带渠道与日期后缀（`gpt-4o@official`、`gpt-4o-2024-08-06`）。
  * 因此查找从精确到宽松逐级尝试：精确命中优先，命中不了才逐层剥掉厂商前缀、
  * 变体后缀、渠道后缀与日期后缀再试。这样 `gpt-4o-2024-08-06` 不会被剥成 `gpt-4o`
- * 而挑错记录，同时手工加的渠道后缀也能认得出来。
+ * 而挑错记录，同时网关加的渠道后缀也能认得出来。
+ *
+ * ## 思考强度
+ *
+ * `supportsReasoningEffort` / `defaultReasoningEffort` 来自上游的强度列表，是可选的：
+ * 有些模型会思考但不能调强度。取值用的是**上游自己的词汇**（`max` / `xhigh` / `medium` /
+ * `minimal` …），因此它们只是「这个模型能选哪些档」的提示——具体取值是否被站点接受，
+ * 取决于站点与它的上游。
  */
 
-import { asBoolean, asNonEmptyString, asPositiveNumber, isRecord } from '../json';
+import { asBoolean, asNonEmptyString, asPositiveNumber, asStringArray, isRecord } from '../json';
 
 /** 数据表所在目录（相对于扩展根目录）。 */
 export const MODEL_DATASET_DIR = 'data';
@@ -54,12 +60,40 @@ export interface ModelDatasetEntry {
 	readonly imageInput: boolean;
 	/** 是否支持工具调用 */
 	readonly toolCalling: boolean;
-	/** 是否具备思维链能力；当前不参与模型配置，仅备查 */
+	/** 是否具备思维链能力；决定模型选择器里是否出现「思考强度」选项 */
 	readonly reasoning?: boolean;
+	/**
+	 * 该模型可选的思考强度（上游词汇，由强到弱）。
+	 *
+	 * 只在上游确实给出强度列表时才存在：有些模型会思考但不能调强度。
+	 */
+	readonly supportsReasoningEffort?: readonly string[];
+	/** 不指定思考强度时上游使用的取值 */
+	readonly defaultReasoningEffort?: string;
 	/** 厂商显示名 */
 	readonly vendor?: string;
 	/** 规范展示名 */
 	readonly displayName?: string;
+}
+
+/**
+ * 收拢思考强度列表：去空白、去重、保序（上游由强到弱排列，顺序有语义）。
+ *
+ * 全空时返回 `undefined`，调用方据此区分「没有这个信息」与「有但为空」。
+ */
+function normalizeEfforts(value: unknown): readonly string[] | undefined {
+	const list = asStringArray(value);
+	if (list === undefined) {
+		return undefined;
+	}
+	const result: string[] = [];
+	for (const item of list) {
+		const trimmed = item.trim();
+		if (trimmed.length > 0 && !result.includes(trimmed)) {
+			result.push(trimmed);
+		}
+	}
+	return result.length > 0 ? result : undefined;
 }
 
 /** 解析后的数据表。 */
@@ -99,6 +133,8 @@ function parseEntry(raw: unknown): ModelDatasetEntry | undefined {
 		imageInput: asBoolean(raw.imageInput) ?? false,
 		toolCalling: asBoolean(raw.toolCalling) ?? false,
 		reasoning: asBoolean(raw.reasoning),
+		supportsReasoningEffort: normalizeEfforts(raw.supportsReasoningEffort),
+		defaultReasoningEffort: asNonEmptyString(raw.defaultReasoningEffort),
 		vendor: asNonEmptyString(raw.vendor),
 		displayName: asNonEmptyString(raw.displayName),
 	};
@@ -154,7 +190,7 @@ export function installModelDataset(raw: unknown): ModelDataset {
 	index = new Map();
 	for (const entry of dataset.entries) {
 		const key = entry.id.trim().toLowerCase();
-		// 同 id 只保留第一条：生成脚本已去重，这里只防御手工编辑
+		// 同 id 只保留第一条：生成脚本已去重，这里只防御意外重复
 		if (!index.has(key)) {
 			index.set(key, entry);
 		}

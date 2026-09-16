@@ -6,7 +6,7 @@
  *
  * 内容取舍：tooltip 是「鼠标悬停一瞥」的场景，不放长文。所以只保留
  * 用户真正会用来判断「这个模型能不能干这件事」的信息，并**明确标注每个数值的来源**——
- * 随包附带的模型数据表是一份快照，会随厂商调整而过时，用户需要知道该不该相信它。
+ * 数据表是生成时的快照，会随厂商调整而过时，用户需要知道该不该相信它。
  */
 
 import { escapeMarkdown, formatTokens, formatUnixSeconds } from '../format';
@@ -16,13 +16,13 @@ import type { ModelConfigSource } from './modelConfig';
 export interface ModelTooltipFacts {
 	/** 模型 ID（New API 中的原始标识） */
 	readonly id: string;
-	/** 规范展示名（来自本地模型数据表或用户覆盖） */
+	/** 规范展示名（来自模型数据表或网关） */
 	readonly displayName?: string;
 	/** 规范 family 名 */
 	readonly family: string;
 	/** 归属方（来自 `/v1/models` 的 `owned_by`） */
 	readonly ownedBy?: string;
-	/** 厂商（来自本地模型数据表或用户覆盖） */
+	/** 厂商（来自模型数据表或网关） */
 	readonly vendor?: string;
 	/** 模型创建时间（Unix 秒） */
 	readonly created?: number;
@@ -34,9 +34,14 @@ export interface ModelTooltipFacts {
 	readonly maxOutputTokens: number;
 	readonly imageInput: boolean;
 	readonly toolCalling: boolean;
+	/** 模型是否具备思考（思维链）能力 */
+	readonly reasoning: boolean;
+	/** 该模型可选的思考强度；`reasoning` 为 `false` 时不展示 */
+	readonly reasoningEfforts: readonly string[];
+	/** 不指定思考强度时的上游默认取值 */
+	readonly defaultReasoningEffort?: string;
 	readonly description?: string;
-	readonly docsUrl?: string;
-	/** 命中的本地模型数据表键 */
+	/** 命中的模型数据表键 */
 	readonly datasetKey?: string;
 	/** 各字段的来源 */
 	readonly provenance: Readonly<Record<string, ModelConfigSource>>;
@@ -46,9 +51,8 @@ export interface ModelTooltipFacts {
 
 /** 来源的中文说明。导出给状态面板复用，保证两处口径一致。 */
 export const MODEL_SOURCE_LABEL: Record<ModelConfigSource, string> = {
-	override: '配置覆盖',
 	remote: '网关返回值',
-	dataset: '本地模型数据',
+	dataset: '模型数据表',
 	default: '默认值',
 };
 
@@ -88,6 +92,7 @@ export function buildModelTooltip(facts: ModelTooltipFacts): string {
 	);
 	lines.push(`| 图片输入 | ${yesNo(facts.imageInput)} | ${sourceLabel(facts.provenance.imageInput)} |`);
 	lines.push(`| 工具调用 | ${yesNo(facts.toolCalling)} | ${sourceLabel(facts.provenance.toolCalling)} |`);
+	lines.push(`| 思考 | ${yesNo(facts.reasoning)} | ${sourceLabel(facts.provenance.reasoning)} |`);
 	if (facts.created !== undefined) {
 		lines.push(`| 创建时间 | ${formatUnixSeconds(facts.created)} | 网关返回值 |`);
 	}
@@ -99,7 +104,17 @@ export function buildModelTooltip(facts: ModelTooltipFacts): string {
 
 	if (facts.datasetKey) {
 		lines.push('');
-		lines.push(`> 本地模型数据表命中：\`${facts.datasetKey}\``);
+		lines.push(`> 模型数据表命中：\`${facts.datasetKey}\``);
+	}
+
+	if (facts.reasoningEfforts.length > 0) {
+		// 用原值：取值词汇是上游的，翻译过的档位名反而对不上站点文档
+		const options = facts.reasoningEfforts.map(effort => escapeMarkdown(effort)).join(' / ');
+		const fallback = facts.defaultReasoningEffort === undefined
+			? ''
+			: `未选择时 ${factName(facts)} 自身的默认值是 ${escapeMarkdown(facts.defaultReasoningEffort)}。`;
+		lines.push('');
+		lines.push(`> 可在模型选择器里调整「思考强度」：${options}。${fallback}`);
 	}
 
 	if (facts.notes.length > 0) {
@@ -109,16 +124,16 @@ export function buildModelTooltip(facts: ModelTooltipFacts): string {
 		}
 	}
 
-	if (facts.docsUrl) {
-		lines.push('');
-		lines.push(`[官方文档](${facts.docsUrl})`);
-	}
-
 	lines.push('');
 	lines.push('---');
-	lines.push('数值仅供参考，可在 `newapi-copilot-chat.models.overrides` 中按模型 ID 修正。');
+	lines.push('数值来自随包的模型数据表（`npm run models:openrouter` 生成），可能与站点实际情况有出入。');
 
 	return lines.join('\n');
+}
+
+/** 说明里用的模型称呼：有展示名就用它，否则用 ID（转义后用于 Markdown）。 */
+function factName(facts: ModelTooltipFacts): string {
+	return escapeMarkdown(facts.displayName ?? facts.id);
 }
 
 /** 生成模型选择器中显示的一行副标题。 */

@@ -5,15 +5,16 @@
  *
  * ```
  *   ① New API 返回的模型对象（可能带 context_length / supported_parameters 等扩展字段）
- *   ② 本地模型数据表（随包附带的 `data/openrouter-models.json`，按模型 ID 查表）
- *   ③ 用户在 settings 里按模型 ID 做的精确覆盖
+ *   ② 随包的模型数据表（`data/openrouter-models.json`，按模型 ID 查表）
+ *   ③ 设置里的兜底默认值
  *            ↓
  *      ModelConfig（含 tooltip 与「每个字段来自哪里」的来源标注）
  * ```
  *
- * 优先级：**覆盖 > 网关返回值 > 数据表 > 默认值**。
- * 越靠前的越可信：用户最清楚自己的网关实际情况，而网关返回的窗口往往比
- * 通用数据表更准确（同一模型在不同渠道的窗口确实不同）。
+ * 优先级：**网关返回值 > 数据表 > 默认值**。
+ * 越靠前的越可信：网关最清楚自己那条链路，而数据表只是生成时的快照
+ * （同一模型在不同渠道的窗口确实可能不同）。两者显著不一致时会写成 note，
+ * 在 tooltip 里说明已采用网关值。
  */
 
 import { DEFAULTS } from '../consts';
@@ -37,7 +38,7 @@ import { findFilteringPattern } from './matcher';
 import { buildModelDetail, buildModelTooltip } from './tooltip';
 
 /** 单个字段的取值来源。 */
-export type ModelConfigSource = 'override' | 'remote' | 'dataset' | 'default';
+export type ModelConfigSource = 'dataset' | 'remote' | 'default';
 
 /**
  * 从网关返回值里能提取到的信息。
@@ -54,6 +55,14 @@ export interface RemoteModelHints {
 	maxOutputTokens?: number;
 	imageInput?: boolean;
 	toolCalling?: boolean;
+	/**
+	 * 网关明确声明支持思考参数时为 `true`。
+	 *
+	 * 只有「肯定」一种取值：网关没列出来并不代表模型不会思考
+	 * （New API 的 `/v1/models` 根本不返回 `supported_parameters`），
+	 * 因此这里不允许据此推断 `false`，否则会把数据表里已知的思考能力抹掉。
+	 */
+	reasoning?: true;
 	/** 网关给出的展示名 */
 	displayName?: string;
 	/** 网关给出的描述 */
@@ -75,8 +84,7 @@ export interface ModelConfigMeta {
 	/** 规范展示名 */
 	readonly displayName?: string;
 	readonly description?: string;
-	readonly docsUrl?: string;
-	/** 命中的本地模型数据表键 */
+	/** 命中的模型数据表键 */
 	readonly datasetKey?: string;
 	/** 每个字段的取值来源 */
 	readonly provenance: Readonly<Record<string, ModelConfigSource>>;
@@ -111,8 +119,22 @@ export interface ModelConfig {
 	readonly maxOutputTokens: number;
 	readonly imageInput: boolean;
 	readonly toolCalling: boolean;
-	/** 该模型专属的额外请求体字段 */
-	readonly extraBody?: Readonly<Record<string, unknown>>;
+	/**
+	 * 模型是否具备思考（思维链）能力。
+	 *
+	 * 为 `true` **且** `reasoningEfforts` 非空时，模型选择器里才会出现
+	 * 「思考强度」选项（见 `provider/modelConfiguration.ts`）。
+	 */
+	readonly reasoning: boolean;
+	/**
+	 * 该模型可选的思考强度；只在数据表给出了 `supportsReasoningEffort` 时才非空。
+	 *
+	 * 没有这个信息时**不编造**一组合适用的档位：那些模型确实会思考，但我们并不知道
+	 * 站点能接受哪些值，凭空造一个列表只会发出一堆被拒的请求。
+	 */
+	readonly reasoningEfforts: readonly string[];
+	/** 不指定思考强度时的上游默认取值；未知时为 `undefined` */
+	readonly defaultReasoningEffort?: string;
 	readonly meta: ModelConfigMeta;
 }
 
@@ -224,6 +246,19 @@ export function extractRemoteHints(model: NewApiModel): RemoteModelHints {
 		]) ?? pickBoolean(capabilities, ['tool_calling', 'toolCalling', 'tools', 'function_calling']);
 	}
 
+	// ---- 思考能力 --------------------------------------------------------
+	// 只认「肯定」：列出推理参数说明支持；没有列出来只说明网关不暴露这些参数
+	// （New API 的 `/v1/models` 就完全不返回 `supported_parameters`），
+	// 因此这里不下 `false` 的结论——否定由数据表（即生成脚本）负责。
+	const reasoningParameters = ['reasoning', 'include_reasoning', 'reasoning_effort', 'thinking', 'enable_thinking'];
+	if (supportedParameters !== undefined
+		&& supportedParameters.some(item => reasoningParameters.includes(item.toLowerCase()))) {
+		hints.reasoning = true;
+	} else if (pickBoolean(capabilities, ['reasoning', 'thinking', 'supports_reasoning']) === true
+		|| pickBoolean(model, ['supports_reasoning', 'reasoning']) === true) {
+		hints.reasoning = true;
+	}
+
 	// ---- 文本字段 --------------------------------------------------------
 	hints.displayName = pickString(model, ['display_name', 'model_name', 'label']);
 	hints.description = pickString(model, ['description', 'summary', 'desc']);
@@ -259,7 +294,6 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	const { settings, logger } = options;
 	const remote = extractRemoteHints(model);
 	const dataset = matchModelDataset(model.id);
-	const override = settings.overrides[model.id];
 	const notes: string[] = [];
 	const provenance: Record<string, ModelConfigSource> = {};
 
@@ -273,15 +307,11 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	if (remote.contextWindow !== undefined) {
 		if (dataset && isSignificantlyDifferent(remote.contextWindow, dataset.entry.contextWindow)) {
 			notes.push(
-				`网关报告的上下文窗口（${formatTokens(remote.contextWindow)}）与本地模型数据（${formatTokens(dataset.entry.contextWindow)}）不一致，已采用网关值。`,
+				`网关报告的上下文窗口（${formatTokens(remote.contextWindow)}）与模型数据表（${formatTokens(dataset.entry.contextWindow)}）不一致，已采用网关值。`,
 			);
 		}
 		contextWindow = remote.contextWindow;
 		provenance.contextWindow = 'remote';
-	}
-	if (override?.contextWindow !== undefined) {
-		contextWindow = override.contextWindow;
-		provenance.contextWindow = 'override';
 	}
 
 	// ---- 最大输出 --------------------------------------------------------
@@ -295,10 +325,6 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		maxOutputTokens = remote.maxOutputTokens;
 		provenance.maxOutputTokens = 'remote';
 	}
-	if (override?.maxOutputTokens !== undefined) {
-		maxOutputTokens = override.maxOutputTokens;
-		provenance.maxOutputTokens = 'override';
-	}
 
 	// ---- 输入上限 --------------------------------------------------------
 	let maxInputTokens = 0;
@@ -308,11 +334,6 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		maxInputTokens = remote.maxInputTokens;
 		hasExplicitMaxInput = true;
 		provenance.maxInputTokens = 'remote';
-	}
-	if (override?.maxInputTokens !== undefined) {
-		maxInputTokens = override.maxInputTokens;
-		hasExplicitMaxInput = true;
-		provenance.maxInputTokens = 'override';
 	}
 
 	// ---- 能力 ------------------------------------------------------------
@@ -325,15 +346,11 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	if (remote.imageInput !== undefined) {
 		if (dataset && dataset.entry.imageInput !== remote.imageInput) {
 			notes.push(
-				`网关报告${remote.imageInput ? '支持' : '不支持'}图片输入，本地模型数据认为${dataset.entry.imageInput ? '支持' : '不支持'}，已采用网关值。`,
+				`网关报告${remote.imageInput ? '支持' : '不支持'}图片输入，模型数据表认为${dataset.entry.imageInput ? '支持' : '不支持'}，已采用网关值。`,
 			);
 		}
 		imageInput = remote.imageInput;
 		provenance.imageInput = 'remote';
-	}
-	if (override?.imageInput !== undefined) {
-		imageInput = override.imageInput;
-		provenance.imageInput = 'override';
 	}
 
 	let toolCalling = false;
@@ -346,10 +363,28 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		toolCalling = remote.toolCalling;
 		provenance.toolCalling = 'remote';
 	}
-	if (override?.toolCalling !== undefined) {
-		toolCalling = override.toolCalling;
-		provenance.toolCalling = 'override';
+
+	// ---- 思考能力 --------------------------------------------------------
+	// 网关只能给出「肯定」（见 `RemoteModelHints.reasoning`），因此数据表先落地、
+	// 网关的肯定最后覆盖：数据表没写时靠网关开启，两者都表态时以网关为准
+	let reasoning = false;
+	provenance.reasoning = 'default';
+	if (dataset?.entry.reasoning !== undefined) {
+		reasoning = dataset.entry.reasoning;
+		provenance.reasoning = 'dataset';
 	}
+	if (remote.reasoning === true) {
+		reasoning = true;
+		provenance.reasoning = 'remote';
+	}
+	// 强度列表与默认强度只有数据表会给（网关的 /v1/models 不返回它们）；
+	// 没有就是没有，不回退到任何内置列表
+	const reasoningEfforts = dataset?.entry.supportsReasoningEffort ?? [];
+	// 默认强度会作为控件的预选项，因此必须落在可选档位里；不在就当作没有
+	const fallback = dataset?.entry.defaultReasoningEffort;
+	const defaultReasoningEffort = fallback !== undefined && reasoningEfforts.includes(fallback)
+		? fallback
+		: undefined;
 
 	// ---- 一致性校正 ------------------------------------------------------
 	const reconciled = reconcileLimits({
@@ -363,21 +398,15 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 
 	// ---- 名字与 family ---------------------------------------------------
 	const vendor = dataset?.entry.vendor;
-	const displayName = override?.name
-		?? dataset?.entry.displayName
-		?? remote.displayName;
-	const family = override?.family
-		?? remote.family
-		?? deriveFamily(model.id);
-	const name = override?.name ?? model.id;
+	const displayName = dataset?.entry.displayName ?? remote.displayName;
+	const family = remote.family ?? deriveFamily(model.id);
 
 	const meta: ModelConfigMeta = {
 		ownedBy: asNonEmptyString(model.owned_by),
 		created: asNumber(model.created),
 		vendor,
 		displayName,
-		description: override?.description ?? remote.description,
-		docsUrl: override?.docsUrl,
+		description: remote.description,
 		datasetKey: dataset?.key,
 		provenance,
 		notes,
@@ -395,8 +424,10 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		maxOutputTokens: reconciled.maxOutputTokens,
 		imageInput,
 		toolCalling,
+		reasoning,
+		reasoningEfforts,
+		defaultReasoningEffort,
 		description: meta.description,
-		docsUrl: meta.docsUrl,
 		datasetKey: meta.datasetKey,
 		provenance,
 		notes,
@@ -404,13 +435,13 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 
 	logger.trace(
 		`模型 ${model.id}：窗口 ${facts.contextWindow}，输入 ${facts.maxInputTokens}，输出 ${facts.maxOutputTokens}，` +
-		`图片 ${imageInput}，工具 ${toolCalling}`,
+		`图片 ${imageInput}，工具 ${toolCalling}，思考 ${reasoning}`,
 	);
 
 	return {
 		id: model.id,
-		name,
-		detail: override?.detail ?? buildModelDetail({ vendor, ownedBy: meta.ownedBy, contextWindow: facts.contextWindow, toolCalling }),
+		name: model.id,
+		detail: buildModelDetail({ vendor, ownedBy: meta.ownedBy, contextWindow: facts.contextWindow, toolCalling }),
 		family,
 		version: remote.version ?? '1',
 		tooltip: buildModelTooltip(facts),
@@ -419,7 +450,9 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		maxOutputTokens: facts.maxOutputTokens,
 		imageInput,
 		toolCalling,
-		extraBody: override?.extraBody,
+		reasoning,
+		reasoningEfforts,
+		defaultReasoningEffort,
 		meta,
 	};
 }
@@ -440,7 +473,7 @@ function isSignificantlyDifferent(a: number, b: number): boolean {
 /**
  * 校正窗口/输出/输入三者之间的关系。
  *
- * 四个来源合起来很容易得到自相矛盾的数值（例如数据表说窗口 8K，网关却说输出上限 16K），
+ * 三层来源合起来很容易得到自相矛盾的数值（例如数据表说窗口 8K，网关却说输出上限 16K），
  * 直接透传给 VS Code 会导致请求被上游拒绝，或者出现「输入上限 > 上下文窗口」的怪状态。
  * 这里统一收敛，并把每一次修正记录成 note 供用户查看。
  */

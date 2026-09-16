@@ -27,7 +27,12 @@ export function clearTestDataset(): void {
 	installModelDataset(undefined);
 }
 
-/** 构造一条模型数据表记录，只覆盖用例关心的字段。 */
+/**
+ * 构造一条模型数据表记录，只覆盖用例关心的字段。
+ *
+ * 默认把窗口与能力位都写上：这两种「提供值」的写法最接近随包数据表的形态，
+ * 想看「数据表没有某个字段」的效果就显式传 `undefined`。
+ */
 export function datasetEntry(id: string, patch: Partial<ModelDatasetEntry> = {}): ModelDatasetEntry {
 	return {
 		id,
@@ -55,7 +60,6 @@ export function createSettings(patch: Partial<ModelSettings> = {}): ModelSetting
 	return {
 		include: [],
 		exclude: [],
-		overrides: {},
 		cacheTtlMs: 300_000,
 		defaultContextWindow: 128_000,
 		defaultMaxOutputTokens: 8_192,

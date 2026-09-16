@@ -27,12 +27,18 @@ import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
-import { MANAGE_MODELS_COMMAND } from '../consts';
+import { MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
 import { convertMessages, convertToolChoice, convertTools } from './messages';
+import {
+	applyReasoningEffort,
+	buildModelConfigurationSchema,
+	selectReasoningEffort,
+} from './modelConfiguration';
+import type { ModelConfigurationSchema } from './modelConfiguration';
 import type { ProviderSession, SessionRegistry } from './session';
 import { StreamTranslator, extractStreamError } from './stream';
 import type { StreamSummary } from './stream';
@@ -59,6 +65,13 @@ import { estimateTokens } from './tokenizer';
 export interface NewApiModelInformation extends vscode.LanguageModelChatInformation {
 	/** 整合后的完整配置 */
 	readonly config: ModelConfig;
+	/**
+	 * 模型级配置项（当前只有「思考强度」）。
+	 *
+	 * 这个字段不在 stable typings 里，但 VS Code 会把它当模型元数据收下，
+	 * 并据此在模型选择器里渲染控件。
+	 */
+	readonly configurationSchema?: ModelConfigurationSchema;
 	/** 该模型所属连接目标的指纹，用于在响应阶段找回同一个会话 */
 	readonly targetKey: string;
 	/** 目标标签，仅用于错误提示 */
@@ -77,10 +90,8 @@ export interface ChatProviderDeps {
 	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, summary: StreamSummary): void;
 }
 
-/** 不允许被 `extraBody` 覆盖的字段。 */
-const PROTECTED_REQUEST_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice']);
-
-/** New API 聊天模型供应商。 */
+/**
+ * New API 聊天模型供应商。 */
 export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewApiModelInformation>, vscode.Disposable {
 	private readonly infoChanged = new vscode.EventEmitter<void>();
 	private readonly disposables: vscode.Disposable[] = [];
@@ -209,7 +220,17 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		const config = model.config;
 		const abort = fromCancellationToken(token, `chat:${config.id}`);
 		const adapter = this.deps.adapters.resolve(config);
-		const adapterContext: AdapterContext = { model: config, settings: settings.request, logger };
+		// 模型选择器里的「思考强度」（未选择时为空，此时不往请求体里写任何额外字段）
+		const effort = selectReasoningEffort(options, config);
+		if (effort.ignored !== undefined) {
+			logger.warn(`${config.id}：${effort.ignored}`);
+		}
+		const adapterContext: AdapterContext = {
+			model: config,
+			settings: settings.request,
+			logger,
+			reasoningEffort: effort.effort,
+		};
 		const adapterState = createRequestState();
 		const translator = new StreamTranslator(progress, {
 			includeReasoning: settings.request.includeReasoning,
@@ -233,11 +254,14 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				messages: converted.messages,
 				tools,
 				toolMode: options.toolMode,
+				reasoningEffort: effort.effort,
 			});
 
+			// 日志里不写密钥，但要能看出「用没用上模型配置」
+			const effortNote = effort.effort === undefined ? '思考强度未指定' : `思考强度 ${effort.effort}`;
 			logger.info(
 				`→ ${config.id}：${converted.messages.length} 条消息，` +
-				`${tools?.length ?? 0} 个工具，适配器 ${adapter.id}，` +
+				`${tools?.length ?? 0} 个工具，适配器 ${adapter.id}，${effortNote}，` +
 				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
 			);
 
@@ -353,6 +377,8 @@ export function toModelInformation(config: ModelConfig, target: ProviderTarget):
 			// 上游对单次请求的工具数量通常没有硬上限，用布尔值表达「支持」
 			toolCalling: config.toolCalling,
 		},
+		// 空值时表示「不展示任何模型级控件」（模型不支持思考，或没有可选的思考强度档位）
+		configurationSchema: buildModelConfigurationSchema(config),
 		config,
 		// 只带指纹与标签，不带 target 本体（后者含明文密钥）
 		targetKey: target.key,
@@ -367,8 +393,9 @@ function buildRequest(input: {
 	messages: ChatCompletionRequest['messages'];
 	tools: ChatToolDefinition[] | undefined;
 	toolMode: vscode.LanguageModelChatToolMode;
+	reasoningEffort: string | undefined;
 }): ChatCompletionRequest {
-	const { config, settings, messages, tools, toolMode } = input;
+	const { config, settings, messages, tools, toolMode, reasoningEffort } = input;
 	const request: ChatCompletionRequest = { model: config.id, messages };
 
 	const { temperature, topP } = settings.request;
@@ -386,13 +413,16 @@ function buildRequest(input: {
 		}
 	}
 
-	// 额外字段：全局在前、模型级在后（模型级优先）。
-	// 结构化字段被排除在外——让一个 JSON 设置项覆盖 `messages` 只会制造无从排查的故障。
-	const extra = { ...settings.request.extraBody, ...config.extraBody };
-	for (const [key, value] of Object.entries(extra)) {
+	// 额外字段：结构化字段被排除在外——让一个 JSON 设置项覆盖 `messages` 只会制造无从排查的故障。
+	for (const [key, value] of Object.entries(settings.request.extraBody)) {
 		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {
 			request[key] = value;
 		}
+	}
+
+	// 模型选择器里的选择比静态设置更具体，因此在额外字段之后写入，可以盖过它们。
+	if (reasoningEffort !== undefined) {
+		applyReasoningEffort(request, reasoningEffort);
 	}
 
 	return request;
