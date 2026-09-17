@@ -529,15 +529,13 @@ function buildRequest(input: {
 /**
  * 把内部错误交给 VS Code。
  *
- * 消息本身已经是面向用户的：网络故障是「分类 + 错误码 + 站点 + 该改什么」（见 `src/errors.ts`），
- * HTTP 错误是上游原话。这里不再包一层「New API 请求失败」——叠前缀会让同一句话出现两遍，
- * 还把真正的原因往右挤。
+ * 消息已经是面向用户的：网络故障是「分类 + 错误码 + 站点 + 该改什么」（`src/errors.ts`），
+ * HTTP 错误是上游原话。两件事要做：
  *
- * 两件事必须做：
- * - **清掉 stack**：Copilot 会把 `name: message` 与**堆栈**一起显示，
- *   用户要的是原因，不是一面指向 cjs 产物的调用链；原始异常已经写进日志了。
- * - **只在错误类型语义真正吻合时换用工厂方法**（401/403 → `NoPermissions`、
- *   404 → `NotFound`）；`Blocked` 表示「被策略阻止」，与限流/超时不是一回事。
+ * - **清掉 `stack`**：Copilot 会把 `name: message` 与堆栈一起渲染，而用户要的是原因
+ *   （原始异常已经写进日志）。
+ * - **只在语义真正吻合时换用工厂方法**（401/403 → `NoPermissions`、404 → `NotFound`）；
+ *   `Blocked` 表示「被策略阻止」，与限流/超时不是一回事。
  */
 function toLanguageModelError(error: unknown): Error {
 	const message = describeError(error);

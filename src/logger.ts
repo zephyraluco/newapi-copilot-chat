@@ -228,9 +228,8 @@ function formatArg(value: unknown): string {
 		return 'null';
 	}
 	if (value instanceof Error) {
-		// 必须带上 `cause` 链：`fetch` 失败时外壳只是一句 `fetch failed`，
-		// 真实原因（ENOTFOUND / ECONNREFUSED / 证书…）全在 `cause` 里，
-		// 而 stack 里并不包含它——只打 name + message 等于把原因丢了。
+		// 用 describeErrorCause 而不是 value.message：`fetch` 失败时原因在 `cause` 里，
+		// 而 stack 并不包含它，只打 name + message 等于把原因丢了。
 		const chain = describeErrorCause(value);
 		const stack = value.stack ? `\n${value.stack}` : '';
 		return `${value.name}: ${chain}${stack}`;

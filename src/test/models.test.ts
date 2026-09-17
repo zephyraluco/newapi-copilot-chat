@@ -349,7 +349,7 @@ suite('models / 配置整合', () => {
 			`第一行应是身份，实际：${config.tooltip}`,
 		);
 		assert.ok(!config.tooltip.includes('### '), '不应再有标题');
-		assert.ok(!config.tooltip.includes('GPT-4o'), '展示名不再出现在 tooltip 里');
+		assert.ok(!config.tooltip.includes('GPT-4o'), '展示名不进入 tooltip');
 		assert.ok(factRow('上下文窗口', '64K').test(config.tooltip), `应采用网关的窗口，实际：${config.tooltip}`);
 		// 能力位仍要在 tooltip 里可见
 		assert.ok(factRow('图片输入', '✅').test(config.tooltip), `实际：${config.tooltip}`);
@@ -600,7 +600,7 @@ suite('models / 思考能力', () => {
 			defaultReasoningEffort: 'high',
 		})]);
 		const config = resolve('wide');
-		// 档位本身仍要解析出来给选择器用，只是不再抄进 tooltip
+		// 档位解析出来是给选择器用的，tooltip 里只写能力
 		assert.deepStrictEqual(config.reasoningEfforts, ['max', 'high']);
 		assert.strictEqual(config.defaultReasoningEffort, 'high');
 		assert.ok(factRow('思考', '✅').test(config.tooltip));

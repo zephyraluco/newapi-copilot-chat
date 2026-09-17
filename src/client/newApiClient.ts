@@ -32,8 +32,7 @@ import type { SseJsonOutcome } from './sse';
 /**
  * 「响应不是我们认识的形状」时给用户的建议。
  *
- * 这类错误是我们自己合成的（不是网络栈抛的），因此建议直接写进消息里——
- * 与 `http.ts` 的网络错误一致：**消息本身就是建议的载体**。
+ * 这类错误是自己合成的（不是网络栈抛的），因此建议直接写进消息里。
  * 最常见的成因是站点地址填成了某个网页或别的服务，那里回的是 HTML 而不是 JSON。
  */
 const RESPONSE_SHAPE_HINT = '（请确认站点地址指向 New API 站点根目录，而不是某个网页）';
@@ -420,9 +419,8 @@ function toModel(value: unknown): NewApiModel | undefined {
 /**
  * 把任意异常描述成一句可展示的话。
  *
- * 运输层错误的消息已经是面向用户的（分类句子 + 错误码 + 站点，见 `src/errors.ts`），
- * 直接用它；其余错误走错误链渲染，因为抛在别处的包装错误（外壳是「XXX 失败」）
- * 真正的原因往往写在 `cause` 里，只报外壳等于把原因丢了。
+ * 运输层错误的消息已经是面向用户的（见 `src/errors.ts`），直接用它；其余走错误链渲染，
+ * 因为包装错误的外壳（「XXX 失败」）没有信息量，真正的原因写在 `cause` 里。
  * 唯一保留的加工是密钥脱敏。
  */
 export function describeError(error: unknown): string {
@@ -461,8 +459,7 @@ export function describeFailureHint(error: unknown, hasApiKey: boolean): string 
 		if (error.kind === 'timeout') {
 			return '请求超时：请检查网络，或调大 newapi-copilot-chat.request.timeoutMs。';
 		}
-		// `network` 不再单独给建议：错误消息本身已经是「分类 + 错误码 + 该改什么」（见 src/errors.ts），
-		// 再补一句只会变成同一件事说两遍。
+		// `network` 不给建议：消息里已经带了分类与处置，再来一句就是同一件事说两遍
 	}
 	if (error instanceof SseIdleTimeoutError) {
 		return '上游长时间没有返回新数据，请求已中断：长思考的模型可以调大 ' +

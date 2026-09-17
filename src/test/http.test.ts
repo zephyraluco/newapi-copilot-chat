@@ -401,7 +401,7 @@ suite('client / HTTP 传输层', () => {
 		);
 	});
 
-	test('重试日志里带上原始错误链（消息已经被改写成给用户看的话）', async () => {
+	test('重试日志里带上原始错误链（那时的消息已是给用户看的分类句子）', async () => {
 		const captured = capturingLogger();
 		const fake = fakeFetch(() => {
 			throw withCause(new TypeError('fetch failed'), withCode(new Error('boom'), 'ECONNREFUSED'));
@@ -437,7 +437,7 @@ suite('client / HTTP 传输层', () => {
 		assert.ok(error.message.includes('网络请求失败'), error.message);
 	});
 
-	test('HTTP 错误的响应体不再被二次截断', async () => {
+	test('HTTP 错误的响应体不被二次截断', async () => {
 		const body = JSON.stringify({ error: { message: 'x'.repeat(800) } });
 		const fake = fakeFetch(() => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } }));
 		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 0 })

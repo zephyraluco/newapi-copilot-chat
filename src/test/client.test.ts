@@ -388,7 +388,7 @@ suite('client / New API 端点', () => {
 		assert.ok((describeFailureHint(rateLimited, true) ?? '').includes('限流'));
 	});
 
-	test('超时给出建议，网络类不再重复给（消息里已经有了）', () => {
+	test('超时给出建议，网络类不给（消息里已经有了）', () => {
 		assert.ok((describeFailureHint(new TransportError('timeout', '超时'), true) ?? '').includes('timeoutMs'));
 		// 连接失败的建议在错误消息里（分类句子 + 错误码 + 站点），这里再来一句就是同一件事说两遍
 		assert.strictEqual(describeFailureHint(new TransportError('network', '[ENOTFOUND] 域名解析失败'), true), undefined);

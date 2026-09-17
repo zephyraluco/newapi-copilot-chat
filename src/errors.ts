@@ -1,22 +1,14 @@
 /**
  * 网络错误的分类与人话化。
  *
- * `fetch`（undici）失败时外壳永远是一句 `TypeError: fetch failed`，真正的原因放在 `cause` 里，
- * 而 `cause` 上的 `code` 才是可检索、可分类的那一个（`ENOTFOUND` / `ECONNREFUSED` /
- * `DEPTH_ZERO_SELF_SIGNED_CERT` …）。裸着把码摆给用户没有意义——**用户需要的是
- * 「哪一类问题、该去改什么」**，而码用来把这句话选准。
+ * `fetch`（undici）失败时外壳永远是一句 `TypeError: fetch failed`，真正的原因在 `cause` 里，
+ * 而 `code` 才是可分类的那一个（`ENOTFOUND` / `ECONNREFUSED` / `DEPTH_ZERO_SELF_SIGNED_CERT` …）。
+ * 码本身对用户没有意义，**用户需要的是「哪一类问题、该去改什么」**，码用来把这句话选准。
  *
- * 因此这里分两层，出口各不相同：
+ * 两个出口：`getNetworkErrorMessage` 给用户（`[CODE]（站点）解释与建议`），
+ * `describeErrorCause` 给日志（整条链与诊断字段）。认不出的码照原样展示，只是解释退化成通用建议。
  *
- * | 出口 | 内容 | 给谁看 |
- * | --- | --- | --- |
- * | `getNetworkErrorMessage` | `[CODE] <那一类问题的解释与处置建议>` | 用户（聊天界面里的报错） |
- * | `describeErrorCause` | 整条错误链的原始明细 | 日志（排查用，含主机、syscall、address…） |
- *
- * 认不出的码不会被丢掉：它照样出现在方括号里，只是解释退化成通用建议。
- *
- * 放在基础层而不是 `client/`：日志也要打印 `cause`（见 `logger.ts` 的 `formatArg`），
- * 而基础层不能反向依赖 `client/`。
+ * 放在基础层：日志也要打印 `cause`（`logger.ts` 的 `formatArg`），而基础层不能反向依赖 `client/`。
  */
 
 import { isRecord } from './json';
@@ -65,9 +57,9 @@ function toDiagnosticField(value: string): string {
 }
 
 /**
- * 诊断用的字段：Node 的网络错误把它们放在平级属性上，`message` 里不一定提到。
+ * 诊断用的字段：Node 把它们放在错误的平级属性上，`message` 里不一定提到。
  *
- * 刻意不限于「错误码」——`syscall` / `address` / `port` 往往才是定位到具体那一步的线索。
+ * 不限于错误码——`syscall` / `address` / `port` 往往才是定位到具体那一步的线索。
  */
 const DIAGNOSTIC_FIELDS: readonly string[] = ['code', 'errno', 'syscall', 'address', 'port', 'hostname'];
 
@@ -97,11 +89,9 @@ function layerDetail(member: unknown): string | undefined {
 }
 
 /**
- * 把错误链渲染成一行诊断明细（**给日志看**，不是给用户看）。
+ * 把错误链渲染成一行明细（给日志看）。逐层用 ` ← ` 串起来，读作「由…引起」。
  *
- * 逐层用 ` ← ` 串起来，读作「由…引起」。本函数**不脱敏**：落在日志里时由
- * `LoggerService.write` 统一脱敏，落在给用户的消息里时由 `newApiClient.describeError` 过一遍
- * `redactText`。
+ * 不脱敏：日志里由 `LoggerService.write` 统一处理，给用户的消息由 `describeError` 处理。
  */
 export function describeErrorCause(error: unknown): string {
 	const layers: string[] = [];
@@ -119,10 +109,8 @@ export function describeErrorCause(error: unknown): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * 网络故障的类别。
- *
- * 分得对才谈得上给对建议：「解析不了域名」和「证书不被信任」的处置完全相反，
- * 而两者在错误消息里都只是一句 `fetch failed`。
+ * 网络故障的类别。分类是给建议用的：「解析不了域名」与「证书不被信任」的处置完全相反，
+ * 而在错误消息里两者都只是一句 `fetch failed`。
  */
 export type NetworkErrorCategory =
 	| 'dns'
@@ -136,11 +124,10 @@ export type NetworkErrorCategory =
 	| 'generic';
 
 /**
- * 实际观察到的错误码 → 类别。
+ * 实际观察到的错误码 → 类别。来源是 Node errno / c-ares、Node TLS/OpenSSL，
+ * 以及 undici 的 `code` / `name` 字面量。
  *
- * 来源：Node errno / c-ares DNS 码、Node TLS/OpenSSL 码、undici 的 `code` / `name` 字面量。
- * **刻意不求穷尽**：认不出的码落到 `generic`，但仍然原样展示给用户——
- * 丢码等于把唯一的线索丢了。
+ * 不求穷尽：认不出的码落到 `generic`，但仍然原样展示给用户。
  */
 export const NETWORK_ERROR_CATEGORY_BY_CODE: Readonly<Record<string, NetworkErrorCategory>> = {
 	// DNS：c-ares 与 Node 的解析类错误
@@ -238,11 +225,7 @@ export const NETWORK_ERROR_CATEGORY_BY_CODE: Readonly<Record<string, NetworkErro
 	InvalidArgumentError: 'configuration',
 };
 
-/**
- * 一类的用户可见解释。
- *
- * 两个占位符：`{code}` 是错误码，`{where}` 是站点主机（没有时为空白）。
- */
+/** 一类的用户可见解释；`{code}` 是错误码，`{where}` 是站点主机（没有时为空白）。 */
 const CATEGORY_MESSAGES: Readonly<Record<NetworkErrorCategory, string>> = {
 	dns: '[{code}]{where} 域名解析失败：请确认站点地址没写错，并检查运行本扩展的那台机器能否解析它'
 		+ '（DNS、代理与防火墙都可能影响）。',
@@ -271,9 +254,8 @@ export interface NetworkErrorCauseInfo {
 /**
  * 不算错误码的构造名。
  *
- * `cause?.name` 在「没有 code」时当码用（undici 的 `TimeoutError` / `SocketError` 就是
- * 只能靠这个名字识别）。但普通错误对象一律叫 `Error`/`TypeError`，把它们当码展示只会
- * 让用户看到一个 `[Error]` 这样什么也没说的方括号。
+ * 没有 `code` 时用 `cause?.name` 当码（undici 的 `TimeoutError` / `SocketError` 只能靠名字识别）。
+ * 但普通错误一律叫 `Error` / `TypeError`，把它们当码只会让用户看到 `[Error]` 这样没有信息的方括号。
  */
 const GENERIC_ERROR_NAMES: ReadonlySet<string> = new Set([
 	'Error',
@@ -323,11 +305,10 @@ export function getNetworkErrorCategory(code: string | undefined): NetworkErrorC
 }
 
 /**
- * 把错误码翻译成一句用户能读懂、能照着做的话。
+ * 把错误码翻译成一句用户能照看做的话，格式为 `[CODE]（站点）解释与建议`。
  *
- * 格式固定为 `[CODE]（站点）解释与建议`：方括号里的码是可以拿去搜索、拿去比对的原始信息，
- * 后面的句子是它的意思，括号里是「哪个站点」——多站点配置下这是第一个要回答的问题。
- * **认不出的码也照原样展示**，只是解释退化成通用建议。
+ * 方括号里的码是能拿去搜索、比对的原始信息，后面是它的译文，括号里是「哪个站点」
+ * ——多站点配置下这是第一个要回答的问题。**认不出的码也照原样展示**。
  */
 export function getNetworkErrorMessage(code: string | undefined, host?: string): string {
 	const displayCode = code ?? 'UNKNOWN';
@@ -344,10 +325,8 @@ export function getNetworkErrorMessage(code: string | undefined, host?: string):
 /* -------------------------------------------------------------------------- */
 
 /**
- * URL 里的主机名，用于错误消息。
- *
- * 连接失败时「是哪个主机连不上」是第一个要回答的问题，而路径与查询串没有诊断价值、
- * 还可能是敏感信息。地址解析不出来时返回 `undefined`。
+ * URL 里的主机名：连接失败时「哪个站点连不上」是第一个要回答的问题，
+ * 而路径与查询串没有诊断价值、还可能是敏感信息。解析不出来时返回 `undefined`。
  */
 export function hostOfUrl(url: string | undefined): string | undefined {
 	if (url === undefined) {

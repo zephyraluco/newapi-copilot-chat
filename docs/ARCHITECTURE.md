@@ -209,7 +209,7 @@ flowchart TD
 | `finish_reason === 'length'` | `provider/stream.ts` | 记警告（响应被截断） |
 | 响应正常结束且有用量 | `provider/chatProvider.ts` | 回传一个 `usage` 数据部件（见 §2 末节） |
 | 取消（`isAbortError` 或 token 已取消） | `chatProvider.ts` | 调试日志后静默返回，**不算失败** |
-| 其它错误 | `chatProvider.ts` | `toLanguageModelError` 把错误消息**原样**交给 VS Code（见 §8） |
+| 其它错误 | `chatProvider.ts` | `toLanguageModelError` 把面向用户的消息交给 VS Code（见 §8） |
 
 ## 3. 代码地图
 
@@ -221,15 +221,15 @@ flowchart TD
 | `config.ts` | 250 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
 | `types.ts` | 272 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
-| `errors.ts` | 361 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
+| `errors.ts` | 340 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
 | `usage.ts` | 140 | 用量的读出：缓存命中与思维链 token、各网关字段名兼容，以及回传 Copilot 的载荷 |
 | `format.ts` | 83 | token / 时长 / 相对时间格式化、Markdown 转义 |
 | `logger.ts` | 287 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
-| `http.ts` | 499 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
+| `http.ts` | 492 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
 | `sse.ts` | 302 | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
-| `newApiClient.ts` | 463 | 端点封装、模型列表解析、错误描述与失败建议 |
+| `newApiClient.ts` | 472 | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 233 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
@@ -239,20 +239,20 @@ flowchart TD
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
-| `chatProvider.ts` | 551 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
+| `chatProvider.ts` | 549 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 344 | VS Code ⇄ OpenAI 兼容的消息转换 |
 | `stream.ts` | 381 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
 | `tokenizer.ts` | 110 | token 估算（刻意高估） |
 | **`adapter/`** 差异出口 | | |
 | `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 188 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
-| `deepseek/`（2 个文件） | 261 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
+| `deepseek/`（2 个文件） | 254 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
 | `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
 | `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
 | `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.ts`（15 个文件） | 4,167 | 278 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
+| `test/*.ts`（15 个文件） | 4,174 | 278 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -313,10 +313,11 @@ flowchart LR
   兼容同一语义在不同网关上的多种字段名。
 - **`logger.ts`**：基于 `LogOutputChannel`，用户可在「输出」面板直接调级别。两个要点：我们自己的级别闸门
   与通道级别是**两回事**，配得比通道更详细时日志会被通道吞掉，`warnIfChannelLevelBlocks()` 会检测并提示；
-  `redactText` 用正则兜底脱敏，**即使调用点忘了 `redactSecret`，密钥也不会整串落进日志**。  格式化 `Error` 时会**带上 `cause` 链**（`describeErrorCause`）——`fetch` 失败时
-  原因全在 `cause` 里，而 `stack` 并不包含它。
+  `redactText` 用正则兜底脱敏，**即使调用点忘了 `redactSecret`，密钥也不会整串落进日志**。
+  格式化 `Error` 时带上整条 `cause` 链（`fetch` 失败的原因全在那里，`stack` 里没有）。
 - **`errors.ts`**：网络错误码 → 分类 → 人话（见 §6），同时提供日志用的错误链渲染。
-  放在基础层是因为**日志与 `client/` 都要用**，而基础层不能反向依赖 `client/`。- **`cancellation.ts`**：`CancellationToken` → `AbortSignal` 的集中转换，请求结束后 `dispose()` 解除监听。
+  放基础层是因为日志与 `client/` 都要用它，而基础层不能反向依赖 `client/`。
+- **`cancellation.ts`**：`CancellationToken` → `AbortSignal` 的集中转换，请求结束后 `dispose()` 解除监听。
 
 ## 6. `client/` —— 与 New API 交互
 
@@ -341,45 +342,27 @@ flowchart LR
 
 ### 连接失败：从错误码到「该怎么办」
 
-`fetch` 失败时外壳永远是一句 `TypeError: fetch failed`：**原因在 `cause` 里，诊断字段在
-`cause` 的平级属性上**（`code` / `syscall` / `address` / `port` / `hostname`），而 `stack` 里没有它。
-光看外壳，用户只知道「连不上」，不知道该改 DNS、端口还是证书——扩展跑在远程/容器里时尤其难查。
-
-解决办法不是把原始字段原样甩出去（`code=ENOTFOUND syscall=getaddrinfo` 同样看不懂），
-而是按**错误码分成若干类，每类配一句人话**（`errors.ts`）：
-
-```
-错误码 ──▶ NETWORK_ERROR_CATEGORY_BY_CODE ──▶ dns / unreachable / interrupted / timeout
-           （含 ERR_TLS_* · HPE_* 前缀规则）    / tls / aborted / protocol / configuration / generic
-                                              └──▶ [CODE]（站点）这一类的解释与处置建议
-```
-
-两个出口，读者不同：
+`fetch` 失败时外壳永远是一句 `TypeError: fetch failed`：**原因在 `cause` 里，诊断字段在它的平级属性上**
+（`code` / `syscall` / `address` / `port` / `hostname`），`stack` 里没有。光看外壳只等于「连不上」，
+不知道该改 DNS、端口还是证书。反过来把原始字段甩出去（`code=ENOTFOUND syscall=getaddrinfo`）同样看不懂。
+所以按**错误码分若干类，每类配一句人话**（`errors.ts`），两个出口各给各的读者：
 
 | 出口 | 形态 | 给谁 |
 | --- | --- | --- |
-| `getNetworkErrorMessage` | `[ENOTFOUND]（api.example.com） 域名解析失败：请确认…` | 用户（就是聊天界面里的报错） |
-| `describeErrorCause` | `fetch failed ← getaddrinfo ENOTFOUND … code=ENOTFOUND errno=-3008 syscall=getaddrinfo` | 日志（整条 `cause` 链 + 诊断字段；本函数不脱敏，日志层会统一处理） |
+| `getNetworkErrorMessage` | `[ENOTFOUND]（api.example.com） 域名解析失败：请确认…` | 用户（聊天界面里的报错） |
+| `describeErrorCause` | `fetch failed ← getaddrinfo ENOTFOUND … code=ENOTFOUND syscall=getaddrinfo` | 日志 |
 
-几条刻意的选择：
+- 类别是 `dns` / `unreachable` / `interrupted` / `timeout` / `tls` / `aborted` / `protocol` /
+  `configuration` / `generic`。码表不求穷尽，另有 `ERR_TLS_*` / `ERR_SSL_*` / `HPE_*` 前缀兜底。
+- **码留在方括号里**：它是唯一能拿去搜索、比对的原始信息，解释只是译文。认不出的码照原样展示。
+- **普通构造名不算码**（`Error` / `TypeError` → `[Error]` 等于什么也没说），
+  但 `TimeoutError` / `SocketError` 这类 undici 名字是有意义的，照用。
+- **原始明细只进日志**：`syscall` / `errno` 不该占用聊天框那一行。日志里的 `Error` 由 `formatArg`
+  带上整条 `cause` 链，重试日志同样打原始链（那时的消息已经是给用户看的话了）。
+- 主机只取 host：多站点配置下「哪个站点连不上」是第一个要回答的问题，路径与查询串没有价值。
 
-- **码一定要留在用户可见的消息里**（方括号中）：它是唯一能拿去搜索、能跟别的日志/工单比对的东西，
-  解释只是它的译文。
-- **认不出的码照样展示**，只是解释退化成通用建议；码表不求穷尽（TLS 的码家族很大，按 `ERR_TLS_*` /
-  `ERR_SSL_*` 前缀归类比漏掉好）。
-- **普通错误对象的构造名不算码**（`Error` / `TypeError`）：展示成 `[Error]` 等于什么也没说。
-  但 `TimeoutError` / `SocketError` 这类 undici 的名字是有意义的，照用。
-- **原始明细只进日志**：用户不需要看的 `syscall` / `errno` 不该占用聊天框那一行；
-  而日志里的 `Error` 会被 `formatArg` 带上整条 `cause` 链（不然日志里也只剩一句 `fetch failed`）。
-- 站点主机（只取 host，不要路径与查询串）放在码后面：多站点配置下，
-  「是哪个站点连不上」是第一个要回答的问题。
-- `error` 的 `stack` 会被清掉（`chatProvider.ts` 的 `toLanguageModelError`）：Copilot 会把堆栈一起渲染，
-  用户要的是原因，不是一面指向打包产物的调用链（原始异常已经写进日志了）。
-- 重试日志里同样打印原始链——那时的错误消息已经被改写成给用户看的话了。
-
-**消息自己带建议**（不变量）：无论是 `http.ts` 自己合成的错误（「响应不是合法 JSON」之类）
-还是从网络栈归一来的错误，**把错误抛给上层时消息里就必须包含该怎么办**。
-所以 `describeFailureHint` 对 `kind === 'network'` 一律返回 `undefined`——再补一句就是把同一件事说两遍。
+不变量：**消息自己带建议**。无论错误是自己合成的（「响应不是合法 JSON」之类）还是从网络栈归一来的，
+抛给上层时消息里就必须包含该怎么办——因此 `describeFailureHint` 对 `kind === 'network'` 返回 `undefined`。
 
 **流是怎么结束的**：客户端要求流必须给出正常收尾信号——`[DONE]` 或某个 chunk 里的 `finish_reason`。
 两者都没有、但已经解出过数据块时报 `SseTruncatedError`，而不是把半截回答当成功返回。
@@ -399,8 +382,8 @@ flowchart LR
 因为 `/api/status` 是 New API 的自有扩展，第三方兼容网关通常没有它）。`StatusService.refreshSession()`
 把它们拼成「这个站点现在怎么样」：模型列表走 `catalog`（与 provider 共享缓存，因此状态里的数量就是模型选择器里的数量），
 站点信息走 `getStatus` 并用时耗作为延迟，失败时由 `describeFailureHint()` 给出**可操作建议**
-（地址写错 / 密钥被拒 / 被限流 / 上游中断）而不是只丢一个错误字符串——**连接失败不再重复给建议**，
-因为那一类的错误消息本身已经带了分类与处置（见上文）。只有一处发起探测，
+（地址写错 / 密钥被拒 / 被限流 / 上游中断）而不是只丢一个错误字符串；连接失败那一类不给建议，
+因为错误消息里已经带了分类与处置（见上文）。只有一处发起探测，
 因此状态栏、面板与「测试连接」命令的口径天然一致。
 
 ## 7. `models/` —— 模型信息整合
@@ -543,19 +526,15 @@ provider 相应地不提供模型。
 
 ### 把错误交还给 VS Code
 
-`toLanguageModelError` 不再包装消息：网络故障的消息已经是「分类 + 错误码 + 站点 + 该怎么办」
-（见 §6），HTTP 错误则是上游原话。再包一层「New API 请求失败」没有好处——Copilot 侧本来就会把
-`name: message` 与堆栈一并显示（`extChatEndpoint` 的 `toErrorMessage(e, true)`），
-叠上前缀只是让同一句话出现两遍，还把真正的原因往右挤一格。
+错误消息直接交给 VS Code：网络故障是「分类 + 错误码 + 站点 + 该怎么办」（见 §6），
+HTTP 错误是上游原话。两件事要做：
 
-两件事必须做：
-
-- **清掉 `stack`**（`result.stack = undefined`）：用户要的是原因，不是一面指向打包产物的调用链；
-  原始异常已经写进日志了。
+- **清掉 `stack`**（`result.stack = undefined`）：Copilot 会把 `name: message` 与堆栈一起渲染
+  （`extChatEndpoint` 的 `toErrorMessage(e, true)`），而用户要的是原因；原始异常已经在日志里。
 - **只在语义真正吻合时换用工厂方法**：401/403 → `NoPermissions`、404 → `NotFound`；
-  `Blocked` 表示「被策略阻止」，与限流/超时不是一回事，强行复用会误导。
+  `Blocked` 表示「被策略阻止」，与限流/超时不是一回事。
 
-唯一的加工仍是密钥脱敏（`describeError` 里的 `redactText`）。
+唯一的加工是密钥脱敏（`describeError` 里的 `redactText`）。
 
 ### 模型配置：思考强度（`modelConfiguration.ts`）
 
@@ -799,8 +778,8 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 | 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字上报——宁可不显示 |
 | 明细占用的百分比可能与上游口径有出入 | 分母是上游的真实 `prompt_tokens`，分子是本地启发式估算（刻意高估，见 §8） |
 | 流被掐断时已流出的内容会保留（而不是报错让人重发） | 抛错只会在一个已经能用的回答上弹「重试」，但用户实际上需要的是完整的回答 |
-| 连接失败给用户的是「分类 + 错误码 + 建议」，不是原始错误链 | 链里的 `syscall` / `errno` 对用户没有意义；码保留在方括号里（可搜索），明细进日志（排查用）——两边都不丢信息，只是各给各的读者 |
-| 错误码表刻意不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，而**刻意丢掉**码就等于把唯一的线索丢了 |
+| 连接失败给用户的是「分类 + 错误码 + 建议」，不是原始错误链 | 链里的 `syscall` / `errno` 对用户没有意义；码留在方括号里（可搜索），明细进日志，两边都不丢信息 |
+| 错误码表不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，而丢掉码就等于把唯一的线索丢了 |
 | 交给 VS Code 的错误清掉 `stack` | Copilot 会把堆栈一起渲染；用户要的是原因，不是指向打包产物的调用链（原始异常已在日志里） |
 
 ## 13. 测试
@@ -810,10 +789,10 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求、连接失败的三类分类句子与 `cause` 保留、认不出的码、响应体不被二次截断 |
+| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求、连接失败的三类分类句子与 `cause` 保留、认不出的码 |
 | `test/sse.test.ts` | 事件分帧（含 CRLF 正好被切在分片之间）、多行 `data`、心跳注释、UTF-8 被从中间切开、静默超时、收尾信息回填、非 SSE 降级读取及其静默超时 |
 | `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮、失败建议 |
-| `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类给各自的建议、认不出的码照原样展示）、日志用的一行明细（折叠换行、截断、成环）、主机名提取 |
+| `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类各自的建议、含 `$` 序列的码、主机名）、日志用的一行明细（折叠换行、截断、成环） |
 | `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、已上报部件数、用量快照、`decideStreamFailure` 的四类处置 |
 | `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
 | `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 用量部件，走真实的 `provideLanguageModelChatResponse`） |

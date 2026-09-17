@@ -258,7 +258,7 @@ export class HttpClient {
 		const response = await this.fetchWithRetry(options, true);
 		const body = response.body;
 		if (body === null) {
-			// 与 errors.ts 的分类句子同一个约定：消息本身就带上该怎么办
+			// 消息本身就带上该怎么办（与 errors.ts 的分类句子同一个约定）
 			throw new TransportError(
 				'network',
 				`响应没有可读取的流（${response.url}）：通常来自站点或中间的代理异常。`,
@@ -397,9 +397,8 @@ function timeoutMessage(streaming: boolean): string {
 /**
  * 把任意异常归一化成 TransportError。
  *
- * 消息面向用户：分类句子 + 错误码 + 站点（怎么分类见 `src/errors.ts`）；
- * 原因对象原样挂在 `cause` 上，所以日志可以用 `describeErrorCause` 打印整条明细——
- * 两条出口各给各的读者，互不影响。
+ * 消息面向用户：分类句子 + 错误码 + 站点（分类见 `src/errors.ts`）；原因对象挂在 `cause` 上，
+ * 供日志打印整条明细。
  */
 function normalizeTransportError(
 	error: unknown,

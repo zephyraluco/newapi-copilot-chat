@@ -1,22 +1,18 @@
 /**
  * DeepSeek 适配器：把请求改写成 DeepSeek 的形态。
  *
- * 所属目录 `adapter/deepseek/` 只服务这一个供应商，同目录的 `requestKind.ts` 是它的判据；
- * 其他供应商各自建同名目录，互不引用。
+ * 所属目录只服务这一个供应商，同目录的 `requestKind.ts` 是它的判据。
  *
- * 与 OpenAI 的差别（都在请求体侧，响应侧不需要改写）：
+ * 与 OpenAI 的差别都在请求体侧（响应侧无需改写）：
  *
- * 1. **思考要显式开关**：`thinking: { type: 'enabled' | 'disabled' }`。思考模型一律显式写上，
- *    不依赖上游对「没给这个字段」的默认理解。
- * 2. **`reasoning_effort` 只与「开启思考」共存**：关掉思考时把它一并去掉，否则就是一个
- *    自相矛盾的请求；模型不具备思考能力时也不该出现这个字段。
- * 3. **辅助请求不思考**：起标题、写提交信息、生成分支名这类请求的产出只有一行短文本，
- *    思考只会让它们慢几倍（类型清单见 `requestKind.ts`）。
+ * 1. **思考要显式开关**：`thinking: { type: 'enabled' | 'disabled' }`，不依赖上游对
+ *    「没给这个字段」的默认理解。
+ * 2. **`reasoning_effort` 只与「开启思考」共存**：关掉思考时一并去掉；模型不具备思考能力时
+ *    也不该出现这个字段。
+ * 3. **辅助请求不思考**：它们的产出只有一行短文本，思考只会让它们慢几倍。
  *
- * 行为**不随站点变化**：New API 是网关，同一个模型后面接的是哪一个上游、上游认不认这些字段
- * 都无法从地址上判断，因此不对地址做任何区分。
- *
- * `reasoning_effort` 的取值不做翻译：模型选择器里的档位来自数据表，本来就该是站点文档里的写法。
+ * 行为不随站点变化：New API 是网关，模型后面接的是哪个上游、上游认不认这些字段都无法从
+ * 地址上判断。`reasoning_effort` 的取值也不做翻译，档位本来就来自数据表。
  */
 
 import { DEFAULT_REASONING_EFFORT_FIELD } from '../../consts';
@@ -76,7 +72,7 @@ export class DeepSeekAdapter implements ModelAdapter {
 	}
 }
 
-/** 删除请求体里的一个字段；返回它原本是否存在。 */
+/** 删除请求体里的一个字段；返回它是否存在。 */
 function removeField(request: ChatCompletionRequest, key: string): boolean {
 	const fields = request as Record<string, unknown>;
 	if (!(key in fields)) {

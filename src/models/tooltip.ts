@@ -111,7 +111,7 @@ const PAD = '\u3000';
  * 把标签补到等宽，使取值列对齐。
  *
  * tooltip 用比例字体、宽度只有 300px，但中文与全角空格在字体里等宽，因此补齐后每一行的取值都落在
- * 同一列上——标签长短不再表现为参差的锯齿，键与值之间也有了统一可读的间隙。
+ * 同一列上，键与值之间也有统一可读的间隙。
  */
 function padLabel(label: string, width: number): string {
 	const length = [...label].length;
