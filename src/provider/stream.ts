@@ -7,6 +7,7 @@
  */
 
 import * as vscode from 'vscode';
+import { SseTruncatedError } from '../client/sse';
 import { safeJsonParse } from '../json';
 import type { Logger } from '../logger';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
@@ -70,6 +71,10 @@ export class StreamTranslator {
 	private finishReason: string | undefined;
 	private usage: ChatUsage | undefined;
 	private readonly toolCalls = new Map<number, ToolCallAccumulator>();
+	/** 最近一次写入的工具调用槽位；网关省略 `index` 时，续传分片要接在它上面 */
+	private lastToolCallIndex: number | undefined;
+	/** 已经上报给 VS Code 的部件数：截断重试的门就卡在这个值上 */
+	private emitted = 0;
 	private reasoningStarted = false;
 	/** 思维链渲染时是否处于行首（决定要不要补 `> ` 前缀） */
 	private reasoningAtLineStart = true;
@@ -80,6 +85,16 @@ export class StreamTranslator {
 		private readonly progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 		private readonly options: StreamTranslatorOptions,
 	) { }
+
+	/** 已上报的部件数。 */
+	get emittedParts(): number {
+		return this.emitted;
+	}
+
+	/** 上游给出的用量快照（可能出现在任意一个 chunk 里，取最后一个）。 */
+	get latestUsage(): ChatUsage | undefined {
+		return this.usage;
+	}
 
 	/** 处理一个 chunk。 */
 	handle(chunk: ChatCompletionChunk): void {
@@ -131,8 +146,12 @@ export class StreamTranslator {
 	 * 结束本次流式响应：上报工具调用并返回统计。
 	 *
 	 * 工具调用统一在这里上报，因为只有流结束时才能确定参数已经拼完整。
+	 *
+	 * @param options.dropIncompleteToolCalls 参数还没拼完的工具调用直接丢掉。
+	 *   用于「流被中途掐断」的场景：此时参数通常是半截 JSON，上报它只会让 VS Code
+	 *   拿着残缺参数去执行工具。
 	 */
-	flush(): StreamSummary {
+	flush(options: { dropIncompleteToolCalls?: boolean } = {}): StreamSummary {
 		if (this.reasoningStarted && !this.contentStarted && this.options.includeReasoning) {
 			// 只有思维链、没有正式回答（例如被截断），补一个换行避免格式粘连
 			this.report('\n');
@@ -149,9 +168,17 @@ export class StreamTranslator {
 				this.options.logger.warn(`工具调用缺少函数名，已跳过（index=${index}）`);
 				continue;
 			}
-			const input = parseToolArguments(call.arguments, this.options.logger, call.name);
+			const input = tryParseToolArguments(call.arguments, this.options.logger, call.name);
+			if (input === undefined) {
+				if (options.dropIncompleteToolCalls === true) {
+					this.options.logger.warn(`工具 ${call.name} 的参数不完整（流已中断），已丢弃这次调用`);
+					continue;
+				}
+				this.options.logger.error(`无法解析工具 ${call.name} 的参数`, call.arguments.trim());
+			}
 			const callId = call.id ?? `call_${index}_${Date.now().toString(36)}`;
-			this.progress.report(new vscode.LanguageModelToolCallPart(callId, call.name, input));
+			this.progress.report(new vscode.LanguageModelToolCallPart(callId, call.name, input ?? {}));
+			this.emitted++;
 			toolCallCount++;
 		}
 
@@ -220,7 +247,7 @@ export class StreamTranslator {
 
 	/** 累积工具调用分片。 */
 	private accumulateToolCall(delta: ChatToolCallDelta): void {
-		const index = typeof delta.index === 'number' ? delta.index : this.toolCalls.size;
+		const index = this.resolveToolCallIndex(delta);
 		const existing = this.toolCalls.get(index) ?? { name: '', arguments: '' };
 		if (delta.id !== undefined && delta.id.length > 0) {
 			existing.id = delta.id;
@@ -234,8 +261,43 @@ export class StreamTranslator {
 		this.toolCalls.set(index, existing);
 	}
 
+	/**
+	 * 判断这个分片应该归到哪个槽位。
+	 *
+	 * 严格按 OpenAI 规范 `index` 是必填的，但兼容网关可能省略它。这时**不能**退回
+	 * 「已用槽位数」当索引：那个值每开一个槽就 +1，于是参数续传分片会被当成一次新调用，
+	 * 参数落进一个没有函数名的空槽，最后在 flush 时被当作「缺少函数名」丢弃——
+	 * 症状是「工具被执行了，但参数全空」，很难从现象联想到索引。
+	 *
+	 * 判据改用 `id`：只有一次工具调用的首个分片才会带 `id`，续传分片只有 `arguments`。
+	 */
+	private resolveToolCallIndex(delta: ChatToolCallDelta): number {
+		if (typeof delta.index === 'number') {
+			this.lastToolCallIndex = delta.index;
+			return delta.index;
+		}
+		const startsNewCall = typeof delta.id === 'string' && delta.id.length > 0;
+		if (startsNewCall || this.lastToolCallIndex === undefined) {
+			this.lastToolCallIndex = this.nextToolCallIndex();
+			return this.lastToolCallIndex;
+		}
+		return this.lastToolCallIndex;
+	}
+
+	/** 下一个空槽位：取已用索引的最大值 +1，避免稀疏索引（网关只发 `index: 5`）时撞号。 */
+	private nextToolCallIndex(): number {
+		let max = -1;
+		for (const key of this.toolCalls.keys()) {
+			if (key > max) {
+				max = key;
+			}
+		}
+		return max + 1;
+	}
+
 	private report(text: string): void {
 		this.progress.report(new vscode.LanguageModelTextPart(text));
+		this.emitted++;
 	}
 }
 
@@ -244,10 +306,11 @@ export class StreamTranslator {
  *
  * 上游偶尔会把 JSON 包在 Markdown 代码块里（尤其是被中转做过格式化的场景），
  * 因此这里会先尝试直接解析，失败后再剥掉围栏重试。
- * 仍然失败时返回空对象并记录错误——让 VS Code 报出参数校验失败（模型可自我修正），
+ * 仍然失败时返回 `undefined`，由调用方决定是「丢掉这次调用」（流被截断时）
+ * 还是「空对象上报，让 VS Code 报出参数校验失败」（流正常结束时）——后者能让模型自我修正，
  * 比直接丢掉这次工具调用更好。
  */
-export function parseToolArguments(raw: string, logger: Logger, toolName: string): object {
+export function tryParseToolArguments(raw: string, logger: Logger, toolName: string): object | undefined {
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) {
 		return {};
@@ -267,6 +330,52 @@ export function parseToolArguments(raw: string, logger: Logger, toolName: string
 		}
 	}
 
-	logger.error(`无法解析工具 ${toolName} 的参数`, trimmed);
-	return {};
+	return undefined;
+}
+
+/** 解析工具调用参数；失败时返回空对象并记录错误。 */
+export function parseToolArguments(raw: string, logger: Logger, toolName: string): object {
+	const parsed = tryParseToolArguments(raw, logger, toolName);
+	if (parsed === undefined) {
+		logger.error(`无法解析工具 ${toolName} 的参数`, raw.trim());
+		return {};
+	}
+	return parsed;
+}
+
+/**
+ * 一次流式请求失败后的处置。
+ *
+ * - `retry`：重发整次请求。只有「还来得及」时才可以——用户什么都还没看到。
+ * - `keep-partial`：保留已经流出的内容，当作成功返回。
+ * - `fail`：抛给 VS Code。
+ */
+export type StreamFailureAction = 'retry' | 'keep-partial' | 'fail';
+
+/**
+ * 决定一次流式失败该怎么处置。
+ *
+ * 只有「流在正常收尾前结束」才值得重发；其它错误（4xx、取消、上游明确报错）重发也好不了。
+ * 而重发的先决条件是 `emittedParts === 0`：provider 抛错时 VS Code 会先冲刷已经流出的部件，
+ * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
+ */
+export function decideStreamFailure(input: {
+	error: unknown;
+	/** 已经上报给 VS Code 的部件数 */
+	emittedParts: number;
+	/** 这是第几次尝试（从 0 开始） */
+	attempt: number;
+	maxRetries: number;
+	cancelled: boolean;
+}): StreamFailureAction {
+	if (input.cancelled) {
+		return 'fail';
+	}
+	if (!(input.error instanceof SseTruncatedError)) {
+		return 'fail';
+	}
+	if (input.emittedParts > 0) {
+		return 'keep-partial';
+	}
+	return input.attempt < input.maxRetries ? 'retry' : 'fail';
 }

@@ -12,6 +12,7 @@
 import * as vscode from 'vscode';
 import { TOKEN_ESTIMATION } from '../consts';
 import { safeJsonStringify } from '../json';
+import { NO_PARAMETER_SCHEMA } from './messages';
 
 /** CJK 汉字、日文假名、韩文、全角标点与符号。 */
 const CJK_PATTERN = /[\u2e80-\u303f\u3040-\u30ff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/g;
@@ -102,7 +103,8 @@ export function estimateToolsTokens(tools: readonly vscode.LanguageModelChatTool
 		total += TOKEN_ESTIMATION.toolOverhead;
 		total += estimateTextTokens(tool.name);
 		total += estimateTextTokens(tool.description ?? '');
-		total += estimateTextTokens(safeJsonStringify(tool.inputSchema) ?? '');
+		// 与实际下发的请求体保持一致：没有 schema 的工具按空 object schema 发送
+		total += estimateTextTokens(safeJsonStringify(tool.inputSchema ?? NO_PARAMETER_SCHEMA) ?? '');
 	}
 	return total;
 }

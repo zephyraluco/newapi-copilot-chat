@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { HttpError, TransportError } from '../client/http';
 import { NewApiClient, describeError, describeFailureHint } from '../client/newApiClient';
 import type { NewApiClientOptions } from '../client/newApiClient';
+import { SseIdleTimeoutError, SseTruncatedError } from '../client/sse';
 import type { ChatCompletionChunk, ChatCompletionRequest } from '../types';
 import { fakeFetch, jsonResponse, streamResponse } from './fakes';
 import { capturingLogger, testLogger } from './helpers';
@@ -9,11 +10,13 @@ import { capturingLogger, testLogger } from './helpers';
 /**
  * 客户端端点的测试。
  *
- * 这里钉住三类容易静默变化的东西：
+ * 这里钉住四类容易静默变化的东西：
  * - **响应形态的兼容**：网关返回 `{data:[...]}`、裸数组、甚至再包一层的都有；
  * - **鉴权头的出现与否**：`/api/status` 刻意不带密钥（它认的是用户 token，带 API Key 没用）；
  * - **降级路径**：网关忽略 `stream: true` 时，必须把整段 JSON 包装成一个等价的 chunk，
- *   否则上层会什么都不显示。
+ *   否则上层会什么都不显示；
+ * - **流是怎么结束的**：半截回答必须报出来（没报就是用户把半截回答当成了完整的），
+ *   而「没有 `[DONE]` 但有 `finish_reason`」是合法收尾，不能误报。
  */
 
 /** 构造一个注入了假 `fetch` 的客户端。 */
@@ -214,6 +217,118 @@ suite('client / New API 端点', () => {
 	});
 
 	/* ---------------------------------------------------------------------- */
+	/* 流的收尾与截断                                                          */
+	/* ---------------------------------------------------------------------- */
+
+	test('流没有正常收尾时报截断错误（半截回答不能当成功）', async () => {
+		const fake = fakeFetch(() => streamResponse([
+			'data: {"id":"1","choices":[{"index":0,"delta":{"content":"前半段"}}]}\n\n',
+			// 连接在这里断开：既没有 [DONE]，也没有 finish_reason
+		], { headers: { 'content-type': 'text/event-stream' } }));
+
+		const chunks: ChatCompletionChunk[] = [];
+		let caught: unknown;
+		try {
+			for await (const chunk of createClient(fake.impl).streamChatCompletion(chatRequest())) {
+				chunks.push(chunk);
+			}
+		} catch (error) {
+			caught = error;
+		}
+
+		assert.strictEqual(chunks.length, 1, '断开前收到的数据块要照常吐出来');
+		assert.ok(caught instanceof SseTruncatedError, `实际是 ${String(caught)}`);
+		assert.strictEqual((caught as SseTruncatedError).blocks, 1);
+	});
+
+	test('没有 [DONE] 但给了 finish_reason 也算正常收尾', async () => {
+		const fake = fakeFetch(() => streamResponse([
+			'data: {"id":"1","choices":[{"index":0,"delta":{"content":"你好"}}]}\n\n',
+			'data: {"id":"1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+		], { headers: { 'content-type': 'text/event-stream' } }));
+
+		const chunks: ChatCompletionChunk[] = [];
+		for await (const chunk of createClient(fake.impl).streamChatCompletion(chatRequest())) {
+			chunks.push(chunk);
+		}
+
+		assert.strictEqual(chunks.length, 2, '不该把合法收尾当成截断');
+	});
+
+	test('一个数据块都没解析出来时不判定为截断（分不清空响应与格式不认识）', async () => {
+		const fake = fakeFetch(() => streamResponse([': keep-alive\n\n'], {
+			headers: { 'content-type': 'text/event-stream' },
+		}));
+
+		const chunks: ChatCompletionChunk[] = [];
+		for await (const chunk of createClient(fake.impl).streamChatCompletion(chatRequest())) {
+			chunks.push(chunk);
+		}
+
+		assert.deepStrictEqual(chunks, []);
+	});
+
+	test('关掉 includeUsage 后不再下发 stream_options', async () => {
+		const fake = fakeFetch(() => streamResponse(['data: [DONE]\n\n'], {
+			headers: { 'content-type': 'text/event-stream' },
+		}));
+		const client = createClient(fake.impl, { includeUsage: false });
+
+		for await (const _chunk of client.streamChatCompletion(chatRequest())) {
+			// 流是空的
+		}
+
+		const body = JSON.parse(String(fake.calls[0].init?.body)) as Record<string, unknown>;
+		assert.strictEqual(body.stream_options, undefined, '不认这个字段的站点要能绕过它');
+		assert.strictEqual(body.stream, true, 'stream 本身不能被弄丢');
+	});
+
+	/* ---------------------------------------------------------------------- */
+	/* 静默超时                                                                */
+	/* ---------------------------------------------------------------------- */
+
+	test('SSE 路径用 streamIdleTimeoutMs，而不是 timeoutMs', async () => {
+		const fake = fakeFetch(() => streamResponse(
+			['data: {"choices":[{"index":0,"delta":{"content":"你"}}]}\n\n'],
+			{ headers: { 'content-type': 'text/event-stream' }, hang: true },
+		));
+		// timeoutMs 故意很大：如果静默超时还在用它，这个用例会一直等到测试超时
+		const client = createClient(fake.impl, { timeoutMs: 60_000, streamIdleTimeoutMs: 30 });
+
+		const chunks: ChatCompletionChunk[] = [];
+		let caught: unknown;
+		try {
+			for await (const chunk of client.streamChatCompletion(chatRequest())) {
+				chunks.push(chunk);
+			}
+		} catch (error) {
+			caught = error;
+		}
+
+		assert.strictEqual(chunks.length, 1, '超时前收到的数据块要照常吐出来');
+		assert.ok(caught instanceof SseIdleTimeoutError, `实际是 ${String(caught)}`);
+	});
+
+	test('降级路径同样受 streamIdleTimeoutMs 保护', async () => {
+		const fake = fakeFetch(() => streamResponse(['{"choices":'], {
+			headers: { 'content-type': 'application/json' },
+			hang: true,
+		}));
+		const client = createClient(fake.impl, { timeoutMs: 60_000, streamIdleTimeoutMs: 30 });
+
+		let caught: unknown;
+		try {
+			for await (const _chunk of client.streamChatCompletion(chatRequest())) {
+				// 不该产出数据块
+			}
+		} catch (error) {
+			caught = error;
+		}
+
+		assert.ok(caught instanceof SseIdleTimeoutError, `实际是 ${String(caught)}`);
+	});
+
+	/* ---------------------------------------------------------------------- */
 	/* 非流式补全                                                              */
 	/* ---------------------------------------------------------------------- */
 
@@ -274,5 +389,21 @@ suite('client / New API 端点', () => {
 		assert.ok((describeFailureHint(new TransportError('network', '连不上'), true) ?? '').includes('代理'));
 		assert.strictEqual(describeFailureHint(new TransportError('aborted', '已取消'), true), undefined);
 		assert.strictEqual(describeFailureHint(new Error('别的错'), true), undefined);
+	});
+
+	test('中断与截断各给一条可操作的建议', () => {
+		const stalled = describeFailureHint(new SseIdleTimeoutError(60_000), true) ?? '';
+		assert.ok(stalled.includes('streamIdleTimeoutMs'), '要告诉用户去哪个设置放宽');
+
+		const cut = describeFailureHint(new SseTruncatedError(3), true) ?? '';
+		assert.ok(cut.includes('不完整'));
+	});
+
+	test('限流建议带上服务端要求的等待时间', () => {
+		const withWait = new HttpError(429, 'Too Many Requests', 'u', undefined, undefined, 120_000);
+		assert.ok((describeFailureHint(withWait, true) ?? '').includes('120 秒'));
+
+		const withoutWait = new HttpError(429, 'Too Many Requests', 'u', undefined, undefined, undefined);
+		assert.ok((describeFailureHint(withoutWait, true) ?? '').includes('限流'));
 	});
 });

@@ -6,7 +6,7 @@ import {
 	parseSseStream,
 	readStreamText,
 } from '../client/sse';
-import type { SseEvent, SseStreamOptions } from '../client/sse';
+import type { SseEvent, SseJsonOutcome, SseStreamOptions } from '../client/sse';
 import { scriptedStream } from './fakes';
 import { capturingLogger } from './helpers';
 
@@ -31,6 +31,15 @@ async function collect(stream: ReadableStream<Uint8Array>, options: SseStreamOpt
 async function collectData(chunks: readonly (string | Uint8Array)[]): Promise<string[]> {
 	const events = await collect(scriptedStream(chunks).stream);
 	return events.map(event => event.data);
+}
+
+/** 把流读干，只关心收尾信息（是否收到 `[DONE]`、解出多少个数据块）。 */
+async function drain(chunks: readonly (string | Uint8Array)[]): Promise<SseJsonOutcome> {
+	const outcome: SseJsonOutcome = { sawDone: false, blocks: 0 };
+	for await (const _value of parseSseJson<unknown>(scriptedStream(chunks).stream, { outcome })) {
+		// 数据块本身不重要
+	}
+	return outcome;
 }
 
 suite('client / SSE 解析', () => {
@@ -118,6 +127,22 @@ suite('client / SSE 解析', () => {
 		assert.ok(logs.messages('debug').some(line => line.includes('忽略无法解析')));
 	});
 
+	test('回填收尾信息：是否收到 [DONE]、解出多少个数据块', async () => {
+		const complete = await drain([
+			'data: {"n":1}\n\n',
+			'data: 这不是 JSON\n\n',
+			'data: {"n":2}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		assert.strictEqual(complete.sawDone, true);
+		assert.strictEqual(complete.blocks, 2, '无法解析的数据块不计入');
+
+		// 没有 [DONE] 就直接断流：上层据此判定「回答被截断」
+		const cut = await drain(['data: {"n":1}\n\n']);
+		assert.strictEqual(cut.sawDone, false);
+		assert.strictEqual(cut.blocks, 1);
+	});
+
 	/* ---------------------------------------------------------------------- */
 	/* 静默超时                                                                */
 	/* ---------------------------------------------------------------------- */
@@ -180,5 +205,37 @@ suite('client / SSE 解析', () => {
 
 		assert.ok(caught instanceof Error);
 		assert.strictEqual((caught as Error).message, '已取消');
+	});
+
+	test('降级路径也会在静默过久时中断，并释放连接', async () => {
+		// HTTP 层的超时守卫在拿到响应头之后已经撤掉，这条路上必须自带超时，
+		// 否则「网关忽略了 stream 参数、又不吐数据」时就只能等 undici 的默认 bodyTimeout。
+		const handle = scriptedStream(['{"choices"'], { hang: true });
+		let notified = false;
+
+		let caught: unknown;
+		try {
+			await readStreamText(handle.stream, undefined, {
+				idleTimeoutMs: 30,
+				onIdleTimeout: () => {
+					notified = true;
+				},
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		if (!(caught instanceof SseIdleTimeoutError)) {
+			throw new Error(`预期是 SseIdleTimeoutError，实际是 ${String(caught)}`);
+		}
+		assert.strictEqual(caught.idleTimeoutMs, 30);
+		assert.strictEqual(notified, true, '调用方要靠这个回调去中断底层连接');
+		assert.strictEqual(handle.cancelled(), true, '超时后必须取消读取，否则连接会一直挂着');
+		assert.strictEqual(handle.released(), true);
+	});
+
+	test('降级路径不设静默超时时按原样读完', async () => {
+		const handle = scriptedStream(['{"a":', '1}']);
+		assert.strictEqual(await readStreamText(handle.stream, undefined, {}), '{"a":1}');
 	});
 });

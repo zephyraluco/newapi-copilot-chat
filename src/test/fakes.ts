@@ -44,15 +44,17 @@ export function fakeFetch(handler: (call: FetchCall, index: number) => Promise<R
  *
  * 必须认信号：真实 `fetch` 被中断时会立刻 reject，若替身只是「不结算」，
  * 超时与取消路径就永远不会返回（`HttpClient` 等的是 `fetch`，不是计时器）。
+ *
+ * reject 用的是 `signal.reason` 而不是固定的 `AbortError`：真实 `fetch` 就是这么做的
+ * （`abort()` 带 reason 时原样抛出，无参时才是一个 `AbortError`），
+ * 取消路径的判定依赖这个细节。
  */
 export function hangingFetch(): FakeFetch {
 	return fakeFetch(call =>
 		new Promise<Response>((_resolve, reject) => {
 			const signal = call.init?.signal ?? undefined;
 			const onAbort = () => {
-				const error = new Error('The operation was aborted');
-				error.name = 'AbortError';
-				reject(error);
+				reject(signal?.reason ?? abortError());
 			};
 			if (signal?.aborted === true) {
 				onAbort();
@@ -60,6 +62,13 @@ export function hangingFetch(): FakeFetch {
 			}
 			signal?.addEventListener('abort', onAbort, { once: true });
 		}));
+}
+
+/** 一个 `name` 为 `AbortError` 的错误，用于模拟 `abort()` 无参时的 reason。 */
+function abortError(): Error {
+	const error = new Error('The operation was aborted');
+	error.name = 'AbortError';
+	return error;
 }
 
 /** 假的响应头集合：只实现被用到的 `get`。 */

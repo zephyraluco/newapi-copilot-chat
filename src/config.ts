@@ -37,8 +37,12 @@ export interface ModelSettings {
 
 /** 请求相关设置。 */
 export interface RequestSettings {
-	/** 超时：非流式是整体超时，流式是「两个分片之间的静默超时」 */
+	/** 超时：非流式是整体超时，流式是「等响应头」的上限 */
 	readonly timeoutMs: number;
+	/** 流式响应两个数据块之间的静默超时 */
+	readonly streamIdleTimeoutMs: number;
+	/** 是否要求上游在流式响应里返回用量（部分站点不认 `stream_options`） */
+	readonly includeUsage: boolean;
 	/** 失败重试次数（不含首次尝试） */
 	readonly maxRetries: number;
 	/** 采样温度；未设置则不发送该字段，交由服务端默认值 */
@@ -167,6 +171,12 @@ export function readSettings(logger: Logger): NewApiSettings {
 		},
 		request: {
 			timeoutMs: readPositiveInt(config.get('request.timeoutMs'), DEFAULTS.requestTimeoutMs, 5_000),
+			streamIdleTimeoutMs: readPositiveInt(
+				config.get('request.streamIdleTimeoutMs'),
+				DEFAULTS.streamIdleTimeoutMs,
+				5_000,
+			),
+			includeUsage: asBoolean(config.get('request.includeUsage')) ?? true,
 			maxRetries: Math.min(5, Math.max(0, Math.round(asNumber(config.get('request.maxRetries')) ?? DEFAULTS.maxRetries))),
 			temperature: readTemperature(config, logger),
 			topP: readTopP(config, logger),
@@ -222,6 +232,8 @@ export class ConfigService implements vscode.Disposable {
 			},
 			request: {
 				timeoutMs: request.timeoutMs,
+				streamIdleTimeoutMs: request.streamIdleTimeoutMs,
+				includeUsage: request.includeUsage,
 				maxRetries: request.maxRetries,
 				temperature: request.temperature,
 				topP: request.topP,

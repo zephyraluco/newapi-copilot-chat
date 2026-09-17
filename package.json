@@ -144,16 +144,29 @@
           "type": "number",
           "default": 60000,
           "minimum": 5000,
-          "markdownDescription": "请求超时（毫秒）。\n\n非流式请求是整体超时；流式请求是**两个数据块之间的静默超时**，因此耗时长但持续输出的回答不会被误杀。",
+          "markdownDescription": "请求超时（毫秒）。\n\n非流式请求是整体超时；流式请求是**等响应头**的上限——响应头到达之后由 `request.streamIdleTimeoutMs` 接管。",
           "order": 20
+        },
+        "newapi-copilot-chat.request.streamIdleTimeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "markdownDescription": "流式响应中**两个数据块之间的静默超时**（毫秒）：连续这么久没有收到新数据就中断请求。\n\n它和 `request.timeoutMs` 分开，是因为两者的合理取值差得很远：一个长回答只要在持续吐字就不该被杀，而连不上站点时又不该等太久。缓冲型网关上长思考的模型可能长时间不吐字节，遇到这种情况可以调大这里。",
+          "order": 21
+        },
+        "newapi-copilot-chat.request.includeUsage": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "是否在流式请求里要求上游返回用量（`stream_options: { include_usage: true }`）。\n\n开启后状态面板与日志才能看到 token 用量。少数站点不认识这个字段并直接返回 400，此时关掉它即可；关掉后 `request.extraBody` 里的同名键才会被保留（开启时以本扩展下发的为准）。",
+          "order": 22
         },
         "newapi-copilot-chat.request.maxRetries": {
           "type": "number",
           "default": 2,
           "minimum": 0,
           "maximum": 5,
-          "markdownDescription": "失败重试次数（不含首次尝试）。只对网络错误、超时、429 与 5xx 生效，4xx 业务错误不会重试。",
-          "order": 21
+          "markdownDescription": "失败重试次数（不含首次尝试）。只对网络错误、超时、429 与 5xx 生效，4xx 业务错误不会重试。\n\n服务端 `Retry-After` 要求的等待超过 30 秒时不再重试，而是直接把限流错误报出来。",
+          "order": 23
         },
         "newapi-copilot-chat.request.temperature": {
           "type": [
@@ -164,7 +177,7 @@
           "minimum": 0,
           "maximum": 2,
           "markdownDescription": "采样温度。留空（`null`）表示不发送该字段，由服务端使用默认值。",
-          "order": 22
+          "order": 24
         },
         "newapi-copilot-chat.request.topP": {
           "type": [
@@ -175,20 +188,20 @@
           "minimum": 0,
           "maximum": 1,
           "markdownDescription": "核采样（top_p）。留空（`null`）表示不发送该字段。",
-          "order": 23
+          "order": 25
         },
         "newapi-copilot-chat.request.includeReasoning": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）作为正文回显。\n\n稳定的 VS Code API 目前没有专门的「思考内容」响应部件，因此开启后思维链会以引用块的形式出现在回答前面。",
-          "order": 24
+          "order": 26
         },
         "newapi-copilot-chat.request.extraBody": {
           "type": "object",
           "default": {},
           "markdownDescription": "透传给所有模型的额外请求体字段，用于配置网关特有参数。\n\n`model` / `messages` / `tools` 等协议字段不允许被覆盖。\n\n```json\n{ \"enable_thinking\": false }\n```",
           "additionalProperties": true,
-          "order": 25
+          "order": 27
         },
         "newapi-copilot-chat.status.showStatusBar": {
           "type": "boolean",

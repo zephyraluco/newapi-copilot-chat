@@ -11,12 +11,13 @@
 
 import * as vscode from 'vscode';
 import { createRequestState } from '../adapter/adapter';
-import type { AdapterContext } from '../adapter/adapter';
+import type { AdapterContext, ModelAdapter } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
-import { MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS } from '../consts';
+import type { NewApiClient } from '../client/newApiClient';
+import { DEFAULTS, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
@@ -29,7 +30,7 @@ import {
 } from './modelConfiguration';
 import type { ModelConfigurationSchema } from './modelConfiguration';
 import type { ProviderSession, SessionRegistry } from './session';
-import { StreamTranslator, extractStreamError } from './stream';
+import { StreamTranslator, decideStreamFailure, extractStreamError } from './stream';
 import type { StreamSummary } from './stream';
 import {
 	createTarget,
@@ -220,12 +221,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			logger,
 			reasoningEffort: effort.effort,
 		};
-		const adapterState = createRequestState();
-		const translator = new StreamTranslator(progress, {
-			includeReasoning: settings.request.includeReasoning,
-			logger,
-			modelId: config.id,
-		});
 
 		try {
 			const converted = convertMessages(messages, logger);
@@ -259,36 +254,18 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				: request;
 
 			const client = this.resolveSession(model).client;
-			let chunkCount = 0;
-			for await (const rawChunk of client.streamChatCompletion(transformed, abort.signal)) {
-				const streamError = extractStreamError(rawChunk);
-				if (streamError !== undefined) {
-					throw new Error(`上游返回错误：${streamError}`);
-				}
-				// 适配器可选地改写或丢弃 chunk
-				const chunk = adapter.transformChunk
-					? await adapter.transformChunk(rawChunk, adapterContext, adapterState)
-					: rawChunk;
-				if (chunk === undefined) {
-					continue;
-				}
-				chunkCount++;
-				translator.handle(chunk);
-			}
-
-			// 冲刷适配器缓冲
-			if (adapter.finalize) {
-				for (const chunk of await adapter.finalize(adapterContext, adapterState)) {
-					translator.handle(chunk);
-				}
-			}
-
-			const summary = translator.flush();
-			logger.debug(
-				`响应结束：${chunkCount} 个数据块，正文 ${summary.textLength} 字，` +
-				`思考 ${summary.reasoningLength} 字，工具调用 ${summary.toolCallCount} 次，` +
-				`结束原因 ${summary.finishReason ?? '未提供'}`,
-			);
+			const summary = await this.streamResponse({
+				client,
+				adapter,
+				adapterContext,
+				request: transformed,
+				modelId: config.id,
+				includeReasoning: settings.request.includeReasoning,
+				progress,
+				signal: abort.signal,
+				cancelled: () => token.isCancellationRequested,
+				logger,
+			});
 			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
 		} catch (error) {
 			// 取消是正常流程，不是失败：VS Code 会在用户点「停止」时取消 token
@@ -300,6 +277,111 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			throw toLanguageModelError(error);
 		} finally {
 			abort.dispose();
+		}
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* 流式响应                                                                */
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * 消费一次流式响应。
+	 *
+	 * 上游在给出正常收尾信号之前断开连接（网关掉线、代理重置）时，只要**还没有向上报过任何部件**
+	 * 就重发整次请求。这个门很关键：provider 抛错时 VS Code 会先冲刷已经流出的部件再显示错误，
+	 * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
+	 *
+	 * 每次尝试都重建 `StreamTranslator` 与适配器状态——重发只发生在「什么都没上报」时，
+	 * 因此丢弃上一次的累积不会丢内容。
+	 */
+	private async streamResponse(input: {
+		client: NewApiClient;
+		adapter: ModelAdapter;
+		adapterContext: AdapterContext;
+		request: ChatCompletionRequest;
+		modelId: string;
+		includeReasoning: boolean;
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>;
+		signal: AbortSignal;
+		cancelled: () => boolean;
+		logger: Logger;
+	}): Promise<StreamSummary> {
+		const { client, adapter, adapterContext, request, modelId, logger, progress } = input;
+
+		for (let attempt = 0; ; attempt++) {
+			const translator = new StreamTranslator(progress, {
+				includeReasoning: input.includeReasoning,
+				logger,
+				modelId,
+			});
+			const adapterState = createRequestState();
+			let chunkCount = 0;
+
+			try {
+				for await (const rawChunk of client.streamChatCompletion(request, input.signal)) {
+					const streamError = extractStreamError(rawChunk);
+					if (streamError !== undefined) {
+						throw new Error(`上游返回错误：${streamError}`);
+					}
+					// 适配器可选地改写或丢弃 chunk
+					const chunk = adapter.transformChunk
+						? await adapter.transformChunk(rawChunk, adapterContext, adapterState)
+						: rawChunk;
+					if (chunk === undefined) {
+						continue;
+					}
+					chunkCount++;
+					translator.handle(chunk);
+				}
+
+				// 冲刷适配器缓冲
+				if (adapter.finalize) {
+					for (const chunk of await adapter.finalize(adapterContext, adapterState)) {
+						translator.handle(chunk);
+					}
+				}
+
+				const summary = translator.flush();
+				logger.debug(
+					`响应结束：${chunkCount} 个数据块，正文 ${summary.textLength} 字，` +
+					`思考 ${summary.reasoningLength} 字，工具调用 ${summary.toolCallCount} 次，` +
+					`结束原因 ${summary.finishReason ?? '未提供'}`,
+				);
+				return summary;
+			} catch (error) {
+				// 诊断用：「上游报了输出 token 但一个部件都没解出来」通常意味着响应格式没被认出来，
+				// 而用户看到的只是一个空回答。
+				if (translator.emittedParts === 0 && translator.latestUsage?.completion_tokens) {
+					logger.warn(
+						`上游报告了 ${translator.latestUsage.completion_tokens} 个输出 token，` +
+						`但没有任何可展示内容：${modelId}`,
+					);
+				}
+
+				const action = decideStreamFailure({
+					error,
+					emittedParts: translator.emittedParts,
+					attempt,
+					maxRetries: DEFAULTS.streamTruncationRetries,
+					cancelled: input.cancelled(),
+				});
+				if (action === 'retry') {
+					logger.warn(
+						`上游连接在回答完成前断开（已收到 ${chunkCount} 个数据块），` +
+						`正在重发第 ${attempt + 1}/${DEFAULTS.streamTruncationRetries} 次：${modelId}`,
+					);
+					continue;
+				}
+				if (action === 'keep-partial') {
+					// 内容已经流给用户了，此时抛错只会让 VS Code 在一个已经能用的回答上弹出重试按钮。
+					// 保留已有内容，但把参数不完整的工具调用丢掉：半截 JSON 拿去执行工具只会更糟。
+					logger.warn(
+						`上游连接在回答完成前断开，已保留已收到的 ${translator.emittedParts} 个部件：${modelId}`,
+					);
+					return translator.flush({ dropIncompleteToolCalls: true });
+				}
+				throw error;
+			}
 		}
 	}
 

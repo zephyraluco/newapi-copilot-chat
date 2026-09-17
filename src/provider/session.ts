@@ -134,6 +134,8 @@ export class SessionRegistry implements vscode.Disposable {
 			baseUrl: target.baseUrl,
 			apiKey: target.apiKey,
 			timeoutMs: requests.timeoutMs,
+			streamIdleTimeoutMs: requests.streamIdleTimeoutMs,
+			includeUsage: requests.includeUsage,
 			maxRetries: requests.maxRetries,
 			logger: logger.child(`client:${target.group ?? 'default'}`),
 		});

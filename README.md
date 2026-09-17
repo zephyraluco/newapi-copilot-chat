@@ -64,8 +64,10 @@
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `request.timeoutMs` | `60000` | 非流式是整体超时；流式是**数据块之间的静默超时**。 |
-| `request.maxRetries` | `2` | 失败重试次数（不含首次）。只对网络错误、超时、429、5xx 生效。 |
+| `request.timeoutMs` | `60000` | 非流式是整体超时；流式是**等响应头**的上限。 |
+| `request.streamIdleTimeoutMs` | `60000` | 流式响应**两个数据块之间**的静默超时；长思考的模型可以放宽。 |
+| `request.includeUsage` | `true` | 是否下发 `stream_options`。少数站点不认这个字段并返回 400，关掉它即可。 |
+| `request.maxRetries` | `2` | 失败重试次数（不含首次）。只对网络错误、超时、429、5xx 生效；服务端要求等超过 30 秒的限流直接报错而不重试。 |
 | `request.temperature` | `null` | 留空则不发送该字段。 |
 | `request.topP` | `null` | 留空则不发送该字段。 |
 | `request.includeReasoning` | `false` | 是否把思维链作为正文回显。 |

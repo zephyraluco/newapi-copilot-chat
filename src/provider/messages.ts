@@ -291,10 +291,19 @@ function normalizeName(name: string | undefined): string | undefined {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * 零参数工具的 `parameters`。
+ *
+ * 上游要求 `parameters` 是一个 JSON Schema 对象，空的 object schema 就是
+ * 「这个函数不收参数」的标准写法。
+ */
+export const NO_PARAMETER_SCHEMA: object = { type: 'object', properties: {} };
+
+/**
  * 把 VS Code 的工具声明转换成上游的 `tools` 数组。
  *
- * 没有 `inputSchema` 的工具会被跳过：上游要求 `parameters` 是一个 JSON Schema 对象，
- * 缺了它调用方会在校验阶段失败，不如提前过滤。
+ * `inputSchema` 缺失是合法情况：宿主对零参数工具不声明 schema（如内置的
+ * `terminal_last_command` 与用来展开工具组的 `activate_*`），此时补成空 object schema。
+ * 工具一个都不能少——少一个，模型就完全不知道它存在。
  */
 export function convertTools(
 	tools: readonly vscode.LanguageModelChatTool[] | undefined,
@@ -305,16 +314,17 @@ export function convertTools(
 	}
 	const result: ChatToolDefinition[] = [];
 	for (const tool of tools) {
-		if (tool.inputSchema === undefined) {
-			logger.warn(`工具 ${tool.name} 缺少 inputSchema，已跳过`);
-			continue;
+		const schema = tool.inputSchema;
+		const usable = schema !== undefined && schema !== null && typeof schema === 'object';
+		if (!usable) {
+			logger.debug(`工具 ${tool.name} 没有可用的 inputSchema，按零参数工具发送`);
 		}
 		result.push({
 			type: 'function',
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: tool.inputSchema,
+				parameters: usable ? schema : NO_PARAMETER_SCHEMA,
 			},
 		});
 	}

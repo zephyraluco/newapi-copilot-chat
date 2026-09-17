@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as vscode from 'vscode';
 import {
 	HttpClient,
 	HttpError,
@@ -110,6 +111,11 @@ suite('client / HTTP 传输层', () => {
 		abortError.name = 'AbortError';
 		assert.strictEqual(isAbortError(abortError), true);
 		assert.strictEqual(isAbortError('字符串'), false);
+	});
+
+	test('VS Code 的 CancellationError 也算取消（它的 name 是 Canceled 而不是 AbortError）', () => {
+		// 漏认这个名字的后果：取消被归一化成「网络错误」，于是白白重试几次才返回
+		assert.strictEqual(isAbortError(new vscode.CancellationError()), true);
 	});
 
 	/* ---------------------------------------------------------------------- */
@@ -232,6 +238,55 @@ suite('client / HTTP 传输层', () => {
 	});
 
 	/* ---------------------------------------------------------------------- */
+	/* 限流与 Retry-After                                                      */
+	/* ---------------------------------------------------------------------- */
+
+	test('服务端要求的等待时间被原样保留，并写进错误信息', async () => {
+		const fake = fakeFetch(() => jsonResponse(
+			{ error: { message: 'rate limited' } },
+			{ status: 429, headers: { 'retry-after': '120' } },
+		));
+		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 2 })
+			.requestText({ url: 'u' }));
+
+		assert.strictEqual(error.retryAfterMs, 120_000, '不能把真实等待时间提前夹到退避上限');
+		assert.ok(error.message.includes('120 秒'), '用户需要知道要等多久');
+	});
+
+	test('服务端要求的等待超过上限就不再重试，直接把限流错误报出来', async () => {
+		const fake = fakeFetch(() => jsonResponse({}, { status: 429, headers: { 'retry-after': '120' } }));
+		const logs = capturingLogger();
+		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 2, logger: logs.logger })
+			.requestText({ url: 'u' }));
+
+		// 等一小会儿再撞一次 429 只是白拖时间，而且最后的报错看不出真正原因
+		assert.strictEqual(fake.calls.length, 1, '不应该重试');
+		assert.strictEqual(error.status, 429);
+		assert.ok(logs.messages('warn').some(line => line.includes('不再重试')));
+	});
+
+	test('等待时间在可接受范围内时照常重试', async () => {
+		const fake = fakeFetch((_call, index) => (index === 0
+			? jsonResponse({}, { status: 429, headers: { 'retry-after': '1' } })
+			: jsonResponse({ data: [] })));
+		const response = await createClient(fake.impl, { maxRetries: 2 })
+			.requestText({ url: 'u' });
+
+		assert.strictEqual(response.status, 200);
+		assert.strictEqual(fake.calls.length, 2);
+	});
+
+	test('Retry-After 支持 HTTP 日期格式', async () => {
+		const when = new Date(Date.now() + 5_000).toUTCString();
+		const fake = fakeFetch(() => jsonResponse({}, { status: 429, headers: { 'retry-after': when } }));
+		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 0 })
+			.requestText({ url: 'u' }));
+
+		assert.ok(error.retryAfterMs !== undefined && error.retryAfterMs > 0);
+		assert.ok(error.retryAfterMs <= 5_000);
+	});
+
+	/* ---------------------------------------------------------------------- */
 	/* 超时与取消                                                              */
 	/* ---------------------------------------------------------------------- */
 
@@ -262,6 +317,20 @@ suite('client / HTTP 传输层', () => {
 
 		assert.strictEqual(error.kind, 'aborted');
 		assert.strictEqual(fake.calls.length, 1, '用户点「停止」不该触发重试');
+	});
+
+	test('带 CancellationError 理由的取消同样不会触发重试', async () => {
+		const controller = new AbortController();
+		const fake = hangingFetch();
+		const client = createClient(fake.impl, { maxRetries: 2 });
+
+		const pending = expectTransportError(() => client.requestText({ url: 'u', signal: controller.signal }));
+		// 真实取消路径上 `fromCancellationToken` 就是这么中断的
+		controller.abort(new vscode.CancellationError());
+		const error = await pending;
+
+		assert.strictEqual(error.kind, 'aborted');
+		assert.strictEqual(fake.calls.length, 1, '取消被当成网络故障时这里会重试 3 次');
 	});
 
 	test('连不上服务器归一化成 network', async () => {

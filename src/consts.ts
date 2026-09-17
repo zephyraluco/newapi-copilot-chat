@@ -85,14 +85,16 @@ export const REASONING_EFFORT_KEY = 'reasoningEffort';
 export const DEFAULT_REASONING_EFFORT_FIELD = 'reasoning_effort';
 
 /**
- * 不允许被外部配置覆盖的请求体字段：`messages` / `model` / `tools` 是协议骨架，
- * 被 JSON 设置项或模型配置盖住只会制造无从排查的故障。
+ * 不允许被外部配置覆盖的请求体字段：`model` / `messages` / `tools` 是协议骨架，
+ * 被 JSON 设置项盖住只会制造无从排查的故障。
+ *
+ * `stream_options` 不在其中：它由 `request.includeUsage` 控制，关掉后
+ * `extraBody` 里的同名键才会被保留（见 `newApiClient.streamChatCompletion`）。
  */
 export const PROTECTED_REQUEST_KEYS: ReadonlySet<string> = new Set([
 	'model',
 	'messages',
 	'stream',
-	'stream_options',
 	'tools',
 	'tool_choice',
 ]);
@@ -114,14 +116,20 @@ export const DEFAULTS = {
 	modelCacheTtlMs: 5 * 60_000,
 	/** 状态栏轮询间隔 */
 	statusRefreshIntervalMs: 60_000,
-	/** 单次请求超时（含流式请求的「静默超时」） */
+	/** 单次请求超时：非流式是整体超时，流式是「等响应头」的上限 */
 	requestTimeoutMs: 60_000,
+	/** 流式响应两个数据块之间的静默超时；与「等响应头」分开，长思考的模型可以单独放宽 */
+	streamIdleTimeoutMs: 60_000,
 	/** 失败重试次数（不含首次尝试） */
 	maxRetries: 2,
 	/** 重试退避基数 */
 	retryBaseDelayMs: 500,
 	/** 重试退避上限 */
 	retryMaxDelayMs: 8_000,
+	/** 服务端 `Retry-After` 超过这个时长就不再重试：等一小会儿再撞一次 429 只是白拖时间 */
+	retryAfterMaxWaitMs: 30_000,
+	/** 流在给出任何可见内容之前被掐断时的重试次数 */
+	streamTruncationRetries: 2,
 } as const;
 
 /** 状态刷新间隔下限，避免用户把它配成 1 秒把网关打爆。 */

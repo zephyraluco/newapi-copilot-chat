@@ -20,7 +20,13 @@ import type {
 	NewApiStatusResponse,
 } from '../types';
 import { HttpClient, HttpError, TransportError, joinUrl } from './http';
-import { SseIdleTimeoutError, parseSseJson, readStreamText } from './sse';
+import {
+	SseIdleTimeoutError,
+	SseTruncatedError,
+	parseSseJson,
+	readStreamText,
+} from './sse';
+import type { SseJsonOutcome } from './sse';
 
 /** 构造客户端的参数。 */
 export interface NewApiClientOptions {
@@ -28,8 +34,21 @@ export interface NewApiClientOptions {
 	baseUrl: string;
 	/** 未设置时，`/v1/*` 端点会返回 401 */
 	apiKey: string | undefined;
-	/** 请求超时 */
+	/** 请求超时：非流式是整体超时，流式是「等响应头」的上限 */
 	timeoutMs: number;
+	/**
+	 * 流式响应两个数据块之间的静默超时；缺省沿用 `timeoutMs`。
+	 *
+	 * 单独一个旋钮，是因为它和「等响应头」的合理取值差得很远：缓冲型网关上长思考的模型
+	 * 可能长时间不吐字节，但把等待响应头一起放宽又会掩盖真正连不上的情况。
+	 */
+	streamIdleTimeoutMs?: number;
+	/**
+	 * 是否在请求体里要求上游返回用量（`stream_options: { include_usage: true }`），默认开启。
+	 *
+	 * 部分站点不认这个字段（直接 400），关掉后 `extraBody` 里的同名键才会被保留。
+	 */
+	includeUsage?: boolean;
 	/** 失败重试次数 */
 	maxRetries: number;
 	logger: Logger;
@@ -146,6 +165,9 @@ export class NewApiClient {
 	 *
 	 * 把「调用方取消」与「静默超时」都收敛到同一个 AbortSignal 上：
 	 * 任意一方触发，底层的 fetch 与 SSE 读取都会立刻结束。
+	 *
+	 * 流在给出正常收尾信号（`[DONE]` 或 `finish_reason`）之前就结束时会抛
+	 * {@link SseTruncatedError}：半截回答必须让上层知道，否则用户会把它当成完整的。
 	 */
 	async *streamChatCompletion(
 		request: ChatCompletionRequest,
@@ -155,12 +177,13 @@ export class NewApiClient {
 		const body = safeJsonStringify({
 			...request,
 			stream: true,
-			stream_options: { include_usage: true },
+			...(this.options.includeUsage === false ? {} : { stream_options: { include_usage: true } }),
 		});
 		if (body === undefined) {
 			throw new TransportError('network', '请求体无法序列化为 JSON');
 		}
 
+		const idleTimeoutMs = this.options.streamIdleTimeoutMs ?? this.options.timeoutMs;
 		const controller = new AbortController();
 		const forward = attachAbort(signal, controller);
 		this.options.logger.trace(`→ POST ${url}`, redactText(truncate(body, 2000)));
@@ -180,7 +203,10 @@ export class NewApiClient {
 				// 这时如果继续按 SSE 解析，会把整段 JSON 当成一行数据而什么都拿不到，
 				// 因此这里降级成「单块非流式响应」。
 				this.options.logger.warn(`响应不是 SSE（content-type=${contentType || '未知'}），按单块 JSON 处理`);
-				const text = await readStreamText(response.body, controller.signal);
+				const text = await readStreamText(response.body, controller.signal, {
+					idleTimeoutMs,
+					onIdleTimeout: () => controller.abort(new SseIdleTimeoutError(idleTimeoutMs)),
+				});
 				const chunk = completionToChunk(text);
 				if (chunk === undefined) {
 					throw new TransportError('network', `无法解析响应：${truncate(redactText(text), 300)}`);
@@ -189,17 +215,31 @@ export class NewApiClient {
 				return;
 			}
 
+			const outcome: SseJsonOutcome = { sawDone: false, blocks: 0 };
 			let chunkCount = 0;
+			let sawFinishReason = false;
 			for await (const chunk of parseSseJson<ChatCompletionChunk>(response.body, {
 				signal: controller.signal,
-				idleTimeoutMs: this.options.timeoutMs,
-				onIdleTimeout: () => controller.abort(new SseIdleTimeoutError(this.options.timeoutMs)),
+				idleTimeoutMs,
+				onIdleTimeout: () => controller.abort(new SseIdleTimeoutError(idleTimeoutMs)),
 				logger: this.options.logger,
+				outcome,
 			})) {
 				chunkCount++;
+				if (hasFinishReason(chunk)) {
+					sawFinishReason = true;
+				}
 				yield chunk;
 			}
 			this.options.logger.debug(`流式响应结束，共 ${chunkCount} 个数据块`);
+
+			// 正常收尾只有两种：收到 `[DONE]`，或上游在数据块里给了 `finish_reason`。
+			// 两者都没有就说明连接被中途掐断，后半截回答已经丢了——必须让上层知道，
+			// 否则用户会把半截回答当成完整的。已解析出数据块是前提：一块都没解析出来时
+			// 分不清「响应为空」与「格式不认识」，不能当作截断。
+			if (outcome.blocks > 0 && !outcome.sawDone && !sawFinishReason) {
+				throw new SseTruncatedError(outcome.blocks);
+			}
 		} finally {
 			forward.dispose();
 			// 提前退出（例如调用方 break）时要主动断流，否则连接会挂到超时
@@ -315,6 +355,16 @@ function completionToChunk(text: string): ChatCompletionChunk | undefined {
 	};
 }
 
+/** 这个数据块里是否带了 `finish_reason`（收到它就说明上游认为回答已经结束）。 */
+function hasFinishReason(chunk: ChatCompletionChunk): boolean {
+	for (const choice of chunk.choices ?? []) {
+		if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** 从各种返回形态里提取模型数组。 */
 function extractModelList(parsed: unknown): NewApiModel[] {
 	if (Array.isArray(parsed)) {
@@ -387,7 +437,9 @@ export function describeFailureHint(error: unknown, hasApiKey: boolean): string 
 			return '接口不存在：请检查站点地址是否指向 New API 站点根目录（不要带 /v1）。';
 		}
 		if (error.status === 429) {
-			return '请求被限流，请稍后重试或检查站点的速率限制。';
+			return error.retryAfterMs !== undefined && error.retryAfterMs >= 1_000
+				? `请求被限流：站点要求约 ${Math.ceil(error.retryAfterMs / 1_000)} 秒后重试。`
+				: '请求被限流，请稍后重试或检查站点的速率限制。';
 		}
 		return undefined;
 	}
@@ -398,6 +450,13 @@ export function describeFailureHint(error: unknown, hasApiKey: boolean): string 
 		if (error.kind === 'network') {
 			return '无法建立连接：请检查站点地址、DNS 以及是否需要代理。';
 		}
+	}
+	if (error instanceof SseIdleTimeoutError) {
+		return '上游长时间没有返回新数据，请求已中断：长思考的模型可以调大 ' +
+			'newapi-copilot-chat.request.streamIdleTimeoutMs。';
+	}
+	if (error instanceof SseTruncatedError) {
+		return '上游在回答完成前断开了连接，回答可能不完整，重发一次通常就能成功。';
 	}
 	return undefined;
 }

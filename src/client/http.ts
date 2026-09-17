@@ -58,7 +58,7 @@ export class HttpError extends Error {
 		/** `Retry-After` 解析出的等待毫秒数 */
 		readonly retryAfterMs: number | undefined,
 	) {
-		super(buildHttpErrorMessage(status, statusText, url, apiMessage, responseBody));
+		super(buildHttpErrorMessage(status, statusText, url, apiMessage, responseBody, retryAfterMs));
 		this.name = 'HttpError';
 	}
 
@@ -84,19 +84,33 @@ function buildHttpErrorMessage(
 	url: string,
 	apiMessage: string | undefined,
 	responseBody: string | undefined,
+	retryAfterMs: number | undefined,
 ): string {
 	const detail = apiMessage ?? (responseBody ? truncate(responseBody, 300) : undefined);
 	const suffix = detail ? `：${detail}` : '';
-	return `New API 返回 ${status} ${statusText}${suffix}（${url}）`;
+	// 限流时把服务端要求的等待时间写出来：只说「429」会让人以为马上重试就行
+	const wait = retryAfterMs !== undefined && retryAfterMs >= 1_000
+		? `，服务端要求约 ${Math.ceil(retryAfterMs / 1_000)} 秒后重试`
+		: '';
+	return `New API 返回 ${status} ${statusText}${wait}${suffix}（${url}）`;
 }
 
-/** 判断错误是否为「调用方主动取消」。取消不应被当成失败上报。 */
+/**
+ * VS Code 的 `CancellationError` 用的名字。
+ *
+ * 取消信号带 reason 时 `fetch` 会把 reason **原样**抛出，而 `new vscode.CancellationError()`
+ * 的 `name` 是 `Canceled` 而不是 `AbortError`（见 microsoft/vscode 的 `base/common/errors.ts`）。
+ * 漏认它会把用户主动取消当成网络故障，然后白白重试几次。
+ */
+const CANCELLATION_ERROR_NAME = 'Canceled';
+
+/** 判断错误是否为「调用方主动取消」。取消不应被当成失败上报，也不该触发重试。 */
 export function isAbortError(error: unknown): boolean {
 	if (error instanceof TransportError) {
 		return error.kind === 'aborted';
 	}
 	if (error instanceof Error) {
-		return error.name === 'AbortError';
+		return error.name === 'AbortError' || error.name === CANCELLATION_ERROR_NAME;
 	}
 	return false;
 }
@@ -123,18 +137,27 @@ function extractApiMessage(text: string | undefined): string | undefined {
 	return undefined;
 }
 
+/**
+ * `Retry-After` 的解析上限。
+ *
+ * 保留真实值（而不是提前夹到退避上限）才能把「服务端要求等多久」如实告诉用户；
+ * 真要等到天荒地老的值也没有参考意义，这里只挡掉明显异常的输入。
+ */
+const RETRY_AFTER_MAX_MS = 24 * 60 * 60_000;
+
 /** 解析 `Retry-After`，兼容秒数与 HTTP 日期两种格式。 */
 function parseRetryAfter(header: string | null): number | undefined {
-	if (!header) {
+	const trimmed = header?.trim() ?? '';
+	if (trimmed.length === 0) {
 		return undefined;
 	}
-	const seconds = Number(header.trim());
+	const seconds = Number(trimmed);
 	if (Number.isFinite(seconds) && seconds >= 0) {
-		return Math.min(seconds * 1000, DEFAULTS.retryMaxDelayMs * 2);
+		return Math.min(seconds * 1_000, RETRY_AFTER_MAX_MS);
 	}
-	const date = Date.parse(header);
+	const date = Date.parse(trimmed);
 	if (!Number.isNaN(date)) {
-		return Math.max(0, Math.min(date - Date.now(), DEFAULTS.retryMaxDelayMs * 2));
+		return Math.max(0, Math.min(date - Date.now(), RETRY_AFTER_MAX_MS));
 	}
 	return undefined;
 }
@@ -269,7 +292,10 @@ export class HttpClient {
 				await delay_(delay);
 			}
 
-			const guard = createSignalGuard(options.signal, timeoutMs, this.rootController.signal);
+			const guard = createSignalGuard(options.signal, timeoutMs, this.rootController.signal, streaming);
+			// 在 try 里判定「不重试」的错误要靠这个标记带出来：`throw` 会被下面的 catch 接住，
+			// 而 catch 只看 `isRetryable` / `attempt` 时会把它当成可重试的网络故障。
+			let decidedToGiveUp: unknown;
 			try {
 				const response = await this.doFetch(options, guard.signal);
 				if (response.ok) {
@@ -288,13 +314,23 @@ export class HttpClient {
 					retryAfter,
 				);
 				lastError = error;
-				if (!error.isRetryable || attempt === maxRetries) {
+				// 服务端明确要求等很久的限流不值得重试：等到一半再撞一次 429，
+				// 最后给出的错误还看不出真正原因。直接把带等待时间的错误报出去。
+				const retryAfterTooLong = retryAfter !== undefined && retryAfter > DEFAULTS.retryAfterMaxWaitMs;
+				if (!error.isRetryable || attempt === maxRetries || retryAfterTooLong) {
+					if (retryAfter !== undefined && retryAfterTooLong) {
+						this.options.logger.warn(
+							`服务端要求 ${Math.ceil(retryAfter / 1_000)} 秒后重试，` +
+							`超过 ${DEFAULTS.retryAfterMaxWaitMs / 1_000} 秒上限，不再重试`,
+						);
+					}
+					decidedToGiveUp = error;
 					throw error;
 				}
 				this.options.logger.warn(`请求失败（HTTP ${response.status}），将重试`, error.message);
 			} catch (error) {
-				// 已经决定不再重试的 HttpError 直接抛出
-				if (error instanceof HttpError && (!error.isRetryable || attempt === maxRetries)) {
+				// 已经决定不再重试的错误直接抛出去
+				if (error === decidedToGiveUp) {
 					throw error;
 				}
 				const transport = normalizeTransportError(error, guard.didTimeout(), streaming);
@@ -336,6 +372,11 @@ async function readBodySafely(response: Response): Promise<string> {
 	}
 }
 
+/** 超时文案：流式请求只等响应头，提示里要说清这一点。 */
+function timeoutMessage(streaming: boolean): string {
+	return streaming ? '等待 New API 响应头超时' : '请求 New API 超时';
+}
+
 /** 把任意异常归一化成 TransportError。 */
 function normalizeTransportError(error: unknown, didTimeout: boolean, streaming: boolean): TransportError {
 	if (error instanceof TransportError) {
@@ -345,11 +386,7 @@ function normalizeTransportError(error: unknown, didTimeout: boolean, streaming:
 		return new TransportError('network', error.message, error);
 	}
 	if (didTimeout) {
-		return new TransportError(
-			'timeout',
-			streaming ? '等待 New API 响应头超时' : '请求 New API 超时',
-			error,
-		);
+		return new TransportError('timeout', timeoutMessage(streaming), error);
 	}
 	if (isAbortError(error)) {
 		return new TransportError('aborted', '请求已取消', error);
@@ -385,6 +422,7 @@ function createSignalGuard(
 	callerSignal: AbortSignal | undefined,
 	timeoutMs: number,
 	disposedSignal: AbortSignal,
+	streaming: boolean,
 ): SignalGuard {
 	const controller = new AbortController();
 	let timedOut = false;
@@ -392,7 +430,8 @@ function createSignalGuard(
 	const timer = timeoutMs > 0
 		? setTimeout(() => {
 			timedOut = true;
-			controller.abort(new TransportError('timeout', '请求超时'));
+			// 信号带 reason 时 `fetch` 会把 reason 原样抛出，所以这句话就是用户最终看到的文案
+			controller.abort(new TransportError('timeout', timeoutMessage(streaming)));
 		}, timeoutMs)
 		: undefined;
 

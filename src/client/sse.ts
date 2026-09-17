@@ -46,6 +46,24 @@ export class SseIdleTimeoutError extends Error {
 	}
 }
 
+/**
+ * 流在给出正常收尾信号之前就结束了。
+ *
+ * 与 {@link SseIdleTimeoutError} 的区别：那个是「连接还在，但不再吐数据」，这个是
+ * 「连接已经关闭，却既没有 `[DONE]` 也没有 `finish_reason`」——后半截回答被掐掉了。
+ * 两者必须分开：上层需要知道「能不能安全重发」（还没给用户看过任何内容时可以），
+ * 而静默超时是不吐数据、截断是连接已断。
+ */
+export class SseTruncatedError extends Error {
+	constructor(
+		/** 断流前成功解析出的数据块数，仅用于诊断 */
+		readonly blocks: number,
+	) {
+		super(`上游连接在回答完成前断开（已收到 ${blocks} 个数据块，没有 [DONE] 也没有 finish_reason）`);
+		this.name = 'SseTruncatedError';
+	}
+}
+
 /** 判断事件是否表示流结束。 */
 export function isDoneEvent(event: SseEvent): boolean {
 	return event.data.trim() === SSE_DONE;
@@ -55,7 +73,7 @@ export function isDoneEvent(event: SseEvent): boolean {
  * 把字节流解析成 SSE 事件序列。
  *
  * 容错处理：
- * - `\n` / `\r\n` / `\r` 三种换行都支持；
+ * - 按 `\n` 分帧，并容忍 `\r\n`（行尾的回车会被削掉）；单独 `\r` 不分帧；
  * - 以 `:` 开头的心跳注释行会被忽略；
  * - 流结束时缓冲区里残留的半行也会被处理（部分网关不发送结尾空行）。
  */
@@ -194,8 +212,14 @@ async function readWithIdleTimeout(
  * 一次性读完字节流并解码成文本。
  *
  * 用于「网关忽略了 stream 参数」的降级路径：拿到的是普通 JSON，不是 SSE。
+ * `options.idleTimeoutMs` 与 SSE 路径语义一致：连续多久没有新字节就判定连接已死。
+ * 这条路上必须自己带超时：HTTP 层的超时守卫在拿到响应头之后就已经撤掉了。
  */
-export async function readStreamText(body: ReadableStream<Uint8Array>, signal?: AbortSignal): Promise<string> {
+export async function readStreamText(
+	body: ReadableStream<Uint8Array>,
+	signal?: AbortSignal,
+	options: SseStreamOptions = {},
+): Promise<string> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder('utf-8');
 	let text = '';
@@ -204,7 +228,7 @@ export async function readStreamText(body: ReadableStream<Uint8Array>, signal?: 
 			if (signal?.aborted) {
 				throw signal.reason instanceof Error ? signal.reason : new Error('请求已取消');
 			}
-			const chunk = await reader.read();
+			const chunk = await readWithIdleTimeout(reader, options);
 			if (chunk.done) {
 				break;
 			}
@@ -223,6 +247,26 @@ export async function readStreamText(body: ReadableStream<Uint8Array>, signal?: 
 }
 
 /**
+ * `parseSseJson` 会回填的收尾信息。
+ *
+ * 生成器的返回值拿不到（`for await` 会把它丢掉），因此用这个可变对象把
+ * 「流是怎么结束的」带出来——判断响应是不是被截断全靠它。
+ */
+export interface SseJsonOutcome {
+	/** 是否收到了 `[DONE]` 结束标记 */
+	sawDone: boolean;
+	/** 成功解析出的数据块数 */
+	blocks: number;
+}
+
+/** `parseSseJson` 的参数。 */
+export interface SseJsonOptions extends SseStreamOptions {
+	readonly logger?: Logger;
+	/** 收尾信息的落点；不传则不统计 */
+	readonly outcome?: SseJsonOutcome;
+}
+
+/**
  * 把 SSE 事件流解析成 JSON 对象流。
  *
  * 用于 OpenAI 兼容接口的 `data: {...}` chunk。遇到 `[DONE]` 直接结束；
@@ -231,10 +275,14 @@ export async function readStreamText(body: ReadableStream<Uint8Array>, signal?: 
  */
 export async function* parseSseJson<T>(
 	body: ReadableStream<Uint8Array>,
-	options: SseStreamOptions & { logger?: Logger } = {},
+	options: SseJsonOptions = {},
 ): AsyncGenerator<T> {
+	const outcome = options.outcome;
 	for await (const event of parseSseStream(body, options)) {
 		if (isDoneEvent(event)) {
+			if (outcome !== undefined) {
+				outcome.sawDone = true;
+			}
 			return;
 		}
 		const data = event.data.trim();
@@ -245,6 +293,9 @@ export async function* parseSseJson<T>(
 		if (parsed === undefined) {
 			options.logger?.debug('忽略无法解析的 SSE 数据块', data);
 			continue;
+		}
+		if (outcome !== undefined) {
+			outcome.blocks++;
 		}
 		yield parsed;
 	}

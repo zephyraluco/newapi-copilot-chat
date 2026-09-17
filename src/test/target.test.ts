@@ -145,6 +145,8 @@ suite('provider / 会话注册表', () => {
 			getModelSettings: () => createSettings(),
 			getRequestSettings: () => ({
 				timeoutMs: 60_000,
+				streamIdleTimeoutMs: 60_000,
+				includeUsage: true,
 				maxRetries: 2,
 				temperature: undefined,
 				topP: undefined,

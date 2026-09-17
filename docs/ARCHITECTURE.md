@@ -61,14 +61,150 @@ flowchart TD
     cfg -.->|"模型过滤"| catalog
 ```
 
-一次对话请求的完整路径：
+### 一次请求的分阶段流程
 
-1. Copilot Chat 选中某个模型 → 调用 `provideLanguageModelChatResponse(model, messages, options, progress, token)`。
-2. provider 用 `model.targetKey` 找回**模型所属配置组**的会话（多站点时这一步很关键）。
-3. `provider/messages.ts` 转成 `/v1/chat/completions` 的请求体，`adapter.transformRequest` 按模型改写（当前是恒等变换）。
-4. `client` 发起流式请求，SSE 逐块解析。
-5. `provider/stream.ts` 把 chunk 翻译成 `LanguageModelTextPart` / `LanguageModelToolCallPart` 并上报 `progress`。
-6. 结束时把上游 `usage` 交给 `status` 统计。
+方框标注了落点文件，可以对照代码阅读。
+
+```mermaid
+flowchart TD
+    start(["Copilot Chat 调用<br/>provideLanguageModelChatResponse"])
+
+    subgraph s1["① 准备（chatProvider.ts）"]
+        a1["resolveSession(model)<br/>按 targetKey 找回配置组的会话"]
+        a2["fromCancellationToken → AbortSignal<br/>解析适配器 + 新建 StreamTranslator"]
+    end
+
+    subgraph s2["② 构造请求"]
+        b1["messages.ts：VS Code 消息 → OpenAI 消息<br/>system 提升 · tool 拆分 · 图片转 data: URL"]
+        b2{"转换后有内容？"}
+        b3["buildRequest<br/>temperature / top_p / tools → extraBody → 思考强度"]
+        b4["adapter.transformRequest"]
+    end
+
+    subgraph s3["③ 传输（client/）"]
+        c1["newApiClient.streamChatCompletion<br/>强制 stream: true + include_usage"]
+        c2["http.requestStream<br/>超时 · 重试退避 · 信号合并"]
+        c3{"HTTP 2xx？"}
+        c4{"content-type 是 SSE？"}
+        c5["降级：整段 JSON 当作单个 chunk"]
+        c6["sse.parseSseStream<br/>字节流 → 事件 → JSON chunk"]
+    end
+
+    subgraph s4["④ 逐块翻译（每个 chunk 一次）"]
+        d1["extractStreamError<br/>上游可能把错误塞进 200 响应"]
+        d2["adapter.transformChunk<br/>返回 undefined 即丢弃"]
+        d3["StreamTranslator.handle"]
+        d4["content → LanguageModelTextPart"]
+        d5["reasoning → Markdown 引用块"]
+        d6["tool_calls → 按 index 累积，暂不上报"]
+        d7["usage → 只记最后一个"]
+    end
+
+    subgraph s5["⑤ 收尾"]
+        e1["adapter.finalize：追加缓冲 chunk"]
+        e2["flush：工具调用排序 → 解析参数<br/>→ LanguageModelToolCallPart"]
+        e3["reportUsage → status/ 累加"]
+    end
+
+    host["Copilot Chat 渲染<br/>执行工具后再次调用"]
+    failed["静默返回（取消不算失败）"]
+
+    start --> a1 --> a2 --> b1 --> b2
+    b2 -->|"否"| b2e["抛错：本次请求没有任何可发送的内容"] --> failed
+    b2 -->|"是"| b3 --> b4 --> c1 --> c2 --> c3
+    c3 -->|"否"| c3e["HttpError<br/>auth / notFound / retryable"] --> failed
+    c3 -->|"是"| c4
+    c4 -->|"否"| c5 --> d1
+    c4 -->|"是"| c6 --> d1
+    d1 -->|"有 error 字段"| failed
+    d1 --> d2 --> d3
+    d3 --> d4
+    d3 --> d5
+    d3 --> d6
+    d3 --> d7
+    d4 -.->|"progress.report 逐块上报"| host
+    d5 -.-> host
+    d3 --> e1 --> e2 --> e3
+    e2 -.->|"本轮结束，工具交由宿主执行"| host
+    host -.->|"下一轮请求"| start
+```
+
+### 流式时序
+
+`progress.report()` 是边收边发的：用户看到的逐字输出就来自循环内的上报，而不是等流结束。
+
+```mermaid
+sequenceDiagram
+    participant CC as Copilot Chat
+    participant CP as chatProvider.ts
+    participant CL as client
+    participant GW as New API 网关
+
+    CC->>CP: provideLanguageModelChatResponse(model, messages, options)
+    CP->>CP: 转换消息、组装请求体
+    CP->>CL: streamChatCompletion(request, signal)
+    CL->>GW: POST /v1/chat/completions（stream: true）
+    GW-->>CL: 200 + text/event-stream
+    loop 每个 SSE 事件
+        GW-->>CL: data: {...}
+        CL-->>CP: yield chunk
+        CP-->>CC: progress.report(TextPart)，立即渲染
+    end
+    Note over CP: 工具调用参数分片到达，只累积不上报
+    GW-->>CL: data: [DONE]
+    CP->>CP: adapter.finalize → translator.flush()
+    CP-->>CC: LanguageModelToolCallPart
+    CP->>CP: reportUsage → status/
+    Note over CC: 执行工具后带着结果再次调用
+```
+
+工具调用的参数是**分片到达**的（`accumulateToolCall` 按 `index` 拼接；网关省略 `index` 时按有没有 `id`
+判断「新调用」还是「续传」，续传分片接在最后一个槽位上——退回「槽位数量」当索引会让参数落进一个没有
+函数名的空槽并被丢弃），中途无法解析，因此统一在 `flush()` 里上报——这也是 `LanguageModelToolCallPart`
+在时序上晚于所有正文片段的原因。
+
+### 流被掐断时的处置
+
+上游掉连接（网关重启、代理重置）时，`client/newApiClient.ts` 抛 `SseTruncatedError`；怎么处置全看
+「用户是不是已经看到过内容」：
+
+```mermaid
+flowchart TD
+    t0["SseTruncatedError：已收到 N 个数据块，<br/>既没有 [DONE] 也没有 finish_reason"] --> t1{"已经上报过任何部件？"}
+    t1 -->|"否"| t2{"还有重发额度？"}
+    t2 -->|"有（最多 2 次）"| t3["重发整次请求<br/>逐次重建 translator 与适配器状态"]
+    t3 --> t0
+    t2 -->|"没有"| t4["抛给 VS Code"]
+    t1 -->|"是"| t5["保留已收到的内容，只记警告"]
+    t5 --> t6["flush(dropIncompleteToolCalls)<br/>参数不完整的工具调用丢弃"]
+```
+
+判定抽成了纯函数 `decideStreamFailure`（`provider/stream.ts`），这样「什么时候能重发」可以被单测钉住。
+「已上报部件数」由 `StreamTranslator` 统计——**只算真正 `progress.report` 出去的东西**：不回显的思维链、
+还没 flush 的工具调用都不算，因为用户在界面上看不到它们，重发不会造成重复。
+
+### 关键判定点
+
+| 判定 | 落点 | 行为 |
+| --- | --- | --- |
+| 找不到模型所属的会话 | `chatProvider.ts` | 抛错提示重新选择模型（配置组已变更） |
+| 转换后没有可发送内容 | `chatProvider.ts` | 抛错，不发请求 |
+| HTTP 非 2xx | `client/http.ts` | `HttpError`，按 `isAuthError` / `isNotFound` / `isRetryable` 分流 |
+| 可重试的错误 | `client/http.ts` | `Retry-After` 优先，否则指数退避 + 抖动 |
+| `Retry-After` 超过 30 秒 | `client/http.ts` | 不再重试，直接把带等待时间的 429 报出来 |
+| `content-type` 不是 SSE | `client/newApiClient.ts` | 降级为单块 JSON，而不是静默失败 |
+| 静默超时（无新字节） | `client/sse.ts` | `SseIdleTimeoutError`，与用户取消区分 |
+| 流量正常结束但缺 `[DONE]` 与 `finish_reason` | `client/newApiClient.ts` | `SseTruncatedError`（半截回答不能当成功） |
+| 流被掐断、还没上报过任何部件 | `provider/chatProvider.ts` | 重发整次请求（最多 2 次） |
+| 流被掐断、但已上报过内容 | `provider/chatProvider.ts` | 保留已收到的内容，只记警告 |
+| chunk 带 `error` 字段 | `provider/stream.ts` | 视为失败抛出（上游把错误塞进 200 响应） |
+| `transformChunk` 返回 `undefined` | `chatProvider.ts` | 丢弃该 chunk |
+| 工具调用缺少函数名 | `provider/stream.ts` | 记警告并跳过 |
+| 工具分片不带 `index` | `provider/stream.ts` | 按有无 `id` 判断新调用，续传分片接在同一个槽位 |
+| 工具参数不是合法 JSON | `provider/stream.ts` | 先直解，再剥 Markdown 围栏；仍失败时正常结束则退化为 `{}`，流被掐断则丢弃这次调用 |
+| `finish_reason === 'length'` | `provider/stream.ts` | 记警告（响应被截断） |
+| 取消（`isAbortError` 或 token 已取消） | `chatProvider.ts` | 调试日志后静默返回，**不算失败** |
+| 其它错误 | `chatProvider.ts` | `toLanguageModelError` 映射成 VS Code 模型错误 |
 
 ## 3. 代码地图
 
@@ -76,39 +212,40 @@ flowchart TD
 | --- | ---: | --- |
 | `extension.ts` | 324 | 激活与装配。**只做接线**，读它能看清整体数据流 |
 | **基础层** | | |
-| `consts.ts` | 162 | 命令 ID、端点、默认值、思考强度键名、运行时版本 |
+| `consts.ts` | 151 | 命令 ID、端点、默认值、思考强度键名、运行时版本 |
+| `config.ts` | 250 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
 | `types.ts` | 268 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
 | `format.ts` | 83 | token / 时长 / 相对时间格式化、Markdown 转义 |
 | `logger.ts` | 282 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
-| `http.ts` | 423 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
-| `sse.ts` | 251 | SSE 解析、静默超时、非 SSE 降级读取 |
-| `newApiClient.ts` | 403 | 端点封装、模型列表解析、失败建议 |
+| `http.ts` | 462 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
+| `sse.ts` | 302 | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
+| `newApiClient.ts` | 462 | 端点封装、模型列表解析、失败建议 |
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 233 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
-| `modelConfig.ts` | 579 | 多来源合并、一致性校正、远端字段提取 |
+| `modelConfig.ts` | 576 | 多来源合并、一致性校正、远端字段提取 |
 | `tooltip.ts` | 119 | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
 | `catalog.ts` | 218 | 拉取编排、缓存、并发合并、失败降级 |
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
-| `session.ts` | 169 | 按配置组缓存 client + catalog |
-| `chatProvider.ts` | 439 | 实现 `LanguageModelChatProvider` |
+| `session.ts` | 171 | 按配置组缓存 client + catalog |
+| `chatProvider.ts` | 521 | 实现 `LanguageModelChatProvider`（含流被掐断后的重发门） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
-| `messages.ts` | 334 | VS Code ⇄ OpenAI 兼容的消息转换 |
-| `stream.ts` | 272 | 流式 chunk → 响应部件（工具调用分片合并、思维链） |
-| `tokenizer.ts` | 108 | token 估算（刻意高估） |
+| `messages.ts` | 344 | VS Code ⇄ OpenAI 兼容的消息转换 |
+| `stream.ts` | 381 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
+| `tokenizer.ts` | 110 | token 估算（刻意高估） |
 | **`adapter/`** 差异出口 | | |
-| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 196 | 钩子接口、注册与解析、恒等实现 |
+| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 182 | 钩子接口、注册与解析、恒等实现 |
 | **`status/`** UI | | |
 | `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
 | `usage.ts` | 101 | 会话用量的读出：缓存命中与思维链 token、各网关字段名兼容 |
 | `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
 | `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.test.ts` + `test/helpers.ts` | 1,799 | 140 个用例，只覆盖纯函数与装配 |
+| `test/*.ts`（13 个文件） | 3,434 | 240 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -133,7 +270,8 @@ flowchart LR
     provider --> adapter
     provider --> config
     models --> client
-    status --> models
+    status --> client
+    status --> provider
     status --> config
     provider --> base
     models --> base
@@ -172,19 +310,34 @@ flowchart LR
 ## 6. `client/` —— 与 New API 交互
 
 **超时**（`http.ts`）：非流式是**整体超时**（连接 + 读取）；流式的 `timeoutMs` 只作为「等响应头」的上限，
-响应体开始到达后交给 `sse.ts` 的**静默超时**。流式若套用整体超时，正常但很长的回答会被误杀；
-按「两个数据块之间的空闲时间」判定则长回答（持续吐字节）不受影响，真正卡死的连接会及时断开。
-`createSignalGuard` 把「调用方信号 + 超时 + 客户端释放」合并成一个 `AbortSignal`，并记录是否由超时触发。
+响应体开始到达后交给 `request.streamIdleTimeoutMs`（默认 60 秒）的**静默超时**。流式若套用整体超时，
+正常但很长的回答会被误杀；按「两个数据块之间的空闲时间」判定则长回答（持续吐字节）不受影响，真正卡死的
+连接会及时断开。两个旋钮分开是因为它们的合理取值差得很远：缓冲型网关上长思考的模型可能长时间不吐字节，
+而把「等响应头」一起放宽又会掩盖真正连不上的情况。
+`createSignalGuard` 把「调用方信号 + 超时 + 客户端释放」合并成一个 `AbortSignal`，并记录是否由超时触发；
+它的中断理由会**原样**成为 `fetch` 抛出的错误（据实测），所以超时文案就在那里定下。
 
 **重试**：只重试网络错误、超时与 `408` / `409` / `425` / `429` / `5xx`；4xx 业务错误重试只会重复失败。
 退避指数增长 + 抖动，并尊重服务端的 `Retry-After`。**一旦开始消费响应体就不再重试**，因为服务端可能已开始计费。
+服务端要求的等待超过 30 秒时**不再重试**：等到一半再撞一次 429 只是白拖时间，而且最后的报错反而看不出真正原因。
+
+**取消**：信号带 reason 时 `fetch` 会把 reason 原样抛出，而 `vscode.CancellationError` 的 `name` 是
+`Canceled` 而不是 `AbortError`——`isAbortError` 两个名字都认，否则用户点「停止」会被当成网络故障重试几次。
 
 **错误分类**：`TransportError` 分 `network` / `timeout` / `aborted`（连不上 / 超时 / 用户取消）；
 `HttpError` 带 `status`、服务端错误描述、`Retry-After`，并提供 `isAuthError` / `isNotFound` / `isRetryable`。
 `isAbortError` 单独处理——用户点「停止」是正常流程，不该当失败上报。
 
-**`sse.ts` 的容错点**：三种换行符都支持、`:` 开头的心跳注释行忽略、流结束时不带结尾换行的残留事件也会处理、
+**流是怎么结束的**：客户端要求流必须给出正常收尾信号——`[DONE]` 或某个 chunk 里的 `finish_reason`。
+两者都没有、但已经解出过数据块时报 `SseTruncatedError`，而不是把半截回答当成功返回。
+`parseSseJson` 用可变的 `outcome` 把「是否收到 `[DONE]`」带出来（生成器的返回值 `for await` 取不到）。
+一个数据块都没解出来时不判定为截断：那种情况下分不清「响应为空」与「格式不认识」。
+
+**`sse.ts` 的容错点**：按 `\n` 分帧并容忍 `\r\n`（行尾的回车会被削掉；单独 `\r` 不分帧）、
+`:` 开头的心跳注释行忽略、流结束时不带结尾换行的残留事件也会处理、
 单个 chunk 解析失败只记日志并跳过（网关偶尔插入非 JSON 的心跳行）。
+非 SSE 降级路径（`readStreamText`）复用**同一套**静默超时：HTTP 层的超时守卫在拿到响应头之后就撤掉了，
+这条路上必须自带超时，否则「网关忽略了 `stream`、又不吐数据」时只能等 undici 的默认 `bodyTimeout`。
 
 **非流式降级**：网关忽略 `stream: true` 而返回普通 JSON 时，`newApiClient` 检测 `content-type` 并把非流式响应
 **包装成一个等价的 chunk**，让上层只处理一种形态；否则 SSE 解析器会把整段 JSON 当成一行无效数据而什么都拿不到。
@@ -398,12 +551,16 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 ### 流式翻译（`stream.ts`）
 
 - **工具调用分片到达**：`function.arguments` 会被切开，必须按 `index` 归并、按到达顺序拼接，最后才能 parse。
-  **统一在流结束时上报**——只有那时才能确定参数拼完整了。解析失败返回空对象而不是抛异常，
-  让 VS Code 报出参数校验失败（模型可自我修正），比丢掉这次工具调用更好；上游偶尔把 JSON 包在
-  Markdown 代码块里，会被自动剥离。
+  **统一在流结束时上报**——只有那时才能确定参数拼完整了。网关省略 `index` 时按有没有 `id` 判断新调用，
+  续传分片接在最后一个槽位上（退回「槽位数量」当索引会把参数送进一个没有函数名的空槽，最后被丢弃，
+  症状是「工具被执行了但参数全空」）。解析失败时：正常结束就返回空对象，让 VS Code 报出参数校验失败
+  （模型可自我修正），比丢掉这次工具调用更好；**流被掐断时直接丢弃这次调用**，半截 JSON 拿去执行工具只会更糟。
+  上游偶尔把 JSON 包在 Markdown 代码块里，会被自动剥离。
 - **思维链有两种字段名**：DeepSeek 用 `reasoning_content`，OpenRouter 等用 `reasoning`。
 - **usage 只在最后一个 chunk**：单独记下用于统计。
 - **多 choice**：VS Code 的响应模型是单条回答，只取 `index === 0`（对 `n > 1` 给出警告）。
+- **已上报部件数**：`emittedParts` 是重发门的输入，只统计真正上报出去的东西（见上文「流被掐断时的处置」）。
+- **失败处置**：`decideStreamFailure` 把「重发 / 保留半截 / 报错」的判定抽成纯函数，便于单测。
 
 ### Token 估算（`tokenizer.ts`）
 
@@ -453,7 +610,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 - **缓存命中的字段名不统一**：OpenAI / New API 放在 `prompt_tokens_details.cached_tokens`，
   DeepSeek 用 `prompt_cache_hit_tokens`，两者都认。
 - **总量与分项可能缺一个**：互为兜底。命中数会被钳到输入量以内，否则上游一次自相矛盾的返回
-  就能显示出「命中 200%）」这种数字。
+  就能显示出「命中 200%」这种数字。
 - **`usage` 可能整个缺失**（流式请求尤其常见，除非显式要求）。「没报告」与「报告了 0」必须区分：
   `cacheReported` 只在响应真的带了缓存字段时为 `true`，否则界面会显示一个不存在的「命中 0」。
   同理，总 token 为 0 时不显示一行 0，而是说明上游未返回。
@@ -481,7 +638,9 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
   **不需要改 provider**——这是这一层存在的意义。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
   `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退，不要让整份配置失效）→ 在对应的
-  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求则改 `chatProvider.buildRequest`。
+  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `chatProvider.buildRequest`，
+  影响传输行为（超时、重试、`stream_options` 之类）则经 `provider/session.ts` 传给 `NewApiClient`。
+  改完记得同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：它不是设置项，而是随模型信息下发的 schema——
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
@@ -515,23 +674,34 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 | 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者提供站点名与延迟；两个请求开销都很小 |
 | 适配器层只有恒等变换的 `DefaultModelAdapter` | 接口与装配点已经就位，具体的差异处理按需添加（见 §11） |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
+| 站点不认 `stream_options` 时用户只能关掉它 | 这是扩展主动加的字段（为了拿到用量），站点兼容性无法逐站探测 |
+| 流被掐断时已流出的内容会保留（而不是报错让人重发） | 抛错只会在一个已经能用的回答上弹「重试」，但用户实际上需要的是完整的回答 |
 
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-140 个用例，只覆盖**纯函数与装配**：
+240 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
+| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求 |
+| `test/sse.test.ts` | 事件分帧（含 CRLF 正好被切在分片之间）、多行 `data`、心跳注释、UTF-8 被从中间切开、静默超时、收尾信息回填、非 SSE 降级读取及其静默超时 |
+| `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮 |
+| `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、已上报部件数、用量快照、`decideStreamFailure` 的四类处置 |
 | `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
-| `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析 |
+| `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析、**流被掐断后的重发门**（走真实的 `provideLanguageModelChatResponse`） |
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
 | `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母 |
 | `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、主题图标开关 |
 
-刻意不测的部分：真实网络交互（需要可用的 New API 站点）、Webview 渲染（需人工验收）、
-VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意三点：需要日志时用
-`test/helpers.ts` 的 `testLogger()`（复用同一个关闭输出的通道）；`SessionRegistry` 的用例记得
-`dispose()`，否则会遗留事件订阅；涉及密钥的断言应当验证**指纹与序列化结果里不含明文**。
+刻意不测的部分：真实网络交互（传输层改用 `test/fakes.ts` 注入假 `fetch`，不碰网络）、Webview
+渲染（需人工验收）、VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意
+六点：注入点是 `HttpClientOptions.fetchImpl` / `NewApiClientOptions.fetchImpl`，且假 `fetch`
+必须认 `AbortSignal` 并 reject，否则超时与取消路径永不返回；中断时要 reject **`signal.reason`**
+（真实 `fetch` 就是这么做的，`abort()` 无参时才是一个 `AbortError`），否则取消路径的判断测不到；
+需要日志时用 `test/helpers.ts` 的 `testLogger()`（复用同一个关闭输出的通道）；`SessionRegistry`
+的用例记得 `dispose()`，否则会遗留事件订阅；`provider/chatProvider.ts` 的重发门可以直接手写一份
+`ChatProviderDeps`（假 `sessions.find` 返回一个按脚本产出 chunk 的假 client）走真实的
+`provideLanguageModelChatResponse`；涉及密钥的断言应当验证**指纹与序列化结果里不含明文**。
