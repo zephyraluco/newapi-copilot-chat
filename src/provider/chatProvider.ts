@@ -17,11 +17,12 @@ import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
 import type { NewApiClient } from '../client/newApiClient';
-import { DEFAULTS, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS } from '../consts';
+import { DEFAULTS, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, USAGE_DATA_MIME_TYPE } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
+import { buildReportedUsage } from '../usage';
 import { convertMessages, convertToolChoice, convertTools } from './messages';
 import {
 	applyReasoningEffort,
@@ -342,6 +343,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				}
 
 				const summary = translator.flush();
+				this.reportUsagePart(progress, summary, logger);
 				logger.debug(
 					`响应结束：${chunkCount} 个数据块，正文 ${summary.textLength} 字，` +
 					`思考 ${summary.reasoningLength} 字，工具调用 ${summary.toolCallCount} 次，` +
@@ -378,10 +380,35 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 					logger.warn(
 						`上游连接在回答完成前断开，已保留已收到的 ${translator.emittedParts} 个部件：${modelId}`,
 					);
-					return translator.flush({ dropIncompleteToolCalls: true });
+					const summary = translator.flush({ dropIncompleteToolCalls: true });
+					this.reportUsagePart(progress, summary, logger);
+					return summary;
 				}
 				throw error;
 			}
+		}
+	}
+
+	/**
+	 * 把用量回传给 Copilot（会话信息里的「上下文窗口」靠它显示 token 数）。
+	 *
+	 * 不报这个部件时 Copilot 会自己拼一个 `prompt_tokens: 0` 的兑底值，面板就一直显示 `0/上限`。
+	 * 上报失败不能影响已经流出的回答，因此这里兑住异常只记一条警告。
+	 */
+	private reportUsagePart(
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+		summary: StreamSummary,
+		logger: Logger,
+	): void {
+		const payload = buildReportedUsage(summary.usage);
+		if (payload === undefined) {
+			return;
+		}
+		try {
+			const data = new TextEncoder().encode(JSON.stringify(payload));
+			progress.report(new vscode.LanguageModelDataPart(data, USAGE_DATA_MIME_TYPE));
+		} catch (error) {
+			logger.warn('上报用量部件失败（不影响本次回答）', error);
 		}
 	}
 

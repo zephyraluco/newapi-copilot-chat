@@ -16,7 +16,7 @@ import { COMMANDS, MANAGE_MODELS_COMMAND, STATUS_BAR_PRIORITY } from '../consts'
 import { formatRelativeTime, formatTokens } from '../format';
 import type { Logger } from '../logger';
 import type { StatusState, TargetStatus, UsageStats } from './statusService';
-import { describeCacheHit } from './usage';
+import { describeCacheHit } from '../usage';
 
 /** 状态栏项。 */
 export class NewApiStatusBar implements vscode.Disposable {

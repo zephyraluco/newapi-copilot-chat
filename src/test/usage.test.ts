@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import type { ChatUsage } from '../types';
-import { cacheHitRate, describeCacheHit, readUsageDelta } from '../status/usage';
+import { buildReportedUsage, cacheHitRate, describeCacheHit, readUsageDelta } from '../usage';
 
 /**
  * 这些测试覆盖用量的读出规则。
@@ -122,5 +122,76 @@ suite('status / 用量读出', () => {
 		assert.strictEqual(describeCacheHit(8200, 12000), '8.2K（68%）');
 		// 没有输入量就只剩数量：宁可少给一个数，也不要编一个比例
 		assert.strictEqual(describeCacheHit(500, 0), '500');
+	});
+});
+
+suite('status / 回传给 Copilot 的用量载荷', () => {
+	/**
+	 * Copilot 侧的采纳条件（`isApiUsage`）：三个字段都必须是 number。
+	 * 缺任何一个或者类型不对，整块载荷会被丢掉，会话信息里的上下文窗口就退回 `0/上限`。
+	 */
+	function isAcceptedByCopilot(payload: unknown): boolean {
+		const value = payload as Record<string, unknown>;
+		return typeof value.prompt_tokens === 'number'
+			&& typeof value.completion_tokens === 'number'
+			&& typeof value.total_tokens === 'number';
+	}
+
+	test('上游没给用量时不发（与 Copilot 自己的兑底值同义）', () => {
+		assert.strictEqual(buildReportedUsage(undefined), undefined);
+	});
+
+	test('三个数字字段总是齐的，包括上游只给部分字段时', () => {
+		const cases: readonly ChatUsage[] = [
+			{ prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+			{ prompt_tokens: 100, completion_tokens: 20 },
+			{ completion_tokens: 7 },
+			{},
+		];
+		for (const usage of cases) {
+			const payload = buildReportedUsage(usage);
+			assert.ok(payload !== undefined);
+			assert.strictEqual(
+				isAcceptedByCopilot(payload),
+				true,
+				`载荷必须能被 Copilot 采纳：${JSON.stringify(payload)}`,
+			);
+		}
+	});
+
+	test('缺 total_tokens 时按分项之和补齐', () => {
+		const payload = buildReportedUsage({ prompt_tokens: 30, completion_tokens: 12 });
+		assert.strictEqual(payload?.total_tokens, 42);
+	});
+
+	test('缓存命中放在 prompt_tokens_details 下（Copilot 读的就是这里）', () => {
+		const payload = buildReportedUsage({
+			prompt_tokens: 1000,
+			completion_tokens: 10,
+			prompt_cache_hit_tokens: 800,
+		});
+		assert.strictEqual(payload?.prompt_tokens_details.cached_tokens, 800);
+	});
+
+	test('没有缓存字段时给 0，而不是省略（省略也得补一个默认值）', () => {
+		const payload = buildReportedUsage({ prompt_tokens: 10, completion_tokens: 1 });
+		assert.strictEqual(payload?.prompt_tokens_details.cached_tokens, 0);
+	});
+
+	test('思维链 token 只在有时才写上', () => {
+		const withReasoning = buildReportedUsage({
+			prompt_tokens: 10,
+			completion_tokens: 100,
+			completion_tokens_details: { reasoning_tokens: 80 },
+		});
+		assert.strictEqual(withReasoning?.completion_tokens_details?.reasoning_tokens, 80);
+
+		const without = buildReportedUsage({ prompt_tokens: 10, completion_tokens: 100 });
+		assert.strictEqual(without?.completion_tokens_details, undefined);
+	});
+
+	test('载荷可以被 JSON 序列化（它要进 DataPart 的字节）', () => {
+		const payload = buildReportedUsage({ prompt_tokens: 1, completion_tokens: 2 });
+		assert.deepStrictEqual(JSON.parse(JSON.stringify(payload)), payload);
 	});
 });

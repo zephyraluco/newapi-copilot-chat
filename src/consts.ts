@@ -54,6 +54,15 @@ export const ENDPOINTS = {
 /** SSE 流结束标记。 */
 export const SSE_DONE = '[DONE]';
 
+/**
+ * 回传用量用的 `LanguageModelDataPart` MIME 类型。
+ *
+ * 这是 Copilot 侧的约定（其内部常量 `CustomDataPartMimeTypes.Usage`）：它把扩展提供的模型
+ * 封成一个 endpoint，在处理响应流时解析这个部件，从而在「会话信息 → 上下文窗口」里
+ * 显示真实 token 数与分类明细。不发它（或载荷不带全三个数字字段）时那里会一直是 `0/上限`。
+ */
+export const USAGE_DATA_MIME_TYPE = 'usage';
+
 /** SSE 响应必须包含的 content-type 片段。 */
 export const SSE_CONTENT_TYPE = 'text/event-stream';
 

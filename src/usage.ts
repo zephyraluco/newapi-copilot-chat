@@ -1,7 +1,9 @@
 /**
- * 会话用量的读出与累计。
+ * 用量的读出与翻译。
  *
- * 这里只做算术，不碰 UI（状态栏与面板各自渲染）：把「一次响应的 `usage`」翻译成可累加的计数。
+ * 这里只做算术，不碰 UI（状态栏与面板各自渲染）：把「一次响应的 `usage`」翻译成两种消费形态——
+ * 可累加的 `UsageDelta`（供状态面板统计），以及回传给 Copilot 的 `ReportedUsagePayload`
+ * （供会话信息里的上下文窗口显示）。
  *
  * 需要在这层吸收的差异有三类：
  *
@@ -13,9 +15,9 @@
  *    调用方看到的 `totalTokens === 0` 一起用于区分「没报告」与「报告了 0」。
  */
 
-import type { ChatUsage } from '../types';
-import { formatTokens } from '../format';
-import { asNumber, isRecord } from '../json';
+import type { ChatUsage } from './types';
+import { formatTokens } from './format';
+import { asNumber, isRecord } from './json';
 
 /** 一次响应能提供的可累加计数（缺失一律按 0）。 */
 export interface UsageDelta {
@@ -60,6 +62,43 @@ export function readUsageDelta(usage: ChatUsage | undefined): UsageDelta {
 		cachedTokens: Math.min(cached ?? 0, promptTokens),
 		reasoningTokens: readReasoningTokens(usage),
 		reportsCache: cached !== undefined,
+	};
+}
+
+/**
+ * 回传给 Copilot 的用量载荷（OpenAI 的字段名）。
+ *
+ * Copilot 用一个鸭子类型校验器（要求 `prompt_tokens` / `completion_tokens` / `total_tokens`
+ * **都是数字**）决定要不要采纳这份用量；任一字段缺失或不是数字，整块载荷会被丢弃，
+ * 会话信息里的上下文窗口就退回 `0/最大值`。因此这里**始终补齐三个数字**，
+ * 并只用 `undefined` 表达「根本没有用量可报」。
+ */
+export interface ReportedUsagePayload {
+	readonly prompt_tokens: number;
+	readonly completion_tokens: number;
+	readonly total_tokens: number;
+	readonly prompt_tokens_details: { readonly cached_tokens: number };
+	readonly completion_tokens_details?: { readonly reasoning_tokens: number };
+}
+
+/**
+ * 把上游的 `usage` 转成 Copilot 认识的载荷。
+ *
+ * 上游完全没给用量时返回 `undefined`——那与 Copilot 自己的兑底值同义，不必发一个全是 0 的载荷。
+ */
+export function buildReportedUsage(usage: ChatUsage | undefined): ReportedUsagePayload | undefined {
+	if (usage === undefined) {
+		return undefined;
+	}
+	const delta = readUsageDelta(usage);
+	return {
+		prompt_tokens: delta.promptTokens,
+		completion_tokens: delta.completionTokens,
+		total_tokens: delta.totalTokens,
+		prompt_tokens_details: { cached_tokens: delta.cachedTokens },
+		...(delta.reasoningTokens > 0
+			? { completion_tokens_details: { reasoning_tokens: delta.reasoningTokens } }
+			: {}),
 	};
 }
 

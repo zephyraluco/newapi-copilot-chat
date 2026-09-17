@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { createDefaultAdapterRegistry } from '../adapter/registry';
 import { SseTruncatedError } from '../client/sse';
 import type { NewApiSettings } from '../config';
+import { USAGE_DATA_MIME_TYPE } from '../consts';
 import type { ModelConfig } from '../models/modelConfig';
 import { NewApiChatProvider } from '../provider/chatProvider';
 import type { ChatProviderDeps } from '../provider/chatProvider';
@@ -189,7 +190,7 @@ suite('provider / 工具参数解析', () => {
 	});
 });
 
-suite('provider / 流被掐断后的重发', () => {
+suite('provider / 响应回传', () => {
 	/** 一份最小的模型配置。 */
 	function createConfig(): ModelConfig {
 		return {
@@ -317,6 +318,10 @@ suite('provider / 流被掐断后的重发', () => {
 			.map(part => part.value);
 	}
 
+	/* ---------------------------------------------------------------------- */
+	/* 流被掐断时的处置（重发门）                                              */
+	/* ---------------------------------------------------------------------- */
+
 	test('什么都没上报就被掐断时重发整次请求', async () => {
 		const client = scriptedClient([
 			[new SseTruncatedError(0)],
@@ -357,5 +362,85 @@ suite('provider / 流被掐断后的重发', () => {
 		assert.ok(result.error instanceof Error);
 		assert.ok((result.error as Error).message.includes('断开'));
 		assert.strictEqual(client.calls, 3, '首次 + 两次重发');
+	});
+
+	/* ---------------------------------------------------------------------- */
+	/* 用量部件（会话信息里的上下文窗口靠它显示 token 数）                      */
+	/* ---------------------------------------------------------------------- */
+
+	/** 取出 `usage` 数据部件的载荷。 */
+	function usagePayload(parts: readonly vscode.LanguageModelResponsePart[]): Record<string, unknown> | undefined {
+		const part = parts.find(
+			(item): item is vscode.LanguageModelDataPart =>
+				item instanceof vscode.LanguageModelDataPart && item.mimeType === USAGE_DATA_MIME_TYPE,
+		);
+		return part === undefined
+			? undefined
+			: JSON.parse(new TextDecoder().decode(part.data)) as Record<string, unknown>;
+	}
+
+	test('响应结束时报上用量，且三个数字字段齐（Copilot 的采纳条件）', async () => {
+		const client = scriptedClient([[
+			{ choices: [{ index: 0, delta: { content: '你好' } }] },
+			{
+				choices: [],
+				usage: {
+					prompt_tokens: 1200,
+					completion_tokens: 30,
+					completion_tokens_details: { reasoning_tokens: 20 },
+					prompt_tokens_details: { cached_tokens: 900 },
+				},
+			},
+		]]);
+
+		const result = await runProvider(client);
+
+		assert.strictEqual(result.error, undefined);
+		const payload = usagePayload(result.parts);
+		assert.ok(payload !== undefined, '没有用量部件时会话信息会一直显示 0/上限');
+		assert.strictEqual(payload.prompt_tokens, 1200);
+		assert.strictEqual(payload.completion_tokens, 30);
+		assert.strictEqual(payload.total_tokens, 1230);
+		assert.deepStrictEqual(payload.prompt_tokens_details, { cached_tokens: 900 });
+		assert.deepStrictEqual(payload.completion_tokens_details, { reasoning_tokens: 20 });
+	});
+
+	test('上游只给部分用量时也把缺的字段补成数字', async () => {
+		const client = scriptedClient([[
+			{ choices: [{ index: 0, delta: { content: '你好' } }] },
+			{ choices: [], usage: { completion_tokens: 7 } },
+		]]);
+
+		const payload = usagePayload((await runProvider(client)).parts);
+
+		assert.ok(payload !== undefined);
+		assert.strictEqual(payload.prompt_tokens, 0);
+		assert.strictEqual(payload.completion_tokens, 7);
+		assert.strictEqual(payload.total_tokens, 7, '缺 total_tokens 时按分项补齐');
+	});
+
+	test('上游没给用量时不发部件（不是发一个全 0 的）', async () => {
+		const client = scriptedClient([[
+			{ choices: [{ index: 0, delta: { content: '你好' } }] },
+			{ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+		]]);
+
+		const result = await runProvider(client);
+
+		assert.strictEqual(usagePayload(result.parts), undefined);
+		assert.deepStrictEqual(textsOf(result.parts), ['你好'], '回答本身照常给出去');
+	});
+
+	test('流被掐断但内容已给出时同样报用量（token 已经花掉了）', async () => {
+		const client = scriptedClient([[
+			{ choices: [{ index: 0, delta: { content: '前半段' } }] },
+			{ choices: [], usage: { prompt_tokens: 100, completion_tokens: 5 } },
+			new SseTruncatedError(2),
+		]]);
+
+		const result = await runProvider(client);
+
+		assert.strictEqual(result.error, undefined);
+		assert.strictEqual(usagePayload(result.parts)?.prompt_tokens, 100);
 	});
 });

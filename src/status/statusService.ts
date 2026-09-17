@@ -15,7 +15,7 @@ import type { ProviderSession, SessionRegistry } from '../provider/session';
 import { isTargetUsable } from '../provider/target';
 import type { ChatUsage } from '../types';
 import type { StreamSummary } from '../provider/stream';
-import { readUsageDelta } from './usage';
+import { readUsageDelta } from '../usage';
 
 /** 单个目标的模型列表概要。 */
 export interface ModelSummary {
