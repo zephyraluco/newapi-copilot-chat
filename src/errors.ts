@@ -54,7 +54,7 @@ function readField(source: unknown, key: string): string | undefined {
 }
 
 /** 诊断字段单值的最大长度：整条链要能一行读完，不能被某个超长字段撑破。 */
-export const MAX_DIAGNOSTIC_FIELD_LENGTH = 300;
+const MAX_DIAGNOSTIC_FIELD_LENGTH = 300;
 
 /** 折叠成一个单行字段并限长（多行消息进日志会破坏「一行一条」的可读性）。 */
 function toDiagnosticField(value: string): string {
@@ -99,8 +99,9 @@ function layerDetail(member: unknown): string | undefined {
 /**
  * 把错误链渲染成一行诊断明细（**给日志看**，不是给用户看）。
  *
- * 逐层用 ` ← ` 串起来，读作「由…引起」；不脱敏，调用方负责（`http.ts` 会过 `redactText`，
- * 日志则由 `LoggerService.write` 统一脱敏）。
+ * 逐层用 ` ← ` 串起来，读作「由…引起」。本函数**不脱敏**：落在日志里时由
+ * `LoggerService.write` 统一脱敏，落在给用户的消息里时由 `newApiClient.describeError` 过一遍
+ * `redactText`。
  */
 export function describeErrorCause(error: unknown): string {
 	const layers: string[] = [];
@@ -265,10 +266,6 @@ export interface NetworkErrorCauseInfo {
 	readonly code?: string;
 	/** 错误的构造名（`TimeoutError` / `SocketError` …），没有码时当码用 */
 	readonly name?: string;
-	/** 原因自身的消息（与外层消息相同时省略） */
-	readonly message?: string;
-	/** 原因对象的完整内容，供日志排查 */
-	readonly detail: string;
 }
 
 /**
@@ -290,29 +287,17 @@ const GENERIC_ERROR_NAMES: ReadonlySet<string> = new Set([
 	'DOMException',
 ]);
 
-/** 从错误的 `cause` 链上取出最深一层的网络故障信息；取不到时返回 `undefined`。 */
+/** 从错误的 `cause` 链上取出最深一层的错误码与构造名；都没有时返回 `undefined`。 */
 export function getNetworkErrorCauseInfo(error: unknown): NetworkErrorCauseInfo | undefined {
-	const layers = errorChain(error);
 	// 最深处最具体：外壳（`fetch failed`）本身既没有码也没有原因
-	for (let index = layers.length - 1; index >= 0; index--) {
-		const member = layers[index];
+	const layers = errorChain(error).reverse();
+	for (const member of layers) {
 		const code = readField(member, 'code');
 		const rawName = readField(member, 'name');
 		const name = rawName !== undefined && GENERIC_ERROR_NAMES.has(rawName) ? undefined : rawName;
-		if (code === undefined && name === undefined) {
-			// 中间层没有码可以继续往里找；到了最外层还是没有就没得说了
-			if (index > 0) {
-				continue;
-			}
-			return undefined;
+		if (code !== undefined || name !== undefined) {
+			return { code, name };
 		}
-		const message = readField(member, 'message');
-		return {
-			code,
-			name,
-			message: message === undefined ? undefined : toDiagnosticField(message),
-			detail: describeErrorCause(member),
-		};
 	}
 	return undefined;
 }
@@ -347,9 +332,11 @@ export function getNetworkErrorCategory(code: string | undefined): NetworkErrorC
 export function getNetworkErrorMessage(code: string | undefined, host?: string): string {
 	const displayCode = code ?? 'UNKNOWN';
 	const where = host !== undefined && host.length > 0 ? `（${host}）` : '';
+	// 替换值必须用函数形式：字符串形式里 `$&` / `$'` / `` $` `` 是替换模式，
+	// 码里偶然出现这些序列时会把占位符本身或周围文本搬进消息里。
 	return CATEGORY_MESSAGES[getNetworkErrorCategory(code)]
-		.replace('{code}', displayCode)
-		.replace('{where}', where);
+		.replace('{code}', () => displayCode)
+		.replace('{where}', () => where);
 }
 
 /* -------------------------------------------------------------------------- */

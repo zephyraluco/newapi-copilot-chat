@@ -8,7 +8,6 @@
 
 import * as assert from 'assert';
 import {
-	MAX_DIAGNOSTIC_FIELD_LENGTH,
 	NETWORK_ERROR_CATEGORY_BY_CODE,
 	describeErrorCause,
 	getNetworkErrorCauseInfo,
@@ -84,9 +83,8 @@ suite('errors / 网络错误分类', () => {
 
 		// 完全没有任何原因时返回 undefined
 		assert.strictEqual(getNetworkErrorCauseInfo(new TypeError('fetch failed')), undefined);
-		assert.strictEqual(getNetworkErrorCode(undefined), undefined);
-		// 普通错误对象的构造名（`Error` / `TypeError`）不算码：展示成 `[Error]` 等于什么也没说
 		assert.strictEqual(getNetworkErrorCauseInfo(new Error('循环')), undefined);
+		assert.strictEqual(getNetworkErrorCode(undefined), undefined);
 	});
 
 	test('错误链渲染成一行明细（给日志看）', () => {
@@ -122,11 +120,6 @@ suite('errors / 网络错误分类', () => {
 		assert.strictEqual(describeErrorCause('字符串错误'), '字符串错误');
 		assert.strictEqual(describeErrorCause(42), '42');
 		assert.strictEqual(describeErrorCause(undefined), '未知错误');
-	});
-
-	test('诊断字段的长度上限是常量', () => {
-		// 测试用到的具体数字不该散落在断言里，改上限时只需要改一处
-		assert.strictEqual(MAX_DIAGNOSTIC_FIELD_LENGTH, 300);
 	});
 });
 
@@ -172,6 +165,16 @@ suite('errors / 用户可见的消息', () => {
 
 	test('没有码时用 UNKNOWN 占位，而不是留一个空括号', () => {
 		assert.ok(getNetworkErrorMessage(undefined).startsWith('[UNKNOWN]'));
+	});
+
+	test('码里带 $ 序列时不会被当成替换模式', () => {
+		// `String.replace` 的字符串替换值里 `$&` / `$'` / `` $` `` 有特殊含义：
+		// 用字符串形式把码填进模板，偶然出现这些序列就会把占位符或周围文本搬进消息里
+		for (const code of ['A$&B', "Z$'W", 'Y$`X', 'W$1V']) {
+			const message = getNetworkErrorMessage(code);
+			assert.ok(message.startsWith(`[${code}]`), message);
+			assert.ok(!message.includes('{'), `占位符泄漏到消息里了：${message}`);
+		}
 	});
 
 	test('表里的每一项都有对应句子（改表时不会漏配文案）', () => {

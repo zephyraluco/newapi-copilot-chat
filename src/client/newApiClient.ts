@@ -29,6 +29,15 @@ import {
 } from './sse';
 import type { SseJsonOutcome } from './sse';
 
+/**
+ * 「响应不是我们认识的形状」时给用户的建议。
+ *
+ * 这类错误是我们自己合成的（不是网络栈抛的），因此建议直接写进消息里——
+ * 与 `http.ts` 的网络错误一致：**消息本身就是建议的载体**。
+ * 最常见的成因是站点地址填成了某个网页或别的服务，那里回的是 HTML 而不是 JSON。
+ */
+const RESPONSE_SHAPE_HINT = '（请确认站点地址指向 New API 站点根目录，而不是某个网页）';
+
 /** 构造客户端的参数。 */
 export interface NewApiClientOptions {
 	/** 站点根地址，已由 `config.normalizeBaseUrl` 规范化 */
@@ -210,7 +219,7 @@ export class NewApiClient {
 				});
 				const chunk = completionToChunk(text);
 				if (chunk === undefined) {
-					throw new TransportError('network', `无法解析响应：${truncate(redactText(text), 300)}`);
+					throw new TransportError('network', `无法解析响应${RESPONSE_SHAPE_HINT}：${truncate(redactText(text), 300)}`);
 				}
 				yield chunk;
 				return;
@@ -268,7 +277,10 @@ export class NewApiClient {
 		});
 		const parsed = safeJsonParse<ChatCompletionResponse>(response.text);
 		if (parsed === undefined || parsed === null || typeof parsed !== 'object') {
-			throw new TransportError('network', `响应不是合法 JSON：${truncate(redactText(response.text), 300)}`);
+			throw new TransportError(
+				'network',
+				`响应不是合法 JSON${RESPONSE_SHAPE_HINT}：${truncate(redactText(response.text), 300)}`,
+			);
 		}
 		return parsed;
 	}

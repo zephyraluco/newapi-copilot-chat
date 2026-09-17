@@ -214,6 +214,9 @@ suite('client / New API 端点', () => {
 		assert.ok(caught instanceof TransportError);
 		assert.strictEqual((caught as TransportError).kind, 'network');
 		assert.ok((caught as TransportError).message.includes('无法解析响应'));
+		// 这类错误是我们自己合成的，没有 DNS/TLS 那种分类句子可依靠，
+		// 因此建议必须写在消息里——最常见的成因就是地址指向了一个网页
+		assert.ok((caught as TransportError).message.includes('站点地址'), (caught as TransportError).message);
 	});
 
 	/* ---------------------------------------------------------------------- */
@@ -355,6 +358,7 @@ suite('client / New API 端点', () => {
 
 		assert.ok(caught instanceof TransportError);
 		assert.ok((caught as TransportError).message.includes('响应不是合法 JSON'));
+		assert.ok((caught as TransportError).message.includes('站点地址'), (caught as TransportError).message);
 	});
 
 	/* ---------------------------------------------------------------------- */

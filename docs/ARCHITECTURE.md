@@ -221,7 +221,7 @@ flowchart TD
 | `config.ts` | 250 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
 | `types.ts` | 272 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
-| `errors.ts` | 374 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
+| `errors.ts` | 361 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
 | `usage.ts` | 140 | 用量的读出：缓存命中与思维链 token、各网关字段名兼容，以及回传 Copilot 的载荷 |
 | `format.ts` | 83 | token / 时长 / 相对时间格式化、Markdown 转义 |
 | `logger.ts` | 287 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
@@ -359,7 +359,7 @@ flowchart LR
 | 出口 | 形态 | 给谁 |
 | --- | --- | --- |
 | `getNetworkErrorMessage` | `[ENOTFOUND]（api.example.com） 域名解析失败：请确认…` | 用户（就是聊天界面里的报错） |
-| `describeErrorCause` | `fetch failed ← getaddrinfo ENOTFOUND … code=ENOTFOUND errno=-3008 syscall=getaddrinfo` | 日志（**含**已 `cause` 链的全部字段，不脱敏以外的取舍） |
+| `describeErrorCause` | `fetch failed ← getaddrinfo ENOTFOUND … code=ENOTFOUND errno=-3008 syscall=getaddrinfo` | 日志（整条 `cause` 链 + 诊断字段；本函数不脱敏，日志层会统一处理） |
 
 几条刻意的选择：
 
@@ -373,7 +373,13 @@ flowchart LR
   而日志里的 `Error` 会被 `formatArg` 带上整条 `cause` 链（不然日志里也只剩一句 `fetch failed`）。
 - 站点主机（只取 host，不要路径与查询串）放在码后面：多站点配置下，
   「是哪个站点连不上」是第一个要回答的问题。
+- `error` 的 `stack` 会被清掉（`chatProvider.ts` 的 `toLanguageModelError`）：Copilot 会把堆栈一起渲染，
+  用户要的是原因，不是一面指向打包产物的调用链（原始异常已经写进日志了）。
 - 重试日志里同样打印原始链——那时的错误消息已经被改写成给用户看的话了。
+
+**消息自己带建议**（不变量）：无论是 `http.ts` 自己合成的错误（「响应不是合法 JSON」之类）
+还是从网络栈归一来的错误，**把错误抛给上层时消息里就必须包含该怎么办**。
+所以 `describeFailureHint` 对 `kind === 'network'` 一律返回 `undefined`——再补一句就是把同一件事说两遍。
 
 **流是怎么结束的**：客户端要求流必须给出正常收尾信号——`[DONE]` 或某个 chunk 里的 `finish_reason`。
 两者都没有、但已经解出过数据块时报 `SseTruncatedError`，而不是把半截回答当成功返回。

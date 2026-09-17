@@ -258,7 +258,11 @@ export class HttpClient {
 		const response = await this.fetchWithRetry(options, true);
 		const body = response.body;
 		if (body === null) {
-			throw new TransportError('network', `响应没有可读取的流（${response.url}）`);
+			// 与 errors.ts 的分类句子同一个约定：消息本身就带上该怎么办
+			throw new TransportError(
+				'network',
+				`响应没有可读取的流（${response.url}）：通常来自站点或中间的代理异常。`,
+			);
 		}
 		return {
 			status: response.status,
@@ -387,25 +391,15 @@ function timeoutMessage(streaming: boolean): string {
 }
 
 /* -------------------------------------------------------------------------- */
-/* 错误链                                                                      */
+/* 错误归一化                                                                  */
 /* -------------------------------------------------------------------------- */
-
-/**
- * 网络失败的用户可见消息。
- *
- * 分两层出口，各给各的读者（见 `src/errors.ts` 的说明）：
- * - **用户**：`[CODE]（站点）这一类的解释与处置建议`——码保留，因为它可以拿去搜索；
- * - **日志**：整条错误链的原始明细，由调用方写进日志（`describeErrorCause`）。
- *
- * 只把 `fetch failed` 这个外壳摆给用户，等于什么也没说；
- * 而把裸的 `code=ENOTFOUND syscall=getaddrinfo` 摆给用户，同样等于什么也没说。
- */
 
 /**
  * 把任意异常归一化成 TransportError。
  *
- * 消息面向用户（分类句子 + 错误码 + 站点），原因对象原样挂在 `cause` 上，
- * 供日志用 `describeErrorCause` 打印完整明细——两条出口互不影响。
+ * 消息面向用户：分类句子 + 错误码 + 站点（怎么分类见 `src/errors.ts`）；
+ * 原因对象原样挂在 `cause` 上，所以日志可以用 `describeErrorCause` 打印整条明细——
+ * 两条出口各给各的读者，互不影响。
  */
 function normalizeTransportError(
 	error: unknown,
