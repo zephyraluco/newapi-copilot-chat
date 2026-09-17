@@ -7,6 +7,7 @@ import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ModelAdapter } from './adapter';
 import { DefaultModelAdapter } from './defaultAdapter';
+import { DeepSeekAdapter } from './deepseek/deepseekAdapter';
 
 /** 适配器注册表。 */
 export class AdapterRegistry {
@@ -48,14 +49,17 @@ export class AdapterRegistry {
 	}
 }
 
-/** 创建内置默认配置的注册表。 */
+/**
+ * 创建内置默认配置的注册表。
+ *
+ * 供应商适配器各自放在以供应商命名的子目录里（例如 `deepseek/`），目录内的文件只服务该供应商；
+ * `defaultAdapter` 不是供应商，作为兑底与模板留在本层。高优先级在前，因此专门适配器写在兜底之前。
+ */
 export function createDefaultAdapterRegistry(logger?: Logger): AdapterRegistry {
 	const registry = new AdapterRegistry();
-	registry.register(new DefaultModelAdapter(), logger);
 
-	// TODO: 后续在此注册针对特定模型的适配器，例如：
-	// registry.register(new OpenAiReasoningAdapter(), logger);
-	// registry.register(new DeepSeekAdapter(), logger);
+	registry.register(new DeepSeekAdapter(), logger);
+	registry.register(new DefaultModelAdapter(), logger);
 
 	return registry;
 }

@@ -7,7 +7,8 @@
  * 这些差异如果全写进 provider，会散落大量 `if (model.id.startsWith('xxx'))`。
  *
  * `DefaultModelAdapter` 的全部钩子都是恒等变换。新增适配器只需三步，**不需要改动 provider**：
- * 1. 实现 `ModelAdapter`；
+ * 1. 在 `adapter/<supplier>/`（以供应商命名，例如 `deepseek/`）下实现 `ModelAdapter`，
+ *    目录内的文件只服务该供应商；
  * 2. 在 `registry.ts` 的 `createDefaultAdapterRegistry()` 里注册；
  * 3. 写好单测。
  */

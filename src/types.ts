@@ -162,6 +162,10 @@ export interface ChatCompletionRequest {
 	stream?: boolean;
 	/** 流式模式下让服务端在最后一个 chunk 返回 usage */
 	stream_options?: { include_usage?: boolean };
+	/** 工具定义；不带工具时不出现 */
+	tools?: ChatToolDefinition[];
+	/** 工具选择策略 */
+	tool_choice?: ChatToolChoice;
 	temperature?: number;
 	top_p?: number;
 	/** 部分新模型（如 o 系列）只接受 max_completion_tokens */
