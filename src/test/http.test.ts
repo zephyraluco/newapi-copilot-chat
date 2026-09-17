@@ -8,8 +8,19 @@ import {
 	joinUrl,
 } from '../client/http';
 import type { HttpClientOptions } from '../client/http';
+import { describeErrorCause } from '../errors';
 import { fakeFetch, hangingFetch, jsonResponse, streamResponse } from './fakes';
 import { capturingLogger, testLogger } from './helpers';
+
+/** 造一个带错误码的错误（Node 的 DNS/网络错误都带 `code`）。 */
+function withCode(error: Error, code: string): Error {
+	return Object.assign(error, { code });
+}
+
+/** 造一个带 `cause` 的错误（undici 的 `fetch failed` 就是这么包住真实原因的）。 */
+function withCause(error: Error, cause: unknown): Error {
+	return Object.assign(error, { cause });
+}
 
 /**
  * 传输层的测试。
@@ -333,15 +344,106 @@ suite('client / HTTP 传输层', () => {
 		assert.strictEqual(fake.calls.length, 1, '取消被当成网络故障时这里会重试 3 次');
 	});
 
-	test('连不上服务器归一化成 network', async () => {
+	test('连不上服务器归一化成 network，并给出分类句子、错误码与站点', async () => {
 		const fake = fakeFetch(() => {
-			throw new TypeError('fetch failed');
+			throw withCause(new TypeError('fetch failed'), withCode(new Error('getaddrinfo ENOTFOUND api.example.com'), 'ENOTFOUND'));
+		});
+		const error = await expectTransportError(() => createClient(fake.impl, { maxRetries: 0 })
+			.requestText({ url: 'https://api.example.com/v1/models' }));
+
+		assert.strictEqual(error.kind, 'network');
+		// 码保留（可搜索）+ 站点（多站点下第一个要回答的问题）+ 人话
+		assert.strictEqual(
+			error.message,
+			'[ENOTFOUND]（api.example.com） 域名解析失败：请确认站点地址没写错，'
+			+ '并检查运行本扩展的那台机器能否解析它（DNS、代理与防火墙都可能影响）。',
+		);
+	});
+
+	test('三类连接故障给出三类不同的建议', async () => {
+		// undici 的外壳永远是 `TypeError: fetch failed`，真正的原因在 `cause` 里；
+		// 只渲染外壳的后果就是用户只能看到一句「连不上」，不知道该改 DNS、端口还是证书
+		const cases: readonly [string, Error, string][] = [
+			['dns', withCode(new Error('getaddrinfo ENOTFOUND'), 'ENOTFOUND'), '域名解析失败'],
+			['unreachable', withCode(new Error('connect ECONNREFUSED'), 'ECONNREFUSED'), '拒绝连接'],
+			['tls', withCode(new Error('self-signed certificate'), 'DEPTH_ZERO_SELF_SIGNED_CERT'), '证书不被信任'],
+		];
+		for (const [name, cause, expected] of cases) {
+			const fake = fakeFetch(() => {
+				throw withCause(new TypeError('fetch failed'), cause);
+			});
+			const error = await expectTransportError(() => createClient(fake.impl, { maxRetries: 0 })
+				.requestText({ url: 'https://api.example.com/v1/models' }));
+
+			assert.ok(error.message.includes(expected), `${name}：${error.message}`);
+		}
+	});
+
+	test('原始错误链挂在 cause 上，供日志排查', async () => {
+		const cause = Object.assign(new Error('connect ECONNREFUSED'), {
+			code: 'ECONNREFUSED',
+			syscall: 'connect',
+			address: '127.0.0.1',
+			port: 3000,
+		});
+		const fake = fakeFetch(() => {
+			throw withCause(new TypeError('fetch failed'), cause);
+		});
+		const error = await expectTransportError(() => createClient(fake.impl, { maxRetries: 0 })
+			.requestText({ url: 'https://api.example.com/v1/models' }));
+
+		// 用户消息是分类句子（不含 syscall/port 这些），明细留给日志
+		assert.ok(!error.message.includes('syscall'), error.message);
+		assert.ok(error.cause instanceof Error, '原因对象必须保留下来');
+		assert.strictEqual(
+			describeErrorCause(error.cause),
+			'fetch failed ← connect ECONNREFUSED code=ECONNREFUSED syscall=connect address=127.0.0.1 port=3000',
+		);
+	});
+
+	test('重试日志里带上原始错误链（消息已经被改写成给用户看的话）', async () => {
+		const captured = capturingLogger();
+		const fake = fakeFetch(() => {
+			throw withCause(new TypeError('fetch failed'), withCode(new Error('boom'), 'ECONNREFUSED'));
+		});
+		await expectTransportError(() => createClient(fake.impl, { maxRetries: 1, logger: captured.logger })
+			.requestText({ url: 'https://api.example.com/v1/models' }));
+
+		const retryLines = captured.messages('warn').filter(line => line.includes('将重试'));
+		assert.ok(retryLines.some(line => line.includes('code=ECONNREFUSED')), retryLines.join('\n'));
+	});
+
+	test('认不出的错误码也照原样展示', async () => {
+		const fake = fakeFetch(() => {
+			throw withCause(new TypeError('fetch failed'), withCode(new Error('怪问题'), 'ESOMETHINGNEW'));
+		});
+		const error = await expectTransportError(() => createClient(fake.impl, { maxRetries: 0 })
+			.requestText({ url: 'https://api.example.com/v1/models' }));
+
+		assert.ok(error.message.startsWith('[ESOMETHINGNEW]'), error.message);
+	});
+
+	test('cause 成环时不会死循环', async () => {
+		const loop = new Error('循环');
+		Object.assign(loop, { cause: loop });
+		const fake = fakeFetch(() => {
+			throw loop;
 		});
 		const error = await expectTransportError(() => createClient(fake.impl, { maxRetries: 0 })
 			.requestText({ url: 'u' }));
 
-		assert.strictEqual(error.kind, 'network');
-		assert.ok(error.message.includes('无法连接 New API'));
+		// 没有可用的码 → 落到通用分类，但仍然说清是哪一类
+		assert.ok(error.message.startsWith('[UNKNOWN]'), error.message);
+		assert.ok(error.message.includes('网络请求失败'), error.message);
+	});
+
+	test('HTTP 错误的响应体不再被二次截断', async () => {
+		const body = JSON.stringify({ error: { message: 'x'.repeat(800) } });
+		const fake = fakeFetch(() => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } }));
+		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 0 })
+			.requestText({ url: 'https://api.example.com/v1/models' }));
+
+		assert.ok(error.message.includes('x'.repeat(800)), '服务端给的说明应该完整带到错误消息里');
 	});
 
 	/* ---------------------------------------------------------------------- */

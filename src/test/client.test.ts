@@ -384,9 +384,10 @@ suite('client / New API 端点', () => {
 		assert.ok((describeFailureHint(rateLimited, true) ?? '').includes('限流'));
 	});
 
-	test('超时与连不上给出各自的建议，其余情况不给（避免误导）', () => {
+	test('超时给出建议，网络类不再重复给（消息里已经有了）', () => {
 		assert.ok((describeFailureHint(new TransportError('timeout', '超时'), true) ?? '').includes('timeoutMs'));
-		assert.ok((describeFailureHint(new TransportError('network', '连不上'), true) ?? '').includes('代理'));
+		// 连接失败的建议在错误消息里（分类句子 + 错误码 + 站点），这里再来一句就是同一件事说两遍
+		assert.strictEqual(describeFailureHint(new TransportError('network', '[ENOTFOUND] 域名解析失败'), true), undefined);
 		assert.strictEqual(describeFailureHint(new TransportError('aborted', '已取消'), true), undefined);
 		assert.strictEqual(describeFailureHint(new Error('别的错'), true), undefined);
 	});

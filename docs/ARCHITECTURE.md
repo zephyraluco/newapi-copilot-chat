@@ -104,6 +104,7 @@ flowchart TD
         e1["adapter.finalize：追加缓冲 chunk"]
         e2["flush：工具调用排序 → 解析参数<br/>→ LanguageModelToolCallPart"]
         e3["reportUsage → status/ 累加"]
+        e4["usage 数据部件 → 会话信息里的上下文窗口"]
     end
 
     host["Copilot Chat 渲染<br/>执行工具后再次调用"]
@@ -126,6 +127,7 @@ flowchart TD
     d5 -.-> host
     d3 --> e1 --> e2 --> e3
     e2 -.->|"本轮结束，工具交由宿主执行"| host
+    e2 --> e4 -.-> host
     host -.->|"下一轮请求"| start
 ```
 
@@ -189,6 +191,8 @@ flowchart TD
 | --- | --- | --- |
 | 找不到模型所属的会话 | `chatProvider.ts` | 抛错提示重新选择模型（配置组已变更） |
 | 转换后没有可发送内容 | `chatProvider.ts` | 抛错，不发请求 |
+| 模型是 DeepSeek 且具备思考能力 | `adapter/deepseek/deepseekAdapter.ts` | 请求体写入 `thinking: { type: 'enabled' }` |
+| 辅助请求（起标题、提交信息…） | `adapter/deepseek/deepseekAdapter.ts` | 改为 `thinking: { type: 'disabled' }` 并去掉 `reasoning_effort` |
 | HTTP 非 2xx | `client/http.ts` | `HttpError`，按 `isAuthError` / `isNotFound` / `isRetryable` 分流 |
 | 可重试的错误 | `client/http.ts` | `Retry-After` 优先，否则指数退避 + 抖动 |
 | `Retry-After` 超过 30 秒 | `client/http.ts` | 不再重试，直接把带等待时间的 429 报出来 |
@@ -203,8 +207,9 @@ flowchart TD
 | 工具分片不带 `index` | `provider/stream.ts` | 按有无 `id` 判断新调用，续传分片接在同一个槽位 |
 | 工具参数不是合法 JSON | `provider/stream.ts` | 先直解，再剥 Markdown 围栏；仍失败时正常结束则退化为 `{}`，流被掐断则丢弃这次调用 |
 | `finish_reason === 'length'` | `provider/stream.ts` | 记警告（响应被截断） |
+| 响应正常结束且有用量 | `provider/chatProvider.ts` | 回传一个 `usage` 数据部件（见 §2 末节） |
 | 取消（`isAbortError` 或 token 已取消） | `chatProvider.ts` | 调试日志后静默返回，**不算失败** |
-| 其它错误 | `chatProvider.ts` | `toLanguageModelError` 映射成 VS Code 模型错误 |
+| 其它错误 | `chatProvider.ts` | `toLanguageModelError` 把错误消息**原样**交给 VS Code（见 §8） |
 
 ## 3. 代码地图
 
@@ -212,17 +217,19 @@ flowchart TD
 | --- | ---: | --- |
 | `extension.ts` | 324 | 激活与装配。**只做接线**，读它能看清整体数据流 |
 | **基础层** | | |
-| `consts.ts` | 151 | 命令 ID、端点、默认值、思考强度键名、运行时版本 |
+| `consts.ts` | 160 | 命令 ID、端点、默认值、思考强度键名、用量部件 MIME、运行时版本 |
 | `config.ts` | 250 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
-| `types.ts` | 268 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
+| `types.ts` | 272 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
+| `errors.ts` | 374 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
+| `usage.ts` | 140 | 用量的读出：缓存命中与思维链 token、各网关字段名兼容，以及回传 Copilot 的载荷 |
 | `format.ts` | 83 | token / 时长 / 相对时间格式化、Markdown 转义 |
-| `logger.ts` | 282 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 |
+| `logger.ts` | 287 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
-| `http.ts` | 462 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
+| `http.ts` | 499 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
 | `sse.ts` | 302 | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
-| `newApiClient.ts` | 462 | 端点封装、模型列表解析、失败建议 |
+| `newApiClient.ts` | 463 | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 233 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
@@ -232,20 +239,20 @@ flowchart TD
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
-| `chatProvider.ts` | 521 | 实现 `LanguageModelChatProvider`（含流被掐断后的重发门） |
+| `chatProvider.ts` | 551 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 344 | VS Code ⇄ OpenAI 兼容的消息转换 |
 | `stream.ts` | 381 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
 | `tokenizer.ts` | 110 | token 估算（刻意高估） |
 | **`adapter/`** 差异出口 | | |
-| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 182 | 钩子接口、注册与解析、恒等实现 |
+| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 188 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
+| `deepseek/`（2 个文件） | 261 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
 | `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
-| `usage.ts` | 101 | 会话用量的读出：缓存命中与思维链 token、各网关字段名兼容 |
 | `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
 | `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.ts`（13 个文件） | 3,434 | 240 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
+| `test/*.ts`（15 个文件） | 4,167 | 278 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -258,7 +265,7 @@ flowchart LR
     adapter["adapter/"]
     status["status/"]
     config["config.ts"]
-    base["基础层<br/>consts · types · json · format · logger · cancellation"]
+    base["基础层<br/>consts · types · json · errors · usage · format · logger · cancellation"]
 
     ext --> provider
     ext --> status
@@ -287,6 +294,8 @@ flowchart LR
 - **`models` 是纯数据转换**：不注册命令、不发请求（`catalog` 只调用注入的 client），因此能被单测直接覆盖。
 - **`provider` 不直接构造 client**：一律通过 `SessionRegistry` 拿会话，多站点隔离与配置变更时的重建只有一处实现。
 - **`status` 只做聚合与渲染**，从不自己发请求。
+- **`usage.ts` 在基础层**：用量既被 `status/` 拿去统计，也被 `provider/` 拿去回传 Copilot，
+  放在任一侧都会让另一侧反向依赖（provider ← status 是本项目的方向）。
 - **`extension.ts` 不含业务逻辑**，是唯一知道「怎么把模块拼起来」的地方。
 
 ## 5. 基础层
@@ -304,8 +313,10 @@ flowchart LR
   兼容同一语义在不同网关上的多种字段名。
 - **`logger.ts`**：基于 `LogOutputChannel`，用户可在「输出」面板直接调级别。两个要点：我们自己的级别闸门
   与通道级别是**两回事**，配得比通道更详细时日志会被通道吞掉，`warnIfChannelLevelBlocks()` 会检测并提示；
-  `redactText` 用正则兜底脱敏，**即使调用点忘了 `redactSecret`，密钥也不会整串落进日志**。
-- **`cancellation.ts`**：`CancellationToken` → `AbortSignal` 的集中转换，请求结束后 `dispose()` 解除监听。
+  `redactText` 用正则兜底脱敏，**即使调用点忘了 `redactSecret`，密钥也不会整串落进日志**。  格式化 `Error` 时会**带上 `cause` 链**（`describeErrorCause`）——`fetch` 失败时
+  原因全在 `cause` 里，而 `stack` 并不包含它。
+- **`errors.ts`**：网络错误码 → 分类 → 人话（见 §6），同时提供日志用的错误链渲染。
+  放在基础层是因为**日志与 `client/` 都要用**，而基础层不能反向依赖 `client/`。- **`cancellation.ts`**：`CancellationToken` → `AbortSignal` 的集中转换，请求结束后 `dispose()` 解除监听。
 
 ## 6. `client/` —— 与 New API 交互
 
@@ -328,6 +339,42 @@ flowchart LR
 `HttpError` 带 `status`、服务端错误描述、`Retry-After`，并提供 `isAuthError` / `isNotFound` / `isRetryable`。
 `isAbortError` 单独处理——用户点「停止」是正常流程，不该当失败上报。
 
+### 连接失败：从错误码到「该怎么办」
+
+`fetch` 失败时外壳永远是一句 `TypeError: fetch failed`：**原因在 `cause` 里，诊断字段在
+`cause` 的平级属性上**（`code` / `syscall` / `address` / `port` / `hostname`），而 `stack` 里没有它。
+光看外壳，用户只知道「连不上」，不知道该改 DNS、端口还是证书——扩展跑在远程/容器里时尤其难查。
+
+解决办法不是把原始字段原样甩出去（`code=ENOTFOUND syscall=getaddrinfo` 同样看不懂），
+而是按**错误码分成若干类，每类配一句人话**（`errors.ts`）：
+
+```
+错误码 ──▶ NETWORK_ERROR_CATEGORY_BY_CODE ──▶ dns / unreachable / interrupted / timeout
+           （含 ERR_TLS_* · HPE_* 前缀规则）    / tls / aborted / protocol / configuration / generic
+                                              └──▶ [CODE]（站点）这一类的解释与处置建议
+```
+
+两个出口，读者不同：
+
+| 出口 | 形态 | 给谁 |
+| --- | --- | --- |
+| `getNetworkErrorMessage` | `[ENOTFOUND]（api.example.com） 域名解析失败：请确认…` | 用户（就是聊天界面里的报错） |
+| `describeErrorCause` | `fetch failed ← getaddrinfo ENOTFOUND … code=ENOTFOUND errno=-3008 syscall=getaddrinfo` | 日志（**含**已 `cause` 链的全部字段，不脱敏以外的取舍） |
+
+几条刻意的选择：
+
+- **码一定要留在用户可见的消息里**（方括号中）：它是唯一能拿去搜索、能跟别的日志/工单比对的东西，
+  解释只是它的译文。
+- **认不出的码照样展示**，只是解释退化成通用建议；码表不求穷尽（TLS 的码家族很大，按 `ERR_TLS_*` /
+  `ERR_SSL_*` 前缀归类比漏掉好）。
+- **普通错误对象的构造名不算码**（`Error` / `TypeError`）：展示成 `[Error]` 等于什么也没说。
+  但 `TimeoutError` / `SocketError` 这类 undici 的名字是有意义的，照用。
+- **原始明细只进日志**：用户不需要看的 `syscall` / `errno` 不该占用聊天框那一行；
+  而日志里的 `Error` 会被 `formatArg` 带上整条 `cause` 链（不然日志里也只剩一句 `fetch failed`）。
+- 站点主机（只取 host，不要路径与查询串）放在码后面：多站点配置下，
+  「是哪个站点连不上」是第一个要回答的问题。
+- 重试日志里同样打印原始链——那时的错误消息已经被改写成给用户看的话了。
+
 **流是怎么结束的**：客户端要求流必须给出正常收尾信号——`[DONE]` 或某个 chunk 里的 `finish_reason`。
 两者都没有、但已经解出过数据块时报 `SseTruncatedError`，而不是把半截回答当成功返回。
 `parseSseJson` 用可变的 `outcome` 把「是否收到 `[DONE]`」带出来（生成器的返回值 `for await` 取不到）。
@@ -346,7 +393,8 @@ flowchart LR
 因为 `/api/status` 是 New API 的自有扩展，第三方兼容网关通常没有它）。`StatusService.refreshSession()`
 把它们拼成「这个站点现在怎么样」：模型列表走 `catalog`（与 provider 共享缓存，因此状态里的数量就是模型选择器里的数量），
 站点信息走 `getStatus` 并用时耗作为延迟，失败时由 `describeFailureHint()` 给出**可操作建议**
-（地址写错 / 密钥被拒 / 被限流 / 需要代理）而不是只丢一个错误字符串。只有一处发起探测，
+（地址写错 / 密钥被拒 / 被限流 / 上游中断）而不是只丢一个错误字符串——**连接失败不再重复给建议**，
+因为那一类的错误消息本身已经带了分类与处置（见上文）。只有一处发起探测，
 因此状态栏、面板与「测试连接」命令的口径天然一致。
 
 ## 7. `models/` —— 模型信息整合
@@ -487,6 +535,22 @@ provider 相应地不提供模型。
 `toModelInformation` 通过泛型 `LanguageModelChatProvider<T>` 把内部 `ModelConfig` 一并交给 VS Code
 ——它会把这个对象原样传回响应方法，因此响应阶段能拿到已解析的能力与窗口。
 
+### 把错误交还给 VS Code
+
+`toLanguageModelError` 不再包装消息：网络故障的消息已经是「分类 + 错误码 + 站点 + 该怎么办」
+（见 §6），HTTP 错误则是上游原话。再包一层「New API 请求失败」没有好处——Copilot 侧本来就会把
+`name: message` 与堆栈一并显示（`extChatEndpoint` 的 `toErrorMessage(e, true)`），
+叠上前缀只是让同一句话出现两遍，还把真正的原因往右挤一格。
+
+两件事必须做：
+
+- **清掉 `stack`**（`result.stack = undefined`）：用户要的是原因，不是一面指向打包产物的调用链；
+  原始异常已经写进日志了。
+- **只在语义真正吻合时换用工厂方法**：401/403 → `NoPermissions`、404 → `NotFound`；
+  `Blocked` 表示「被策略阻止」，与限流/超时不是一回事，强行复用会误导。
+
+唯一的加工仍是密钥脱敏（`describeError` 里的 `redactText`）。
+
 ### 模型配置：思考强度（`modelConfiguration.ts`）
 
 provider 可以随模型信息下发一份 `configurationSchema`，VS Code 据此在模型选择器里渲染出**模型级控件**，
@@ -562,6 +626,29 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 - **已上报部件数**：`emittedParts` 是重发门的输入，只统计真正上报出去的东西（见上文「流被掐断时的处置」）。
 - **失败处置**：`decideStreamFailure` 把「重发 / 保留半截 / 报错」的判定抽成纯函数，便于单测。
 
+### 回传用量（会话信息里的上下文窗口）
+
+Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`。**这个值不会自己出现**：扩展提供的模型
+对 Copilot 而言是一个 `ExtensionContributedChatEndpoint`，它在消费我们的响应流时只认一个
+`LanguageModelDataPart`——`mimeType` 为 `'usage'`（Copilot 内部常量 `CustomDataPartMimeTypes.Usage`）、
+`data` 是 JSON 文本。不发它，Copilot 就用自带的兜底值 `prompt_tokens: 0`，面板永远显示 `0/上限`。
+
+三条硬性约定：
+
+- **载荷必须带齐 `prompt_tokens` / `completion_tokens` / `total_tokens` 三个数字**。Copilot 用
+  鸭子类型校验（`isApiUsage`）决定要不要采纳；缺一个或类型不对，整块载荷被丢弃，效果与不发一样。
+  因此 `usage.ts` 的 `buildReportedUsage` 总是补齐这三个数字（总量优先取上游值，缺失时按分项之和），
+  缓存命中放进 `prompt_tokens_details.cached_tokens`，思维链放进 `completion_tokens_details.reasoning_tokens`。
+- **上游完全没给用量时不发**（返回 `undefined`）：那与 Copilot 自己的兜底值同义，发一个全 0 的载荷
+  只会让人以为「真的没消耗」。`request.includeUsage` 关掉时就会落到这一档。
+- **上报失败不能影响已经流出的回答**：`reportUsagePart` 兜住异常，只记一条警告。
+
+同一次响应里 Copilot 还会调用 `provideTokenCount` 去算明细（`System Instructions` /
+`Tool Definitions` / `Messages` 等分类的占比）：它拿 `ExtensionContributedChatTokenizer` 调
+`vscode.lm` 的 `countTokens`，也就是我们的 `provideTokenCount`；各项百分比的分母则是我们上报的
+`prompt_tokens`。因此这两件事要一起做对，面板里才会有数——**只有用量、tokenizer 报不了数**（或反过来）
+都会得到残缺的显示。
+
 ### Token 估算（`tokenizer.ts`）
 
 拿不到目标模型的真实分词器（各家不同、网关也不暴露），只能估算：CJK 按 1 字符 ≈ 1 token、
@@ -581,9 +668,36 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 | `transformChunk` | 每个流式 chunk | 统一字段名、合并分片 |
 | `finalize` | 流结束 | 冲刷适配器内部缓冲 |
 
-目前只注册了恒等变换的 `DefaultModelAdapter`，它的三个钩子刻意都不实现——钩子未定义时 provider
-直接透传，效果就是恒等变换；保留空实现反而多出无意义的调用与拷贝。`AdapterRequestState` 把跨 chunk
-的累积状态显式传入，而不是让适配器持有实例字段，这样同一个适配器实例可以被多个并发请求安全复用。
+注册表按 `priority` 从高到低取第一个 `supports()` 命中的适配器，`DefaultModelAdapter`（恒等变换）
+排最后兜底；它的三个钩子刻意都不实现——钩子未定义时 provider 直接透传，保留空实现反而多出
+无意义的调用与拷贝。`AdapterRequestState` 把跨 chunk 的累积状态显式传入，而不是让适配器持有
+实例字段，这样同一个适配器实例可以被多个并发请求安全复用。
+
+适配器**不区分站点**：New API 是网关，同一个模型后面接的是哪一个上游、上游认不认某些字段都无法
+从站点地址上判断，因此上下文里不带地址，改写行为也不随站点变化。
+
+**目录约定**：供应商适配器各自放在以供应商命名的子目录下（现在只有 `deepseek/`），目录内的文件
+只服务该供应商；`adapter.ts` / `registry.ts` / `defaultAdapter.ts` 是框架层，不针对任何供应商。
+新增一个供应商时新建目录 + 在注册表里登记，不需要动 provider，也不需要改别人的目录。
+
+### DeepSeek（`adapter/deepseek/`）
+
+命中的是 ID 或数据表厂商里带 `deepseek` 的模型。`ModelConfig.reasoning` 决定它是「思考模型」
+还是普通模型，与 OpenAI 的差别都在请求体侧：
+
+| 写入 / 删除 | 条件 | 理由 |
+| --- | --- | --- |
+| `thinking: { type: 'enabled' }` | 模型具备思考能力 | 一律显式写入，不依赖上游对「没给这个字段」的默认理解 |
+| `thinking: { type: 'disabled' }` | 思考模型 **且** 是辅助请求 | 辅助请求的产出只有一行短文本，思考会让它慢几倍、结果还会被丢掉 |
+| 删除 `reasoning_effort` | 关掉思考时，或模型不具备思考能力时 | 强度只在「开启思考」时才成立，留在请求里就是自相矛盾的字段 |
+
+**辅助请求**由首条消息（系统提示词）的前缀识别，少数内部请求还可以靠「只带一个工具」认出来：
+宿主把起标题、写提交信息、生成分支名、生成重命名建议、整理待办、给提示分类这些请求也交给
+同一个 provider（`shouldDisableThinking` 列出的是全部类型）。识别用的是**特征而不是协议**：宿主改了
+措辞只会退化成 `background`（不触发任何改写），不会把请求改坏。
+
+`reasoning_effort` 的取值不做翻译：模型选择器里的档位本来就来自数据表。改写结果会带上请求种类
+写进 `debug` 日志，排查「哪些请求被关掉了思考」时不用靠猜。
 
 ## 10. `status/` —— 状态栏与面板
 
@@ -633,9 +747,10 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 - **补一个模型的元数据**：改数据而不是改代码——跑 `npm run models:openrouter` 重新生成
   `data/openrouter-models.json`。上游目录里没有这个模型时改生成脚本（加个别名或回退取值），
   不要手工往文件里加条目，下次生成会全部覆盖。
-- **让某个模型的行为不一样（新增适配器）**：实现 `ModelAdapter`（`supports()` 判断是否命中）→
-  在 `adapter/registry.ts` 的 `createDefaultAdapterRegistry()` 注册（`priority` 高者先匹配）→ 加测试。
-  **不需要改 provider**——这是这一层存在的意义。
+- **让某个模型的行为不一样（新增适配器）**：在 `src/adapter/<supplier>/` 下实现 `ModelAdapter`
+  （`supports()` 判断是否命中，目录内的文件只服务该供应商）→ 在 `adapter/registry.ts` 的
+  `createDefaultAdapterRegistry()` 注册（`priority` 高者先匹配）→ 加测试。
+  现成的例子是 `src/adapter/deepseek/`；**不需要改 provider**——这是这一层存在的意义。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
   `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退，不要让整份配置失效）→ 在对应的
   Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `chatProvider.buildRequest`，
@@ -656,7 +771,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 - **新增一个探测 / 展示字段**：`client/newApiClient.ts` 的 `getStatus` / `ModelCatalogSnapshot` →
   `status/statusService.ts` 的 `TargetStatus` → `panel.ts` 渲染（站点细节都在面板；
   只有「需要用户动手的问题」会同时出现在状态栏悬浮提示里）。**会话用量的字段**则走
-  `status/usage.ts` 的 `UsageDelta` → `UsageStats` → 状态栏与面板两处。
+  `usage.ts` 的 `UsageDelta` → `UsageStats` → 状态栏与面板两处。
   注意面板脚本是**字符串里的 JS**，不受 TypeScript 检查。
 
 ## 12. 已知取舍
@@ -672,29 +787,36 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 | 面板脚本是手写 DOM，不用框架 | 状态量小，引入构建步骤不值得 |
 | 会话用量统计是全局累加的 | 单一计数器足够回答「这次会话花了多少」 |
 | 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者提供站点名与延迟；两个请求开销都很小 |
-| 适配器层只有恒等变换的 `DefaultModelAdapter` | 接口与装配点已经就位，具体的差异处理按需添加（见 §11） |
+| 适配器对 DeepSeek 思考模型一律写入 `thinking`，辅助请求一律关闭思考 | 不写就等于把行为交给上游的默认值；New API 是网关，无法从地址判断上游是否认这个字段，因此不对站点做区分 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
 | 站点不认 `stream_options` 时用户只能关掉它 | 这是扩展主动加的字段（为了拿到用量），站点兼容性无法逐站探测 |
+| 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字上报——宁可不显示 |
+| 明细占用的百分比可能与上游口径有出入 | 分母是上游的真实 `prompt_tokens`，分子是本地启发式估算（刻意高估，见 §8） |
 | 流被掐断时已流出的内容会保留（而不是报错让人重发） | 抛错只会在一个已经能用的回答上弹「重试」，但用户实际上需要的是完整的回答 |
+| 连接失败给用户的是「分类 + 错误码 + 建议」，不是原始错误链 | 链里的 `syscall` / `errno` 对用户没有意义；码保留在方括号里（可搜索），明细进日志（排查用）——两边都不丢信息，只是各给各的读者 |
+| 错误码表刻意不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，而**刻意丢掉**码就等于把唯一的线索丢了 |
+| 交给 VS Code 的错误清掉 `stack` | Copilot 会把堆栈一起渲染；用户要的是原因，不是指向打包产物的调用链（原始异常已在日志里） |
 
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-240 个用例，只覆盖**纯函数与装配**：
+278 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求 |
+| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求、连接失败的三类分类句子与 `cause` 保留、认不出的码、响应体不被二次截断 |
 | `test/sse.test.ts` | 事件分帧（含 CRLF 正好被切在分片之间）、多行 `data`、心跳注释、UTF-8 被从中间切开、静默超时、收尾信息回填、非 SSE 降级读取及其静默超时 |
-| `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮 |
+| `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮、失败建议 |
+| `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类给各自的建议、认不出的码照原样展示）、日志用的一行明细（折叠换行、截断、成环）、主机名提取 |
 | `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、已上报部件数、用量快照、`decideStreamFailure` 的四类处置 |
 | `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
-| `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析、**流被掐断后的重发门**（走真实的 `provideLanguageModelChatResponse`） |
+| `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 用量部件，走真实的 `provideLanguageModelChatResponse`） |
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
-| `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母 |
+| `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母；回传载荷的「三个数字必须齐」 |
 | `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、主题图标开关 |
+| `test/deepseekAdapter.test.ts` | 请求种类识别（系统提示词前缀、单工具请求、终端转向）、思考开关改写（辅助请求与主对话、不具备思考能力的模型）、模型身份判定、注册表命中 |
 
 刻意不测的部分：真实网络交互（传输层改用 `test/fakes.ts` 注入假 `fetch`，不碰网络）、Webview
 渲染（需人工验收）、VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意

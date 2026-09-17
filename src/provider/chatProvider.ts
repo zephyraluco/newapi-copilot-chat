@@ -527,22 +527,25 @@ function buildRequest(input: {
 }
 
 /**
- * 把内部错误映射成 VS Code 的模型错误。
+ * 把内部错误交给 VS Code。
  *
- * 只使用语义真正吻合的工厂方法：`Blocked` 表示「被策略阻止」，
- * 与限流/超时不是一回事，强行复用会让用户看到误导性的提示。
+ * 消息本身已经是面向用户的：网络故障是「分类 + 错误码 + 站点 + 该改什么」（见 `src/errors.ts`），
+ * HTTP 错误是上游原话。这里不再包一层「New API 请求失败」——叠前缀会让同一句话出现两遍，
+ * 还把真正的原因往右挤。
+ *
+ * 两件事必须做：
+ * - **清掉 stack**：Copilot 会把 `name: message` 与**堆栈**一起显示，
+ *   用户要的是原因，不是一面指向 cjs 产物的调用链；原始异常已经写进日志了。
+ * - **只在错误类型语义真正吻合时换用工厂方法**（401/403 → `NoPermissions`、
+ *   404 → `NotFound`）；`Blocked` 表示「被策略阻止」，与限流/超时不是一回事。
  */
 function toLanguageModelError(error: unknown): Error {
 	const message = describeError(error);
-	if (error instanceof HttpError) {
-		if (error.isAuthError) {
-			return vscode.LanguageModelError.NoPermissions(
-				`New API 拒绝了本次请求（HTTP ${error.status}）：${message}`,
-			);
-		}
-		if (error.isNotFound) {
-			return vscode.LanguageModelError.NotFound(message);
-		}
-	}
-	return new Error(`New API 请求失败：${message}`);
+	const result = error instanceof HttpError && error.isAuthError
+		? vscode.LanguageModelError.NoPermissions(message)
+		: error instanceof HttpError && error.isNotFound
+			? vscode.LanguageModelError.NotFound(message)
+			: new Error(message);
+	result.stack = undefined;
+	return result;
 }

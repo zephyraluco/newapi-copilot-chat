@@ -7,6 +7,7 @@
  */
 
 import { ENDPOINTS, SSE_CONTENT_TYPE, runtimeInfo } from '../consts';
+import { describeErrorCause } from '../errors';
 import { asNonEmptyString, isRecord, safeJsonParse, safeJsonStringify, truncate } from '../json';
 import type { Logger } from '../logger';
 import { redactText } from '../logger';
@@ -404,21 +405,22 @@ function toModel(value: unknown): NewApiModel | undefined {
 	return id === undefined ? undefined : { ...value, id };
 }
 
-/** 把任意异常描述成一句可展示的话（已脱敏）。 */
+/**
+ * 把任意异常描述成一句可展示的话。
+ *
+ * 运输层错误的消息已经是面向用户的（分类句子 + 错误码 + 站点，见 `src/errors.ts`），
+ * 直接用它；其余错误走错误链渲染，因为抛在别处的包装错误（外壳是「XXX 失败」）
+ * 真正的原因往往写在 `cause` 里，只报外壳等于把原因丢了。
+ * 唯一保留的加工是密钥脱敏。
+ */
 export function describeError(error: unknown): string {
 	if (error === undefined) {
 		return '未知错误';
 	}
-	if (error instanceof HttpError) {
+	if (error instanceof HttpError || error instanceof TransportError || error instanceof SseIdleTimeoutError) {
 		return redactText(error.message);
 	}
-	if (error instanceof TransportError || error instanceof SseIdleTimeoutError) {
-		return redactText(error.message);
-	}
-	if (error instanceof Error) {
-		return redactText(error.message);
-	}
-	return redactText(String(error));
+	return redactText(describeErrorCause(error));
 }
 
 /**
@@ -447,9 +449,8 @@ export function describeFailureHint(error: unknown, hasApiKey: boolean): string 
 		if (error.kind === 'timeout') {
 			return '请求超时：请检查网络，或调大 newapi-copilot-chat.request.timeoutMs。';
 		}
-		if (error.kind === 'network') {
-			return '无法建立连接：请检查站点地址、DNS 以及是否需要代理。';
-		}
+		// `network` 不再单独给建议：错误消息本身已经是「分类 + 错误码 + 该改什么」（见 src/errors.ts），
+		// 再补一句只会变成同一件事说两遍。
 	}
 	if (error instanceof SseIdleTimeoutError) {
 		return '上游长时间没有返回新数据，请求已中断：长思考的模型可以调大 ' +

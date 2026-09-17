@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import { OUTPUT_CHANNEL_NAME } from './consts';
+import { describeErrorCause } from './errors';
 import { safeJsonStringify, truncate } from './json';
 
 /** 日志级别名。用于 package.json 的枚举设置。 */
@@ -227,8 +228,12 @@ function formatArg(value: unknown): string {
 		return 'null';
 	}
 	if (value instanceof Error) {
+		// 必须带上 `cause` 链：`fetch` 失败时外壳只是一句 `fetch failed`，
+		// 真实原因（ENOTFOUND / ECONNREFUSED / 证书…）全在 `cause` 里，
+		// 而 stack 里并不包含它——只打 name + message 等于把原因丢了。
+		const chain = describeErrorCause(value);
 		const stack = value.stack ? `\n${value.stack}` : '';
-		return `${value.name}: ${value.message}${stack}`;
+		return `${value.name}: ${chain}${stack}`;
 	}
 	if (typeof value === 'string') {
 		return value;

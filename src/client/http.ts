@@ -6,8 +6,15 @@
  */
 
 import { DEFAULTS } from '../consts';
+import {
+	describeErrorCause,
+	getNetworkErrorCauseInfo,
+	getNetworkErrorCode,
+	getNetworkErrorMessage,
+	hostOfUrl,
+} from '../errors';
 import { asNonEmptyString, isRecord, safeJsonParse, truncate } from '../json';
-import { redactText, type Logger } from '../logger';
+import type { Logger } from '../logger';
 import type { ApiErrorBody } from '../types';
 
 /* -------------------------------------------------------------------------- */
@@ -86,7 +93,7 @@ function buildHttpErrorMessage(
 	responseBody: string | undefined,
 	retryAfterMs: number | undefined,
 ): string {
-	const detail = apiMessage ?? (responseBody ? truncate(responseBody, 300) : undefined);
+	const detail = apiMessage ?? responseBody;
 	const suffix = detail ? `：${detail}` : '';
 	// 限流时把服务端要求的等待时间写出来：只说「429」会让人以为马上重试就行
 	const wait = retryAfterMs !== undefined && retryAfterMs >= 1_000
@@ -333,12 +340,14 @@ export class HttpClient {
 				if (error === decidedToGiveUp) {
 					throw error;
 				}
-				const transport = normalizeTransportError(error, guard.didTimeout(), streaming);
+				const transport = normalizeTransportError(error, guard.didTimeout(), streaming, options.url);
 				lastError = transport;
 				if (transport.kind === 'aborted' || attempt === maxRetries) {
 					throw transport;
 				}
-				this.options.logger.warn(`请求失败（${transport.kind}），将重试`, transport.message);
+				this.options.logger.warn(
+					`请求失败（${transport.kind}），将重试：${describeErrorCause(transport.cause)}`,
+				);
 			} finally {
 				guard.cleanup();
 			}
@@ -377,8 +386,33 @@ function timeoutMessage(streaming: boolean): string {
 	return streaming ? '等待 New API 响应头超时' : '请求 New API 超时';
 }
 
-/** 把任意异常归一化成 TransportError。 */
-function normalizeTransportError(error: unknown, didTimeout: boolean, streaming: boolean): TransportError {
+/* -------------------------------------------------------------------------- */
+/* 错误链                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 网络失败的用户可见消息。
+ *
+ * 分两层出口，各给各的读者（见 `src/errors.ts` 的说明）：
+ * - **用户**：`[CODE]（站点）这一类的解释与处置建议`——码保留，因为它可以拿去搜索；
+ * - **日志**：整条错误链的原始明细，由调用方写进日志（`describeErrorCause`）。
+ *
+ * 只把 `fetch failed` 这个外壳摆给用户，等于什么也没说；
+ * 而把裸的 `code=ENOTFOUND syscall=getaddrinfo` 摆给用户，同样等于什么也没说。
+ */
+
+/**
+ * 把任意异常归一化成 TransportError。
+ *
+ * 消息面向用户（分类句子 + 错误码 + 站点），原因对象原样挂在 `cause` 上，
+ * 供日志用 `describeErrorCause` 打印完整明细——两条出口互不影响。
+ */
+function normalizeTransportError(
+	error: unknown,
+	didTimeout: boolean,
+	streaming: boolean,
+	url: string | undefined,
+): TransportError {
 	if (error instanceof TransportError) {
 		return error;
 	}
@@ -391,8 +425,11 @@ function normalizeTransportError(error: unknown, didTimeout: boolean, streaming:
 	if (isAbortError(error)) {
 		return new TransportError('aborted', '请求已取消', error);
 	}
-	const message = error instanceof Error ? error.message : String(error);
-	return new TransportError('network', `无法连接 New API：${redactText(message)}`, error);
+
+	// 分类靠 `cause` 里的码：外壳（`fetch failed`）既没有码也没有信息
+	const causeInfo = getNetworkErrorCauseInfo(error);
+	const message = getNetworkErrorMessage(getNetworkErrorCode(causeInfo), hostOfUrl(url));
+	return new TransportError('network', message, error);
 }
 
 /** 计算退避时长：指数增长 + 抖动，并尊重服务端给出的 Retry-After。 */
