@@ -29,23 +29,6 @@ function trimTrailingZero(value: number): string {
 	return value.toFixed(1).replace(/\.0$/, '');
 }
 
-/** 把毫秒格式化成简短时长：`860` → `860ms`、`2400` → `2.4s`、`65000` → `1m5s`。 */
-export function formatDurationMs(ms: number | undefined): string {
-	if (ms === undefined || !Number.isFinite(ms) || ms < 0) {
-		return '未知';
-	}
-	if (ms < 1000) {
-		return `${Math.round(ms)}ms`;
-	}
-	const totalSeconds = ms / 1000;
-	if (totalSeconds < 60) {
-		return `${trimTrailingZero(totalSeconds)}s`;
-	}
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = Math.round(totalSeconds % 60);
-	return seconds === 0 ? `${minutes}m` : `${minutes}m${seconds}s`;
-}
-
 /**
  * 把时间戳格式化成相对时间：`刚刚` / `3 分钟前` / `2 小时前` / `昨天`。
  *

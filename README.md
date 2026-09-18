@@ -156,7 +156,8 @@ src/
   types.ts            New API / OpenAI 兼容（DeepSeek 风格）数据结构
   logger.ts           日志（LogOutputChannel）+ 密钥脱敏
   json.ts             JSON 辅助（安全解析、类型收窄、按键取值）
-  format.ts           展示层格式化（token、时长、相对时间、转义）
+  reasoning.ts        思维链字段名（通用层唯一知道各家差异的地方）
+  format.ts           展示层格式化（token、相对时间、Markdown 转义）
   cancellation.ts     CancellationToken → AbortSignal 桥接
   client/             与 New API 交互（HTTP、SSE、端点封装）
   models/             模型信息整合（数据表、glob、配置解析、tooltip、缓存）

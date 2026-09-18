@@ -46,17 +46,6 @@ function plainConfig(id = 'gpt-4o'): ModelConfig {
 function contextFor(model: ModelConfig): AdapterContext {
 	return {
 		model,
-		settings: {
-			timeoutMs: 60_000,
-			streamIdleTimeoutMs: 60_000,
-			includeUsage: true,
-			maxRetries: 2,
-			temperature: undefined,
-			topP: undefined,
-			includeReasoning: false,
-			stabilizeToolList: false,
-			extraBody: {},
-		},
 		logger: testLogger(),
 	};
 }

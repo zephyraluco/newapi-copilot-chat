@@ -11,39 +11,20 @@
  *    目录内的文件只服务该供应商；
  * 2. 在 `registry.ts` 的 `createDefaultAdapterRegistry()` 里注册；
  * 3. 写好单测。
+ *
+ * 只有确实存在的差异才值得写成钩子。**通用容错不属于这里**——例如「思维链字段名各家不同」
+ * 由 `reasoning.ts` 统一认，而不是让每个适配器各写一遍。
  */
 
-import type { RequestSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionChunk, ChatCompletionRequest } from '../types';
+import type { ChatCompletionRequest } from '../types';
 
 /** 适配器运行上下文。每次请求构造一次，适配器内部应视为只读。 */
 export interface AdapterContext {
 	/** 本次请求使用的模型配置（含已解析的能力与窗口） */
 	readonly model: ModelConfig;
-	/** 当前请求相关设置 */
-	readonly settings: RequestSettings;
 	readonly logger: Logger;
-	/**
-	 * 用户在模型选择器里选定的思考强度，未选择或不适用时为 `undefined`。
-	 *
-	 * provider 已按固定的 `reasoning_effort` 字段名写进请求体，这里再传一份是为了让字段名或
-	 * 取值词汇不同的网关（例如要 `{ thinking: { type: 'enabled', budget_tokens } }`）能改写。
-	 */
-	readonly reasoningEffort?: string;
-}
-
-/**
- * 一次请求内的可变状态。
- *
- * 显式传入而不是让适配器持有实例字段，这样一个适配器实例可以被多个并发请求安全复用。
- */
-export interface AdapterRequestState {
-	/** 已累计输出的文本长度 */
-	textLength: number;
-	/** 适配器存放自定义数据的空间 */
-	readonly scratch: Map<string, unknown>;
 }
 
 /** 模型适配器。全部钩子都是可选的。 */
@@ -69,23 +50,4 @@ export interface ModelAdapter {
 		request: ChatCompletionRequest,
 		context: AdapterContext,
 	): ChatCompletionRequest | Promise<ChatCompletionRequest>;
-	/** 处理单个流式 chunk；返回 `undefined` 表示丢弃（例如要把多个 chunk 合并后再吐出一个）。 */
-	transformChunk?(
-		chunk: ChatCompletionChunk,
-		context: AdapterContext,
-		state: AdapterRequestState,
-	): ChatCompletionChunk | undefined | Promise<ChatCompletionChunk | undefined>;
-	/**
-	 * 请求结束时的冲刷钩子（把内部缓冲的内容补发出去）。
-	 * provider 在流结束后、上报结果前调用一次。
-	 */
-	finalize?(
-		context: AdapterContext,
-		state: AdapterRequestState,
-	): readonly ChatCompletionChunk[] | Promise<readonly ChatCompletionChunk[]>;
-}
-
-/** 创建一次请求的状态对象。 */
-export function createRequestState(): AdapterRequestState {
-	return { textLength: 0, scratch: new Map<string, unknown>() };
 }

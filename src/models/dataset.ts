@@ -148,9 +148,6 @@ export function parseModelDataset(raw: unknown): ModelDataset {
 	};
 }
 
-/** 当前生效的数据表；未加载或没有可用记录时为 `undefined`。 */
-let current: ModelDataset | undefined;
-
 /** `id` → 记录 的索引。键统一小写，因此匹配大小写不敏感。 */
 let index = new Map<string, ModelDatasetEntry>();
 
@@ -164,7 +161,6 @@ let index = new Map<string, ModelDatasetEntry>();
  */
 export function installModelDataset(raw: unknown): ModelDataset {
 	const dataset = parseModelDataset(raw);
-	current = dataset.entries.length > 0 ? dataset : undefined;
 	index = new Map();
 	for (const entry of dataset.entries) {
 		const key = entry.id.trim().toLowerCase();
@@ -174,16 +170,6 @@ export function installModelDataset(raw: unknown): ModelDataset {
 		}
 	}
 	return dataset;
-}
-
-/** 当前数据表（含来源与生成时间，供日志使用）。 */
-export function currentModelDataset(): ModelDataset | undefined {
-	return current;
-}
-
-/** 当前数据表的条目数；未加载时为 0。 */
-export function modelDatasetSize(): number {
-	return current?.entries.length ?? 0;
 }
 
 /**

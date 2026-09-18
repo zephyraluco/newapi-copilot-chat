@@ -16,7 +16,6 @@
 import * as vscode from 'vscode';
 import { TOKEN_ESTIMATION } from '../consts';
 import { safeJsonStringify } from '../json';
-import { NO_PARAMETER_SCHEMA } from './messages';
 import { REPLAY_MARKER_MIME } from './replay';
 import { readThinkingText } from './thinking';
 
@@ -150,23 +149,4 @@ export function estimateTokens(
 		return estimateTextTokens(text, charsPerToken);
 	}
 	return estimateMessageTokens(text, charsPerToken);
-}
-
-/** 按工具声明估算 `tools` 参数带来的固定开销。 */
-export function estimateToolsTokens(
-	tools: readonly vscode.LanguageModelChatTool[] | undefined,
-	charsPerToken: number = TOKEN_ESTIMATION.charsPerToken,
-): number {
-	if (tools === undefined || tools.length === 0) {
-		return 0;
-	}
-	let total = 0;
-	for (const tool of tools) {
-		total += TOKEN_ESTIMATION.toolOverhead;
-		total += estimateTextTokens(tool.name, charsPerToken);
-		total += estimateTextTokens(tool.description ?? '', charsPerToken);
-		// 与实际下发的请求体保持一致：没有 schema 的工具按空 object schema 发送
-		total += estimateTextTokens(safeJsonStringify(tool.inputSchema ?? NO_PARAMETER_SCHEMA) ?? '', charsPerToken);
-	}
-	return total;
 }

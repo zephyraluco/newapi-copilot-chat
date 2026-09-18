@@ -11,6 +11,7 @@ import { describeErrorCause } from '../errors';
 import { asNonEmptyString, isRecord, safeJsonParse, safeJsonStringify, truncate } from '../json';
 import type { Logger } from '../logger';
 import { redactText } from '../logger';
+import { readReasoningText } from '../reasoning';
 import type {
 	ChatCompletionChunk,
 	ChatCompletionRequest,
@@ -355,7 +356,8 @@ function completionToChunk(text: string): ChatCompletionChunk | undefined {
 			delta: {
 				role: choice.message?.role,
 				content: choice.message?.content ?? undefined,
-				reasoning_content: choice.message?.reasoning_content ?? undefined,
+				// 与流式路径用同一个读取器：思维链的字段名各家不同
+				reasoning_content: readReasoningText(choice.message),
 				tool_calls: choice.message?.tool_calls?.map((call, callIndex) => ({
 					index: callIndex,
 					id: call.id,

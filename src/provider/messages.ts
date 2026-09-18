@@ -19,6 +19,7 @@ import * as vscode from 'vscode';
 import { SUPPORTED_IMAGE_MIME_TYPES } from '../consts';
 import { safeJsonStringify } from '../json';
 import type { Logger } from '../logger';
+import { REASONING_ECHO_FIELD } from '../reasoning';
 import type {
 	ChatContentPart,
 	ChatRequestMessage,
@@ -41,14 +42,7 @@ export interface ConvertedMessages {
 /** 转换选项。 */
 export interface ConvertMessagesOptions {
 	/**
-	 * 是否把 `name === 'system'` 的用户消息提升为 `system` 角色。
-	 *
-	 * VS Code 的消息模型没有 system 角色，宿主有时会把系统提示按用户消息下发并
-	 * 用 `name` 标记来源。稳妥起见默认开启，并在没有命中时保持原样。
-	 */
-	readonly promoteNamedSystemMessages?: boolean;
-	/**
-	 * 是否把历史里的思考内容回填成 assistant 消息的 `reasoning_content`。
+	 * 是否把历史里的思考内容回填成上一轮的思维链字段（`REASONING_ECHO_FIELD`）。
 	 *
 	 * 只有明确需要它的上游才打开（例如 DeepSeek 在思考态的工具调用历史里要求这个字段，
 	 * 见 `adapter/deepseek`）；对不认这个字段的实现，多送一个字段就是多一个 400 的理由。
@@ -62,7 +56,8 @@ export function convertMessages(
 	logger: Logger,
 	options: ConvertMessagesOptions = {},
 ): ConvertedMessages {
-	const promoteSystem = options.promoteNamedSystemMessages ?? true;
+	// `name === 'system'` 的用户消息会被提升为 `system` 角色：VS Code 的消息模型没有 system
+	// 角色，宿主有时会把系统提示按用户消息下发并用 `name` 标记来源；没命中时保持原样。
 	const echoReasoning = options.echoReasoningContent ?? false;
 	const result: ChatRequestMessage[] = [];
 	const warnings: string[] = [];
@@ -132,7 +127,7 @@ export function convertMessages(
 		}
 
 		const name = normalizeName(message.name);
-		const role = promoteSystem && name === 'system' ? 'system' : 'user';
+		const role = name === 'system' ? 'system' : 'user';
 		const content: ChatRequestMessage['content'] = hasImages
 			? buildMultimodalContent(textBuffer, contentParts)
 			: textBuffer;
@@ -225,7 +220,7 @@ function convertAssistantMessage(
 		content,
 		...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 		...(name !== undefined && name !== 'system' ? { name } : {}),
-		...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+		...(reasoning.length > 0 ? { [REASONING_ECHO_FIELD]: reasoning } : {}),
 	};
 }
 

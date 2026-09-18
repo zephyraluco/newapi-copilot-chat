@@ -10,7 +10,6 @@
  */
 
 import * as vscode from 'vscode';
-import { createRequestState } from '../adapter/adapter';
 import type { AdapterContext, ModelAdapter } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
@@ -258,9 +257,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		}
 		const adapterContext: AdapterContext = {
 			model: config,
-			settings: settings.request,
 			logger,
-			reasoningEffort: effort.effort,
 		};
 
 		try {
@@ -299,8 +296,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			const client = this.resolveSession(model).client;
 			const summary = await this.streamResponse({
 				client,
-				adapter,
-				adapterContext,
 				request: transformed,
 				modelId: config.id,
 				includeReasoning: settings.request.includeReasoning,
@@ -340,13 +335,11 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 	 * 就重发整次请求。这个门很关键：provider 抛错时 VS Code 会先冲刷已经流出的部件再显示错误，
 	 * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
 	 *
-	 * 每次尝试都重建 `StreamTranslator` 与适配器状态——重发只发生在「什么都没上报」时，
+	 * 每次尝试都重建 `StreamTranslator`——重发只发生在「什么都没上报」时，
 	 * 因此丢弃上一次的累积不会丢内容。
 	 */
 	private async streamResponse(input: {
 		client: NewApiClient;
-		adapter: ModelAdapter;
-		adapterContext: AdapterContext;
 		request: ChatCompletionRequest;
 		modelId: string;
 		includeReasoning: boolean;
@@ -355,7 +348,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		cancelled: () => boolean;
 		logger: Logger;
 	}): Promise<StreamSummary> {
-		const { client, adapter, adapterContext, request, modelId, logger, progress } = input;
+		const { client, request, modelId, logger, progress } = input;
 
 		for (let attempt = 0; ; attempt++) {
 			const translator = new StreamTranslator(progress, {
@@ -363,31 +356,16 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				logger,
 				modelId,
 			});
-			const adapterState = createRequestState();
 			let chunkCount = 0;
 
 			try {
-				for await (const rawChunk of client.streamChatCompletion(request, input.signal)) {
-					const streamError = extractStreamError(rawChunk);
+				for await (const chunk of client.streamChatCompletion(request, input.signal)) {
+					const streamError = extractStreamError(chunk);
 					if (streamError !== undefined) {
 						throw new Error(`上游返回错误：${streamError}`);
 					}
-					// 适配器可选地改写或丢弃 chunk
-					const chunk = adapter.transformChunk
-						? await adapter.transformChunk(rawChunk, adapterContext, adapterState)
-						: rawChunk;
-					if (chunk === undefined) {
-						continue;
-					}
 					chunkCount++;
 					translator.handle(chunk);
-				}
-
-				// 冲刷适配器缓冲
-				if (adapter.finalize) {
-					for (const chunk of await adapter.finalize(adapterContext, adapterState)) {
-						translator.handle(chunk);
-					}
 				}
 
 				const summary = translator.flush();

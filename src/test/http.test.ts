@@ -232,13 +232,6 @@ suite('client / HTTP 传输层', () => {
 		assert.strictEqual(fake.calls.length, 1);
 	});
 
-	test('调用方可以显式禁止重试', async () => {
-		const fake = fakeFetch(() => jsonResponse({}, { status: 500 }));
-		await expectHttpError(() => createClient(fake.impl).requestText({ url: 'u', retryable: false }));
-
-		assert.strictEqual(fake.calls.length, 1);
-	});
-
 	test('超过重试次数后把最后一次的错误抛出去', async () => {
 		const fake = fakeFetch(() => jsonResponse({}, { status: 500, headers: { 'retry-after': '0' } }));
 		const error = await expectHttpError(() => createClient(fake.impl, { maxRetries: 2 })

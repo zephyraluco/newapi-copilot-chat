@@ -197,6 +197,27 @@ suite('client / New API 端点', () => {
 		assert.ok(logs.messages('warn').some(line => line.includes('不是 SSE')));
 	});
 
+	test('降级路径也认各家不同的思维链字段名（与流式路径一致）', async () => {
+		const fake = fakeFetch(() => streamResponse([JSON.stringify({
+			choices: [{
+				index: 0,
+				finish_reason: 'stop',
+				message: { role: 'assistant', content: '答案', reasoning: '想一想' },
+			}],
+		})], { headers: { 'content-type': 'application/json' } }));
+
+		const chunks: ChatCompletionChunk[] = [];
+		for await (const chunk of createClient(fake.impl).streamChatCompletion(chatRequest())) {
+			chunks.push(chunk);
+		}
+
+		assert.strictEqual(
+			chunks[0].choices?.[0]?.delta?.reasoning_content,
+			'想一想',
+			'只认 reasoning_content 会让降级路径丢掉思维链',
+		);
+	});
+
 	test('降级路径下响应不是合法 JSON 时报传输错误', async () => {
 		const fake = fakeFetch(() => streamResponse(['<html>502</html>'], {
 			headers: { 'content-type': 'text/html' },

@@ -183,10 +183,6 @@ export interface RequestOptions {
 	body?: string;
 	/** 调用方信号（通常来自 CancellationToken） */
 	signal?: AbortSignal;
-	/** 覆盖该次请求的超时 */
-	timeoutMs?: number;
-	/** 是否允许重试，默认允许 */
-	retryable?: boolean;
 }
 
 /** 非流式响应：响应体已经读完。 */
@@ -292,8 +288,9 @@ export class HttpClient {
 			throw new TransportError('aborted', '客户端已释放');
 		}
 
-		const maxRetries = options.retryable === false ? 0 : Math.max(0, this.options.maxRetries);
-		const timeoutMs = options.timeoutMs ?? this.options.timeoutMs;
+		// 超时与重试都来自客户端级配置：调用方逐个请求地调它们只会让行为变得难以推理
+		const maxRetries = Math.max(0, this.options.maxRetries);
+		const timeoutMs = this.options.timeoutMs;
 		let lastError: unknown;
 
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {

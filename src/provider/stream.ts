@@ -2,14 +2,15 @@
  * 流式响应翻译：上游 chunk → VS Code 响应部件。
  *
  * 几件琐事：工具调用参数分片到达（按 `index` 归并、按到达顺序拼接，最后才能 parse）；
- * 思维链字段有两种命名（DeepSeek 的 `reasoning_content` 与 OpenRouter 等的 `reasoning`）；
- * usage 只在最后一个 chunk 出现，单独记下用于统计；多 choice 时只取 `index === 0`。
+ * 思维链字段名各家不同（统一由 `reasoning.ts` 认）；usage 只在最后一个 chunk 出现，
+ * 单独记下用于统计；多 choice 时只取 `index === 0`。
  */
 
 import * as vscode from 'vscode';
 import { SseTruncatedError } from '../client/sse';
 import { safeJsonParse } from '../json';
 import type { Logger } from '../logger';
+import { readReasoningText } from '../reasoning';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
 import { createThinkingPart, supportsThinkingPart } from './thinking';
 
@@ -147,9 +148,9 @@ export class StreamTranslator {
 			return;
 		}
 
-		// 思维链：两种字段名都认
-		const reasoning = delta.reasoning_content ?? delta.reasoning;
-		if (typeof reasoning === 'string' && reasoning.length > 0) {
+		// 思维链：字段名由通用层统一认
+		const reasoning = readReasoningText(delta);
+		if (reasoning !== undefined) {
 			this.emitReasoning(reasoning);
 		}
 
