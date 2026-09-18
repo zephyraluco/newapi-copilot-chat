@@ -1,7 +1,7 @@
 /**
  * VS Code 配置读取：把 `contributes.configuration` 的原始值校验成强类型，并广播变化。
  *
- * **站点地址与 API Key 不在这里**（由 provider 配置组提供，见 `provider/target.ts`），
+ * **站点地址与 API Key 不在这里**（由 provider 配置组提供，见 `runtime/target.ts`），
  * **模型元数据也不在这里**（由只读的模型数据表提供，见 `models/dataset.ts`）。
  * 这里只有与连接无关的共享调整项：模型过滤、请求参数、状态栏、日志级别。
  */
@@ -57,7 +57,7 @@ export interface RequestSettings {
 	readonly extraBody: Readonly<Record<string, unknown>>;
 }
 
-/** 状态栏与面板设置。 */
+/** 状态栏设置。 */
 export interface StatusSettings {
 	/** 是否显示状态栏项 */
 	readonly showStatusBar: boolean;
@@ -223,7 +223,7 @@ export class ConfigService implements vscode.Disposable {
 		return this.current;
 	}
 
-	/** 摘要，用于日志与面板展示。 */
+	/** 摘要，用于日志与状态展示。 */
 	summary(): Record<string, unknown> {
 		const { logLevel, models, request, status } = this.current;
 		return {

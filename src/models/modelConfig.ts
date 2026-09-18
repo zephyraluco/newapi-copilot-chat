@@ -10,9 +10,9 @@
  * ```
  *
  * 优先级：**网关返回值 > 数据表 > 默认值**——网关最清楚自己那条链路，数据表只是生成时的
- * 快照。两者显著不一致时以网关为准（`meta.provenance` 记下来源），差异本身写进日志。
+ * 快照。两者显著不一致时以网关为准（`meta.provenance` 把每个字段的来源记下来），差异本身写进日志。
  *
- * 「数值被谁覆盖、被怎么校正」只有两个出口：**状态面板**（来源列）与**日志**（debug 级）。
+ * 「数值被谁覆盖、被怎么校正」的出口是**日志**（debug 级）与 `meta.provenance`。
  * 模型信息里刻意不带这类说明：tooltip 是「悬停一瞥」，塞满解释就没人看了。
  */
 
@@ -69,7 +69,7 @@ export interface RemoteModelHints {
 	version?: string;
 }
 
-/** 整合后的模型元数据（供状态面板展示，不参与 VS Code 协议）。 */
+/** 整合后的模型元数据（不参与 VS Code 协议，供日志与溯源查看）。 */
 export interface ModelConfigMeta {
 	/** `/v1/models` 中的 `owned_by` */
 	readonly ownedBy?: string;
@@ -86,15 +86,14 @@ export interface ModelConfigMeta {
  *
  * 刻意不依赖 `vscode` 类型：本模块是纯数据转换，方便单测；
  * 到 `LanguageModelChatInformation` 的映射放在 provider 层。
- */
-export interface ModelConfig {
+ */export interface ModelConfig {
 	/** 模型 ID，必须原样回传给 `/v1/chat/completions` */
 	readonly id: string;
 	/**
 	 * 模型选择器里显示的名字：优先展示名，没有则用 ID。
 	 *
 	 * ID（`anthropic/claude-sonnet-4.5` 这种）是给程序看的，拿它当列表项没人愿意读；
-	 * 但 ID 也不会丢——悬浮提示的第一行、状态面板的副标题都带着它。
+	 * 但 ID 也不会丢——悬浮提示的第一行就带着它。
 	 */
 	readonly name: string;
 	/** 模型选择器里的副标题 */
@@ -138,7 +137,7 @@ export interface BuildModelConfigsOptions {
 	readonly logger: Logger;
 }
 
-/** 构建结果。除了可用的配置，还带上被过滤/被判定为非法的模型，便于在面板里解释。 */
+/** 构建结果。除了可用的配置，还带上被过滤/被判定为非法的模型，便于解释「为何少了某些模型」。 */
 export interface BuildModelConfigsResult {
 	readonly configs: readonly ModelConfig[];
 	/** 被 include/exclude 规则挡掉的模型 */

@@ -7,7 +7,7 @@
  *
  * 注意：站点地址与 API Key 由 VS Code 的 provider 配置组提供
  * （见 `package.json` 的 `contributes.languageModelChatProviders[].configuration`
- * 与 `provider/target.ts`），因此它们**不在** `contributes.configuration` 里。
+ * 与 `runtime/target.ts`），因此它们**不在** `contributes.configuration` 里。
  */
 
 /** 扩展标识，与 package.json 的 `name` 保持一致。 */
@@ -32,10 +32,10 @@ export const COMMANDS = {
 	testConnection: `${EXTENSION_ID}.testConnection`,
 	/** 忽略缓存，重新拉取所有配置组的模型列表 */
 	refreshModels: `${EXTENSION_ID}.refreshModels`,
-	/** 打开状态面板 */
-	showPanel: `${EXTENSION_ID}.showPanel`,
 	/** 打开本扩展的设置页（模型过滤、请求参数等） */
 	openSettings: `${EXTENSION_ID}.openSettings`,
+	/** 清空本次会话的用量统计 */
+	resetUsage: `${EXTENSION_ID}.resetUsage`,
 } as const;
 
 /** VS Code 内置的「管理语言模型」界面：用户在这里配置站点与密钥（本扩展的 `configuration` 贡献点会被渲染成表单），配置不完整时的引导都指向它。 */
@@ -68,9 +68,6 @@ export const SSE_CONTENT_TYPE = 'text/event-stream';
 
 /** 状态栏优先级（数值越大越靠左）。 */
 export const STATUS_BAR_PRIORITY = 100;
-
-/** Webview 面板 viewType。 */
-export const PANEL_VIEW_TYPE = `${EXTENSION_ID}.panel`;
 
 /**
  * 运行时信息。版本号在 `activate()` 时由 extension.ts 从 `package.json` 写入，

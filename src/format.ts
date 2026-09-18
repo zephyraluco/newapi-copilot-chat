@@ -2,7 +2,7 @@
  * 展示层格式化工具。
  *
  * 只做「值 → 人类可读字符串」的转换，不含任何 VS Code 依赖，
- * 因此 logger、状态栏、面板、tooltip 可以共用同一套口径。
+ * 因此 logger、状态栏、tooltip 可以共用同一套口径。
  */
 
 /**
@@ -33,6 +33,7 @@ function trimTrailingZero(value: number): string {
  * 把时间戳格式化成相对时间：`刚刚` / `3 分钟前` / `2 小时前` / `昨天`。
  *
  * @param timestamp 毫秒时间戳；`undefined` 表示从未发生。
+ * @param now 当前时间，便于测试固定。
  */
 export function formatRelativeTime(timestamp: number | undefined, now = Date.now()): string {
 	if (timestamp === undefined || !Number.isFinite(timestamp)) {

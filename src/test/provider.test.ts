@@ -9,7 +9,7 @@ import { NewApiChatProvider } from '../provider/chatProvider';
 import type { ChatProviderDeps } from '../provider/chatProvider';
 import { convertMessages, convertToolChoice, convertTools } from '../provider/messages';
 import { REPLAY_MARKER_MIME, createReplayMarkerPart, parseReplayMarker } from '../provider/replay';
-import type { SessionRegistry } from '../provider/session';
+import type { SessionRegistry } from '../runtime/session';
 import { parseToolArguments, tryParseToolArguments } from '../provider/stream';
 import { supportsThinkingPart } from '../provider/thinking';
 import { calibrateCharsPerToken, estimateTextTokens } from '../provider/tokenizer';

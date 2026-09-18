@@ -46,7 +46,7 @@ export function parseLogLevelName(value: unknown): LogLevelName {
 /**
  * 脱敏密钥：只保留头尾少量字符，便于确认「是不是同一把 key」，但无法还原。
  *
- * 任何把 key 输出到日志、状态、面板的路径都必须先经过它。
+ * 任何把 key 输出到日志、状态的路径都必须先经过它。
  */
 export function redactSecret(value: string | undefined): string {
 	if (!value) {
@@ -102,7 +102,7 @@ export class LoggerService implements vscode.Disposable {
 		});
 	}
 
-	/** 输出通道本体。状态模块会把它暴露给用户，方便从面板直接跳转到日志。 */
+	/** 输出通道本体。状态模块会把它暴露给用户，方便直接跳转到日志。 */
 	get outputChannel(): vscode.LogOutputChannel {
 		return this.channel;
 	}

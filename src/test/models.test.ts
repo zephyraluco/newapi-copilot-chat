@@ -24,7 +24,7 @@ import {
 
 /**
  * 这些测试只覆盖**纯函数**：模型信息整合、glob 匹配与字段提取。
- * 网络交互、Webview 渲染等需要真实环境的逻辑不在这里测（属于手工验收范围）。
+ * 网络交互、状态栏渲染等需要真实环境的逻辑不在这里测（属于手工验收范围）。
  */
 
 suite('models / matcher', () => {
@@ -331,7 +331,7 @@ suite('models / 配置整合', () => {
 	});
 
 	test('tooltip 逐项一行，来源与校正提醒不在里面', () => {
-		// 「数值可不可信、冲突时采用了谁」在状态面板里看，细节写进日志；tooltip 只回答
+		// 「数值可不可信、冲突时采用了谁」看日志；tooltip 只回答
 		// 「这是什么模型、能干什么」——把提醒塞进来会让每次悬停都变成读一张表。
 		const captured = capturingLogger();
 		const config = resolveModelConfig(createModel('gpt-4o', { context_length: 64_000 }), {

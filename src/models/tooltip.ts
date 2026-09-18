@@ -3,8 +3,8 @@
  *
  * VS Code 会把 `LanguageModelChatInformation.tooltip` 当作 **Markdown** 渲染，因此这里输出 Markdown。
  * tooltip 是「鼠标悬停一瞥」的场景，因此只回答两件事：**这是哪个模型**、**它有多大、能干什么**。
- * 数值从哪来、与数据表冲突时已采用谁、有哪些思考强度可选——这些各有归属（状态面板里能看到来源，
- * 档位在模型选择器里就能选），在这里复述只会把每次悬停都变成读一张表。
+ * 数值从哪来、与数据表冲突时已采用谁、有哪些思考强度可选——这些各有归属（日志里能看到取值与校正，
+ * 模型选择器里能选档位），在这里复述只会把每次悬停都变成读一张表。
  *
  * 刻意**不写标题**：悬浮卡片自己会渲染模型名，再写一遍就是两行同一个东西；第一行直接是身份。
  *
@@ -13,7 +13,6 @@
  */
 
 import { escapeMarkdown, formatTokens } from '../format';
-import type { ModelConfigSource } from './modelConfig';
 
 /** 构建 tooltip 所需的全部事实。由 `modelConfig.ts` 汇总后传入。 */
 export interface ModelTooltipFacts {
@@ -32,13 +31,6 @@ export interface ModelTooltipFacts {
 	/** 模型是否具备思考（思维链）能力 */
 	readonly reasoning: boolean;
 }
-
-/** 来源的中文说明。导出给状态面板复用，保证两处口径一致。 */
-export const MODEL_SOURCE_LABEL: Record<ModelConfigSource, string> = {
-	remote: '网关返回值',
-	dataset: '模型数据表',
-	default: '默认值',
-};
 
 /** 生成 tooltip Markdown。 */
 export function buildModelTooltip(facts: ModelTooltipFacts): string {

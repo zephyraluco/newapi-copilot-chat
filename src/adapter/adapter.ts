@@ -31,7 +31,7 @@ export interface AdapterContext {
 export interface ModelAdapter {
 	/** 唯一标识，用于日志与调试 */
 	readonly id: string;
-	/** 人类可读说明，展示在状态面板里 */
+	/** 人类可读说明（未直接展示，供日志与调试使用） */
 	readonly description: string;
 	/** 优先级，数值大的先被选中；缺省为 0 */
 	readonly priority?: number;

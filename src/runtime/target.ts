@@ -26,7 +26,7 @@ export interface ProviderTarget {
 	readonly baseUrl: string;
 	/** 明文 API Key；未配置时为 `undefined` */
 	readonly apiKey: string | undefined;
-	/** 人类可读的标签，用于日志与面板（不含敏感信息） */
+	/** 人类可读的标签，用于日志与状态栏（不含敏感信息） */
 	readonly label: string;
 	/** 配置指纹（不含明文），用于判断「同一目标的配置是否变化」 */
 	readonly key: string;
@@ -39,7 +39,7 @@ export function isTargetUsable(target: ProviderTarget): boolean {
 	return target.issues.length === 0;
 }
 
-/** 日志/面板里用的可读描述。 */
+/** 日志与状态栏里用的可读描述。 */
 export function describeTarget(target: ProviderTarget): string {
 	return `${target.label} ${target.baseUrl || '(未配置地址)'}`;
 }

@@ -27,14 +27,13 @@ flowchart TD
         chat["Copilot Chat"]
         manage["管理模型<br/>（配置组表单）"]
         bar["状态栏"]
-        panel["状态面板（Webview）"]
     end
 
     subgraph host["扩展宿主进程"]
         cfg["config.ts<br/>共享调整项"]
-        target["provider/target.ts<br/>配置组解析"]
+        target["runtime/target.ts<br/>配置组解析"]
         provider["provider/chatProvider.ts<br/>LanguageModelChatProvider"]
-        sessions["provider/session.ts<br/>按配置组分配会话"]
+        sessions["runtime/session.ts<br/>按配置组分配会话"]
         catalog["models/catalog.ts<br/>模型目录与缓存"]
         client["client/newApiClient.ts<br/>HTTP + SSE"]
         adapter["adapter/<br/>协议差异钩子"]
@@ -56,7 +55,6 @@ flowchart TD
     client -->|"HTTP / SSE"| gateway
     status --> sessions
     status --> bar
-    status --> panel
     cfg -.->|"模型过滤 / 请求参数"| sessions
     cfg -.->|"模型过滤"| catalog
 ```
@@ -212,7 +210,8 @@ flowchart TD
 
 | 文件 | 行数 | 职责 |
 | --- | ---: | --- |
-| `extension.ts` | 324 | 激活与装配。**只做接线**，读它能看清整体数据流 |
+| `extension.ts` | 162 | 激活与装配。**只做接线**，读它能看清整体数据流 |
+| `commands.ts` | 132 | 命令实现（测试连接 / 刷新模型 / 打开设置 / 重置用量）与「刷新后通知宿主」 |
 | **基础层** | | |
 | `consts.ts` | 160 | 命令 ID、端点、默认值、思考强度键名、用量部件 MIME、运行时版本 |
 | `config.ts` | 254 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
@@ -221,7 +220,7 @@ flowchart TD
 | `reasoning.ts` | 48 | 思维链字段的读取与回填键名：**通用层唯一**知道各家字段名的地方 |
 | `errors.ts` | 340 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
 | `usage.ts` | 140 | 用量的读出：缓存命中与思维链 token、各网关字段名兼容，以及回传 Copilot 的载荷 |
-| `format.ts` | 66 | token / 相对时间格式化、Markdown 转义 |
+| `format.ts` | 67 | token / 相对时间格式化、Markdown 转义：**展示文案的唯一出口** |
 | `logger.ts` | 287 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
@@ -234,9 +233,10 @@ flowchart TD
 | `modelConfig.ts` | 576 | 多来源合并、一致性校正、远端字段提取 |
 | `tooltip.ts` | 119 | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
 | `catalog.ts` | 218 | 拉取编排、缓存、并发合并、失败降级 |
-| **`provider/`** 与 Copilot 交互 | | |
+| **`runtime/`** 连接目标与会话 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
+| **`provider/`** 与 Copilot 交互 | | |
 | `chatProvider.ts` | 599 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 412 | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
@@ -249,11 +249,10 @@ flowchart TD
 | `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 142 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
 | `deepseek/`（2 个文件） | 257 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
-| `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
-| `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
-| `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
+| `statusService.ts` | 356 | 状态的唯一真相来源，按配置组聚合 |
+| `statusBar.ts` | 222 | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
 | **测试** | | |
-| `test/*.ts`（18 个文件） | 4,784 | 315 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
+| `test/*.ts`（19 个文件） | 5,178 | 330 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -261,6 +260,7 @@ flowchart TD
 flowchart LR
     ext["extension.ts"]
     provider["provider/"]
+    runtime["runtime/"]
     models["models/"]
     client["client/"]
     adapter["adapter/"]
@@ -273,15 +273,22 @@ flowchart LR
     ext --> adapter
     ext --> config
     ext --> models
+    ext --> runtime
+    provider --> runtime
     provider --> models
     provider --> client
     provider --> adapter
     provider --> config
+    runtime --> models
+    runtime --> client
+    runtime --> config
     models --> client
+    status --> runtime
+    status --> models
     status --> client
-    status --> provider
     status --> config
     provider --> base
+    runtime --> base
     models --> base
     client --> base
     status --> base
@@ -296,8 +303,16 @@ flowchart LR
   `catalog` 是薄薄的拉取编排（只调用注入的 client），因此都能被单测直接覆盖。
 - **`adapter` 不依赖 `config`**：适配器只需要模型配置与日志，拿不到用户设置，也就不会因设置值不同而产生
   难以复现的分支；它在 `transformRequest` 里看到的是**已经组装好的请求体**，要什么直接从那里读。
+- **`runtime` 只管「目标是谁、它有哪些运行时对象」**：`target.ts` 把 VS Code 下发的配置组归一成
+  `ProviderTarget`，`session.ts` 按组缓存 `client + catalog`。它既不知道 Copilot 的协议，也不渲染任何界面
+  ——因此 `provider` 与 `status` 可以同时依赖它，而它不依赖两者。
 - **`provider` 不直接构造 client**：一律通过 `SessionRegistry` 拿会话，多站点隔离与配置变更时的重建只有一处实现。
-- **`status` 只做聚合与渲染**，从不自己发请求。
+- **`status` 不自己构造请求**，只调用会话上已有的能力（`catalog.getModels` 与 `client.getStatus`），
+  因此状态栏与「测试连接」命令看到的数据与 provider 出自同一份缓存。它对 `provider` **没有依赖**：
+  需要的那点会话信息写成了结构接口（`StatusSessionSource` / `StatusSessionView`），会话注册表天然满足；
+  这样状态层不必知道 Copilot 的请求流程，测试也不用拼出真实客户端与目录。
+- **`status` 对 `models` 只有类型级的依赖**（读的是 `ModelCatalogSnapshot` 的形状），
+  拉取与整合仍然归 `models`。
 - **`usage.ts` / `reasoning.ts` 在基础层**：它们分别被 `status/` 与 `provider/`、`client/` 与 `provider/` 共用，
   放在任一侧都会让另一侧反向依赖（provider ← status 是本项目的方向）。
 - **`extension.ts` 不含业务逻辑**，是唯一知道「怎么把模块拼起来」的地方。
@@ -306,7 +321,7 @@ flowchart LR
 
 - **`consts.ts`**：只放**不随用户配置变化**的字面量。用户可改的值必须先在 `package.json` 的
   `contributes.configuration` 声明、再由 `config.ts` 读取；站点与密钥是另一类，声明在
-  `contributes.languageModelChatProviders[].configuration` 里，只在 `provider/target.ts` 读取。
+  `contributes.languageModelChatProviders[].configuration` 里，只在 `runtime/target.ts` 读取。
   `VENDOR_ID` 要与三处保持一致（贡献点、激活事件 `onLanguageModelChatProvider:<vendor>`、注册调用）；
   `runtimeInfo` 在 `activate()` 时由 `package.json` 的版本填充，避免版本漂移；
   `MANAGE_MODELS_COMMAND` 是 VS Code 内置的「管理语言模型」界面，配置引导都指向它。
@@ -394,19 +409,18 @@ flowchart LR
 站点信息走 `getStatus` 并用时耗作为延迟，失败时由 `describeFailureHint()` 给出**可操作建议**
 （地址写错 / 密钥被拒 / 被限流 / 上游中断）而不是只丢一个错误字符串；连接失败那一类不给建议，
 因为错误消息里已经带了分类与处置（见上文）。只有一处发起探测，
-因此状态栏、面板与「测试连接」命令的口径天然一致。
+因此状态栏与「测试连接」命令的口径天然一致。
 
 ## 7. `models/` —— 模型信息整合
 
 优先级：**① 网关返回的扩展字段（remote）> ② 随包数据表按 ID 查表（dataset）> ③ 兜底默认值（default）**。
 越靠前的越可信：网关最清楚自己那条链路，数据表只是生成时的快照（同一模型在不同中转上的窗口确实可能不同）。
 两者显著不一致时以网关为准，并把这个事实写进**日志**（debug 级）；`resolveModelConfig` 把每个字段的
-来源记进 `meta.provenance`，由**状态面板**的「窗口来源」列展示——用户看到数值不符时能知道该不该相信它。
+来源记进 `meta.provenance`。
 
-**模型信息有三个出口，各管一段**：tooltip 回答「这是什么模型、能干什么」（一行身份 `id · vendor`，
-再逐项列出规模与能力）；面板回答「这个数值从哪来」（来源列）；日志回答「为什么是这个值」
-（网关覆盖了数据表、数值被校正）。tooltip 里刻意不堆解释：来源、档位、校正提醒各有归属，
-塞进来只会把「鼠标一掠」变成读一张表。
+**模型信息有一个出口**：tooltip 回答「这是什么模型、能干什么」（一行身份 `id · vendor`，
+再逐项列出规模与能力）。来源、档位、校正提醒各有归属（日志里能看到取值与校正，
+模型选择器里能选档位），塞进 tooltip 只会把「鼠标一掠」变成读一张表。
 
 **选择器里的主名是展示名**：`ModelConfig.name` 取 `displayName ?? id`，`id` 单独留在 `id` 字段里
 回传请求。VS Code 的列表行把 `name` 当主文字、`detail`（`vendor · 窗口 · 工具`）当副标题，
@@ -495,7 +509,10 @@ vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
 
 ## 8. `provider/` —— 与 Copilot 交互
 
-### 配置组解析（`target.ts`）
+### 配置组解析（`runtime/target.ts`）
+
+> 本节与下一节的代码在 `runtime/` 而不是 `provider/`：它们是「目标是谁、它有哪些运行时对象」，
+> 与 Copilot 的协议无关。provider 用它发请求，状态层用它描述站点（见 §4）。
 
 配置完全由 VS Code 提供：`package.json` 的 `configuration` 贡献点是一份 JSON Schema，
 VS Code 据此在「管理模型」界面生成表单，并把解析好的值随调用传进来：
@@ -514,7 +531,7 @@ stable 的 `PrepareLanguageModelChatModelOptions` 只声明了 `silent`，因此
 `readOptionsGroup` / `readOptionsConfiguration` 做运行时探测；拿不到就返回「本次调用未携带配置」，
 provider 相应地不提供模型。
 
-### 会话隔离（`session.ts`）
+### 会话隔离（`runtime/session.ts`）
 
 按目标维护一份 `{ client, catalog }`：**不能全局共用**（否则 A 站的模型列表会串到 B 站），
 也**不该每次新建**（VS Code 会反复轮询，每次新建 client 会不断建立新连接）。**槽位是组名**，
@@ -529,7 +546,7 @@ provider 相应地不提供模型。
 
 `options.silent === true` 时**绝不弹任何 UI**——那是 VS Code 在问「现在有没有可用模型」，
 每次打开模型选择器都会调用一次，弹窗会变成骚扰。模型列表加载失败时**不向外抛异常**，
-而是返回空数组（表现为「没有模型」），由状态栏与面板负责告诉用户原因。
+而是返回空数组（表现为「没有模型」），由状态栏负责告诉用户原因。
 
 `toModelInformation` 通过泛型 `LanguageModelChatProvider<T>` 把内部 `ModelConfig` 一并交给 VS Code
 ——它会把这个对象原样传回响应方法，因此响应阶段能拿到已解析的能力与窗口。
@@ -630,7 +647,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`。**这个值不会自己出现**：扩展提供的模型
 对 Copilot 而言是一个 `ExtensionContributedChatEndpoint`，它在消费我们的响应流时只认一个
 `LanguageModelDataPart`——`mimeType` 为 `'usage'`（Copilot 内部常量 `CustomDataPartMimeTypes.Usage`）、
-`data` 是 JSON 文本。不发它，Copilot 就用自带的兜底值 `prompt_tokens: 0`，面板永远显示 `0/上限`。
+`data` 是 JSON 文本。不发它，Copilot 就用自带的兑底值 `prompt_tokens: 0`，上下文窗口永远显示 `0/上限`。
 
 三条硬性约定：
 
@@ -645,8 +662,8 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 同一次响应里 Copilot 还会调用 `provideTokenCount` 去算明细（`System Instructions` /
 `Tool Definitions` / `Messages` 等分类的占比）：它拿 `ExtensionContributedChatTokenizer` 调
 `vscode.lm` 的 `countTokens`，也就是我们的 `provideTokenCount`；各项百分比的分母则是我们上报的
-`prompt_tokens`。因此这两件事要一起做对，面板里才会有数——**只有用量、tokenizer 报不了数**（或反过来）
-都会得到残缺的显示。
+`prompt_tokens`。因此这两件事要一起做对——**只有用量、tokenizer 报不了数**（或反过来）
+都会得到一个残缺的显示。
 
 ### 思考内容：渲染与回填（`thinking.ts` / `replay.ts`）
 
@@ -745,12 +762,11 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 由 provider 用回放标记完成（机制见 §8「思考内容：渲染与回填」）。这是**上游的协议要求**，
 与「思维链要不要显示给用户」（`request.includeReasoning`）是两件事。
 
-## 10. `status/` —— 状态栏与面板
+## 10. `status/` —— 状态栏
 
-**分工：状态栏讲「这一次花了多少」，面板讲「站点与模型是什么样」。** 状态栏只有一格、鼠标一停就要
-给出答案，因此悬浮提示只放本次会话的用量：请求次数、工具调用、输入/输出 token、缓存命中、
-最近一次请求的模型；站点地址、网关版本、延迟、模型数量、列表来源这些**站点细节全在面板**里
-（那里铺得开，还能手动刷新）。
+状态栏只有一格、鼠标一停就要给出答案，因此它只讲两件事：**当前能不能用**（图标与文本），
+以及**本次会话花了多少**（悬浮提示：请求次数、工具调用、输入/输出 token、缓存命中、
+最近一次请求的模型）。
 
 提示只在**有话可说**时出现（`buildTooltip` 返回 `undefined` 就不设 `tooltip`，VS Code 连悬浮框一起省掉）：
 有会话用量、或有问题需要处理、或站点都没配置。空闲时悬停给一句「还没有请求」是纯噪声，
@@ -758,10 +774,12 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 **「哪里出了问题」**——状态栏此时已被着色，用户需要一个理由，所以配置不完整与连不上的站点
 会各占一行（带可操作建议）。
 
-- **状态栏**文本极短（`$(cloud) 12 模型`），只在需要用户行动时着色（尚未配置、或已配置的站点连不上），
+- 文本极短（`$(cloud) 12 模型`），只在需要用户行动时着色（尚未配置、或已配置的站点连不上），
   避免变成常亮的警告灯。
-- **面板**回答「为什么」：各配置组的状态与细节、模型清单（含每个数值的来源）、被过滤的模型、
-  会话用量、适配器链、日志入口。
+- **图标不带点击命令**：它只陈述状态（文本 + 悬浮提示），不去猜用户点它是想看什么；
+  提示里的文案也因此不提「点击」。需要操作时走命令面板（见 §11）。
+- **站点细节不在界面上展示**：地址、延迟、模型数、被过滤的模型这些信息只在日志与
+  「测试连接」「刷新模型列表」两个命令的消息里出现（见 §6 与 §11）。
 
 ### 会话用量（`usage.ts`）
 
@@ -776,17 +794,11 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
   同理，总 token 为 0 时不显示一行 0，而是说明上游未返回。
 
 命中率的分母是**输入**（缓存只作用于 prompt，拿总量当分母会得到偏低的假数字），
-文案由 `describeCacheHit` 统一产出，状态栏与面板口径因此一致。
+文案由 `describeCacheHit` 统一产出。
 
 配置组可以有多个，因此状态是**按目标聚合**的：`targets` 每个元素对应一个组，整体可用性取
 「是否存在任一可用目标」（`anyUsable`），状态栏的模型数是各组之和。这样某个组临时挂掉只会让那一行
 标为不可用，而不是整块状态栏变红；配置不完整（缺地址/缺密钥）时也能精确定位到是哪个组。
-
-面板只在打开时存在，但状态变化可能频繁，因此 HTML 骨架只生成一次、状态通过 `postMessage` 增量下发
-（避免重建 DOM 导致滚动位置丢失），上百条的模型清单不放进每次下发的 state 而是随状态按需下发。
-**Webview 脚本全部用 DOM API 构造节点**（`textContent` + `h()` 辅助函数），不拼 innerHTML——
-模型 ID、站点名都来自外部，拼字符串必然要处理转义，而转义写错就是注入漏洞。CSP 为
-`default-src 'none'`，样式与脚本用 nonce 放行。
 
 ## 11. 常见改动该动哪里
 
@@ -801,25 +813,26 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
   `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退，不要让整份配置失效）→ 在对应的
   Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `chatProvider.buildRequest`，
-  影响传输行为（超时、重试、`stream_options` 之类）则经 `provider/session.ts` 传给 `NewApiClient`。
+  影响传输行为（超时、重试、`stream_options` 之类）则经 `runtime/session.ts` 传给 `NewApiClient`。
   改完记得同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：它不是设置项，而是随模型信息下发的 schema——
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
   （带 `enum` 才会被渲染）→ `chatProvider` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的
-  `default`（并保证它在 `enum` 里）→ 补测试与面板展示。
+	`default`（并保证它在 `enum` 里）→ 补测试。
   注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema（见 §8 思考强度）。
 - **新增配置组字段（站点 / 密钥类）**：这类字段**不是**设置项，声明在
   `contributes.languageModelChatProviders[].configuration` 里——`package.json` 加字段（密钥类 `secret: true`）
-  → `src/provider/target.ts` 的 `createTarget()` 读取并校验，写入 `ProviderTarget` 与 `issues`
+  → `src/runtime/target.ts` 的 `createTarget()` 读取并校验，写入 `ProviderTarget` 与 `issues`
   → 若影响连接身份还要纳入 `key` 指纹（否则配置改了会复用旧会话）→ 需要的话经 `session.ts` 传给 `NewApiClient`。
 - **新增命令**：`consts.ts` 的 `COMMANDS` 加键 → `package.json` 的 `contributes.commands` 加条目 →
-  `extension.ts` 里 `registerCommand`。
+  `src/commands.ts` 里注册（依赖通过 `CommandDeps` 注入，`extension.ts` 只负责组装）。
+  需要「刷新后让宿主重新发现模型」时用 `refreshAndNotify()`——这两件事总是一起发生，
+  分开写迟早会漏掉通知（表现为「刷新了但选择器里还是旧的」）。
 - **新增一个探测 / 展示字段**：`client/newApiClient.ts` 的 `getStatus` / `ModelCatalogSnapshot` →
-  `status/statusService.ts` 的 `TargetStatus` → `panel.ts` 渲染（站点细节都在面板；
-  只有「需要用户动手的问题」会同时出现在状态栏悬浮提示里）。**会话用量的字段**则走
-  `usage.ts` 的 `UsageDelta` → `UsageStats` → 状态栏与面板两处。
-  注意面板脚本是**字符串里的 JS**，不受 TypeScript 检查。
+  `status/statusService.ts` 的 `TargetStatus` → 状态栏或命令的消息。**只有状态栏真的会渲染的字段
+  才加进 `TargetStatus`**：它没有别的消费者，加进去没人渲染就是死字段。
+  **会话用量的字段**则走 `usage.ts` 的 `UsageDelta` → `UsageStats` → 状态栏文本与悬浮提示两处。
 
 ## 12. 已知取舍
 
@@ -831,9 +844,10 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | 思考强度的字段名固定 `reasoning_effort` | 数据表是生成产物，不适合承载逐模型的请求改写规则；且 VS Code 的模型配置只能从我们声明的枚举里选 |
 | token 用字符数启发式估算 | 拿不到真实分词器 |
 | 随包的数据表会过期 | 厂商会调整窗口与能力，重跑 `npm run models:openrouter` 即可更新；数据表只是优先级中的一环 |
-| 面板脚本是手写 DOM，不用框架 | 状态量小，引入构建步骤不值得 |
-| 会话用量统计是全局累加的 | 单一计数器足够回答「这次会话花了多少」 |
-| 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者提供站点名与延迟；两个请求开销都很小 |
+| 展示只靠状态栏与命令消息，不做详情面板 | 站点与模型的细节需要逐项展示，但多数时候用不上；「测试连接」「刷新模型列表」会把关键信息带在消息里，需要细查时看日志 |
+| 状态栏图标不带点击命令 | 点击得先替用户选定一个去处（设置？管理模型？刷新？），而这个猜测并不总对；图标只陈述状态，要操作就走命令面板 |
+| 会话用量统计是全局累加的 | 单一计数器足够回答「这次会话花了多少」；清零靠命令或重载窗口 |
+| 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者给出这段往返的耗时（「测试连接」要报它），并顺带确认该端点是否可用；两个请求开销都很小 |
 | 适配器对 DeepSeek 思考模型一律写入 `thinking`，辅助请求一律关闭思考 | 不写就等于把行为交给上游的默认值；New API 是网关，无法从地址判断上游是否认这个字段，因此不对站点做区分 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
 | 站点不认 `stream_options` 时用户只能关掉它 | 这是扩展主动加的字段（为了拿到用量），站点兼容性无法逐站探测 |
@@ -853,7 +867,7 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-315 个用例，只覆盖**纯函数与装配**：
+330 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -870,12 +884,13 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
+| `test/statusService.test.ts` | 状态聚合：目标投影与可用性、配置不完整就不探测、探测抛错不拖垮整体、同一组并发刷新不重复探测、用量的累加与 `cacheReported` 只增不减、重置只清计数、配置变化即丢弃会话缓存并重发状态、会话变化重发状态 |
 | `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母；回传载荷的「三个数字必须齐」 |
-| `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、主题图标开关 |
+| `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、不带点击命令时提示里不出现「点击」、主题图标开关 |
 | `test/deepseekAdapter.test.ts` | 请求种类识别（系统提示词前缀、单工具请求、终端转向）、思考开关改写（辅助请求与主对话、不具备思考能力的模型）、模型身份判定、注册表命中 |
 
-刻意不测的部分：真实网络交互（传输层改用 `test/fakes.ts` 注入假 `fetch`，不碰网络）、Webview
-渲染（需人工验收）、VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意
+刻意不测的部分：真实网络交互（传输层改用 `test/fakes.ts` 注入假 `fetch`，不碰网络）、
+VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意
 六点：注入点是 `HttpClientOptions.fetchImpl` / `NewApiClientOptions.fetchImpl`，且假 `fetch`
 必须认 `AbortSignal` 并 reject，否则超时与取消路径永不返回；中断时要 reject **`signal.reason`**
 （真实 `fetch` 就是这么做的，`abort()` 无参时才是一个 `AbortError`），否则取消路径的判断测不到；

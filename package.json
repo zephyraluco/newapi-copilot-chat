@@ -69,13 +69,13 @@
         "category": "New API"
       },
       {
-        "command": "newapi-copilot-chat.showPanel",
-        "title": "打开状态面板",
+        "command": "newapi-copilot-chat.openSettings",
+        "title": "打开设置",
         "category": "New API"
       },
       {
-        "command": "newapi-copilot-chat.openSettings",
-        "title": "打开设置",
+        "command": "newapi-copilot-chat.resetUsage",
+        "title": "重置用量统计",
         "category": "New API"
       }
     ],
@@ -160,7 +160,7 @@
         "newapi-copilot-chat.request.includeUsage": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "是否在流式请求里要求上游返回用量（`stream_options: { include_usage: true }`）。\n\n开启后「会话信息 → 上下文窗口」才能显示本次请求的 token 数，日志与状态面板也能看到用量。少数站点不认识这个字段并直接返回 400，此时关掉它即可；**关掉后上游不再返回用量，上下文窗口就不会显示 token 数**。关掉后 `request.extraBody` 里的同名键才会被保留（开启时以本扩展下发的为准）。",
+          "markdownDescription": "是否在流式请求里要求上游返回用量（`stream_options: { include_usage: true }`）。\n\n开启后「会话信息 → 上下文窗口」才能显示本次请求的 token 数，状态栏悬浮提示也能看到用量。少数站点不认识这个字段并直接返回 400，此时关掉它即可；**关掉后上游不再返回用量，上下文窗口就不会显示 token 数**。关掉后 `request.extraBody` 里的同名键才会被保留（开启时以本扩展下发的为准）。",
           "order": 22
         },
         "newapi-copilot-chat.request.maxRetries": {
@@ -215,7 +215,7 @@
         "newapi-copilot-chat.status.showStatusBar": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "在状态栏显示连接状态与模型数量。点击可打开状态面板。",
+          "markdownDescription": "在状态栏显示连接状态与模型数量。鼠标悬停可看到本次会话的用量，点击打开扩展设置。",
           "order": 30
         },
         "newapi-copilot-chat.status.refreshInterval": {

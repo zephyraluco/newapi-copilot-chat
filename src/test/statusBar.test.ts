@@ -18,7 +18,7 @@ function target(patch: Partial<TargetStatus> = {}): TargetStatus {
 		baseUrl: 'https://api.example.com',
 		usable: true,
 		issues: [],
-		models: { count: 12, rawCount: 20, filteredCount: 8, invalidCount: 0, fetchedAt: 1_700_000_000_000 },
+		models: { count: 12, filteredCount: 8 },
 		refreshing: false,
 		...patch,
 	};
@@ -45,10 +45,8 @@ function state(patch: Partial<StatusState> = {}): StatusState {
 		targets: [target()],
 		anyUsable: true,
 		totalModels: 12,
-		logLevel: 'info',
 		statusBarEnabled: true,
 		usage: usage(),
-		adapters: [],
 		...patch,
 	};
 }
@@ -126,9 +124,7 @@ suite('status / 状态栏悬浮提示', () => {
 			targets: [target({
 				models: {
 					count: 0,
-					rawCount: 0,
 					filteredCount: 0,
-					invalidCount: 0,
 					error: '密钥被拒绝',
 					hint: '检查配置组里的 API Key',
 				},
@@ -159,9 +155,7 @@ suite('status / 状态栏悬浮提示', () => {
 			targets: [target({
 				models: {
 					count: 0,
-					rawCount: 0,
 					filteredCount: 0,
-					invalidCount: 0,
 					error: '连不上',
 				},
 			})],
@@ -174,10 +168,22 @@ suite('status / 状态栏悬浮提示', () => {
 		const text = buildTooltip(state({
 			usage: usage({ requests: 1, promptTokens: 10, completionTokens: 1, totalTokens: 11 }),
 		}))?.value ?? '';
-		// 标题块结束、会话块结束、收尾提示各需要一个空行
+		// 标题块与会话块之间需要一个空行
 		assert.ok(text.includes('Copilot Chat**\n\n'), text);
-		assert.ok(text.includes('\n\n点击打开状态面板'), text);
 		assert.ok(!text.includes('\n\n\n'), `不该出现连续空行，实际：${JSON.stringify(text)}`);
+	});
+
+	test('图标没有点击命令，提示里也就不该出现「点击」', () => {
+		// 状态栏项不挂 command（见 statusBar.ts）：提示里叫人去点是假的，用户点了不会有反应
+		const cases = [
+			state({ targets: [], anyUsable: false, totalModels: 0 }),
+			state({ usage: usage({ requests: 1, promptTokens: 10, completionTokens: 1, totalTokens: 11 }) }),
+			state({ targets: [target({ usable: false, issues: ['缺少站点地址'] })], anyUsable: false }),
+		];
+		for (const item of cases) {
+			const text = buildTooltip(item)?.value ?? '';
+			assert.ok(!text.includes('点击'), `提示里不该让人去点：${text}`);
+		}
 	});
 
 	test('主题图标开关打开：$(warning) 之类的图标才会渲染成图标', () => {

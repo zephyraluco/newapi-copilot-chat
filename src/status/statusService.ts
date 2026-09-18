@@ -2,35 +2,27 @@
  * 状态服务：「扩展当前处于什么状态」的唯一真相来源——有哪些配置组、各自是否可用、
  * 各有多少模型、本次会话消耗了多少 token。
  *
- * 状态栏与面板只订阅这里并渲染，不各自去发请求：既避免重复轮询，也保证两处显示一致。
- * 状态是**按目标聚合**的，每个目标一行，整体可用性取「是否存在任一可用目标」。
+ * 状态栏订阅这里并渲染，不自己去发请求。状态是**按目标聚合**的，每个目标一行，
+ * 整体可用性取「是否存在任一可用目标」。
  */
 
 import * as vscode from 'vscode';
 import { createAbortHandle, type AbortSignalHandle } from '../cancellation';
 import { describeError } from '../client/newApiClient';
-import type { ConfigService } from '../config';
+import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
-import type { ProviderSession, SessionRegistry } from '../provider/session';
-import { isTargetUsable } from '../provider/target';
+import type { ModelCatalogSnapshot } from '../models/catalog';
+import type { ProviderTarget } from '../runtime/target';
+import { isTargetUsable } from '../runtime/target';
 import type { ChatUsage } from '../types';
-import type { StreamSummary } from '../provider/stream';
 import { readUsageDelta } from '../usage';
 
 /** 单个目标的模型列表概要。 */
 export interface ModelSummary {
 	/** 可用模型数（已过滤） */
 	readonly count: number;
-	/** 网关返回的原始条目数 */
-	readonly rawCount: number;
 	/** 被 include/exclude 过滤掉的数量 */
 	readonly filteredCount: number;
-	/** 无效条目数 */
-	readonly invalidCount: number;
-	/** 数据来源 */
-	readonly source?: 'network' | 'cache';
-	/** 拉取时间 */
-	readonly fetchedAt?: number;
 	/** 上次刷新的错误 */
 	readonly error?: string;
 	/** 针对该错误的可操作建议 */
@@ -39,7 +31,7 @@ export interface ModelSummary {
 
 /** 单个目标的连接与模型状态。 */
 export interface TargetStatus {
-	/** 配置指纹，用于区分同一 vendor 下的多个组 */
+	/** 配置指纹（同 vendor 的多个组据此区分） */
 	readonly key: string;
 	readonly group: string | undefined;
 	readonly label: string;
@@ -51,14 +43,8 @@ export interface TargetStatus {
 	readonly models: ModelSummary;
 	/** 该目标是否正在刷新 */
 	readonly refreshing: boolean;
-	/** 最近一次探测耗时（毫秒） */
+	/** 最近一次探测耗时（毫秒），「测试连接」命令会报告它 */
 	readonly latencyMs?: number;
-	/** 最近一次探测时间 */
-	readonly checkedAt?: number;
-	/** 站点名称（来自 `/api/status`，第三方网关可能没有） */
-	readonly siteName?: string;
-	/** 网关版本（来自 `/api/status`） */
-	readonly gatewayVersion?: string;
 }
 
 /** 会话用量统计。 */
@@ -84,7 +70,7 @@ export interface UsageStats {
 	readonly lastTargetLabel?: string;
 }
 
-/** 供 UI 渲染的完整状态快照。 */
+/** 供状态栏渲染的状态快照。 */
 export interface StatusState {
 	/** 所有已知的配置组 */
 	readonly targets: readonly TargetStatus[];
@@ -92,31 +78,61 @@ export interface StatusState {
 	readonly anyUsable: boolean;
 	/** 可用目标的模型总数 */
 	readonly totalModels: number;
-	/** 日志级别（用于在面板里提示「日志看不到」的问题） */
-	readonly logLevel: string;
 	/** 用户是否关闭了状态栏 */
 	readonly statusBarEnabled: boolean;
 	/** 会话用量 */
 	readonly usage: UsageStats;
-	/** 已注册的适配器（id + 说明） */
-	readonly adapters: readonly { readonly id: string; readonly description: string }[];
+}
+
+/** 一次响应里与状态有关的那部分（`StreamSummary` 天然满足它）。 */
+export interface UsageDeltaSummary {
+	/** 本次响应上报的工具调用数 */
+	readonly toolCallCount: number;
+}
+
+/**
+ * 状态服务看到的会话视图：**只列它真正用到的东西**。
+ *
+ * 刻意不写成 `ProviderSession` / `SessionRegistry`——状态层需要的只是「有哪些目标、各自能不能发请求、
+ * 当前模型快照是什么」，绑到 provider 的具体实现上会同时带来两个坏处：依赖方向横着走，
+ * 以及任何用例都得先拼装真实客户端与目录才能测这一层。
+ */
+export interface StatusSessionView {
+	readonly target: ProviderTarget;
+	readonly catalog: {
+		readonly current?: ModelCatalogSnapshot;
+		getModels(options?: { force?: boolean; signal?: AbortSignal }): Promise<ModelCatalogSnapshot>;
+	};
+	readonly client: {
+		getStatus(signal?: AbortSignal): Promise<{ readonly status?: { readonly system_name?: string; readonly version?: string } }>;
+	};
+}
+
+/** 会话来源（`SessionRegistry` 天然满足它）。 */
+export interface StatusSessionSource {
+	list(): readonly StatusSessionView[];
+	readonly onDidChange: vscode.Event<void>;
+	/** 让各会话丢弃缓存（模型过滤设置变化时用） */
+	invalidate(): void;
+}
+
+/** 配置来源（`ConfigService` 天然满足它）。 */
+export interface StatusConfigSource {
+	readonly settings: NewApiSettings;
+	readonly onDidChange: vscode.Event<NewApiSettings>;
 }
 
 /** 状态服务依赖。 */
 export interface StatusServiceDeps {
 	readonly logger: Logger;
-	readonly config: ConfigService;
-	/** 会话注册表。状态来源就是它持有的那些 catalog */
-	readonly sessions: SessionRegistry;
-	/** 已注册的适配器摘要 */
-	getAdapters(): readonly { readonly id: string; readonly description: string }[];
+	readonly config: StatusConfigSource;
+	/** 会话注册表。状态来源就是它持有的那些快照 */
+	readonly sessions: StatusSessionSource;
 }
 
-/** 探测结果：站点信息与延迟。 */
+/** 探测结果：站点可达性与延迟。 */
 interface ProbeResult {
 	readonly latencyMs: number;
-	readonly siteName?: string;
-	readonly gatewayVersion?: string;
 }
 
 /** 当前状态快照。 */
@@ -161,10 +177,8 @@ export class StatusService implements vscode.Disposable {
 			targets,
 			anyUsable: targets.some(target => target.usable),
 			totalModels: targets.reduce((sum, target) => sum + target.models.count, 0),
-			logLevel: this.deps.config.settings.logLevel,
 			statusBarEnabled: this.deps.config.settings.status.showStatusBar,
 			usage: this.usage,
-			adapters: this.deps.getAdapters(),
 		};
 	}
 
@@ -183,7 +197,7 @@ export class StatusService implements vscode.Disposable {
 		const sessions = this.deps.sessions.list();
 		if (sessions.length === 0) {
 			// 用户还没在本扩展里配置任何站点。这不是错误，只是「没有可探测的目标」；
-			// 面板会展示配置引导。
+			// 状态栏与「测试连接」命令会指出这一点。
 			this.deps.logger.debug('尚无可用的配置组，跳过探测');
 			this.emit();
 			return;
@@ -200,7 +214,7 @@ export class StatusService implements vscode.Disposable {
 	}
 
 	/** 刷新单个目标。 */
-	private async refreshSession(session: ProviderSession, forceModels: boolean): Promise<void> {
+	private async refreshSession(session: StatusSessionView, forceModels: boolean): Promise<void> {
 		const target = session.target;
 		if (!isTargetUsable(target)) {
 			this.deps.logger.debug(`配置不完整，跳过探测：${target.label}`);
@@ -216,18 +230,15 @@ export class StatusService implements vscode.Disposable {
 
 		try {
 			// 模型列表交给 catalog（它与 provider 共享同一份缓存，
-			// 因此状态里显示的数量就是模型选择器里的数量）；
-			// 站点信息用 /api/status 单独取，该端点失败不影响可用性判断。
+			// 因此状态里显示的数量就是模型选择器里的数量）。
+			// 同时探一下 /api/status：它给出这段往返的耗时，也顺带确认这个端点是否可用
+			//（第三方兼容网关往往没有它，但客户端不会因此报错）。
 			const startedAt = Date.now();
-			const [snapshot, status] = await Promise.all([
+			const [snapshot] = await Promise.all([
 				session.catalog.getModels({ force: forceModels, signal: this.inFlight?.signal }),
 				session.client.getStatus(this.inFlight?.signal),
 			]);
-			this.probes.set(key, {
-				latencyMs: Date.now() - startedAt,
-				siteName: status.status?.system_name,
-				gatewayVersion: status.status?.version,
-			});
+			this.probes.set(key, { latencyMs: Date.now() - startedAt });
 			if (snapshot.error !== undefined) {
 				this.deps.logger.warn(`刷新模型列表失败：${target.label}：${snapshot.error}`);
 			}
@@ -243,9 +254,9 @@ export class StatusService implements vscode.Disposable {
 	/**
 	 * 探测单个目标（供「测试连接」命令使用）。
 	 *
-	 * 与周期性刷新走同一条路径，因此状态栏、面板与命令三者的口径完全一致。
+	 * 与周期性刷新走同一条路径，因此状态栏与命令的口径完全一致。
 	 */
-	async probe(session: ProviderSession): Promise<TargetStatus> {
+	async probe(session: StatusSessionView): Promise<TargetStatus> {
 		await this.refreshSession(session, true);
 		return this.describeTarget(session);
 	}
@@ -255,7 +266,7 @@ export class StatusService implements vscode.Disposable {
 		targetLabel: string,
 		modelId: string,
 		usage: ChatUsage | undefined,
-		summary: StreamSummary,
+		summary: UsageDeltaSummary,
 	): void {
 		const delta = readUsageDelta(usage);
 		this.usage = {
@@ -304,7 +315,7 @@ export class StatusService implements vscode.Disposable {
 	/* ---------------------------------------------------------------------- */
 
 	/** 把会话整理成可渲染的状态。 */
-	private describeTarget(session: ProviderSession): TargetStatus {
+	private describeTarget(session: StatusSessionView): TargetStatus {
 		const target = session.target;
 		const snapshot = session.catalog.current;
 		const probe = this.probes.get(target.key);
@@ -317,19 +328,12 @@ export class StatusService implements vscode.Disposable {
 			issues: target.issues,
 			models: {
 				count: snapshot?.models.length ?? 0,
-				rawCount: snapshot?.rawCount ?? 0,
 				filteredCount: snapshot?.filtered.length ?? 0,
-				invalidCount: snapshot?.invalidCount ?? 0,
-				source: snapshot?.source,
-				fetchedAt: snapshot?.fetchedAt,
 				error: snapshot?.error,
 				hint: snapshot?.hint,
 			},
 			refreshing: this.refreshing.has(target.key),
 			latencyMs: probe?.latencyMs,
-			checkedAt: probe === undefined ? undefined : Date.now(),
-			siteName: probe?.siteName,
-			gatewayVersion: probe?.gatewayVersion,
 		};
 	}
 

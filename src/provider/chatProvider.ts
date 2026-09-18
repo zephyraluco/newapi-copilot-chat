@@ -29,7 +29,7 @@ import {
 	selectReasoningEffort,
 } from './modelConfiguration';
 import type { ModelConfigurationSchema } from './modelConfiguration';
-import type { ProviderSession, SessionRegistry } from './session';
+import type { ProviderSession, SessionRegistry } from '../runtime/session';
 import { StreamTranslator, decideStreamFailure, extractStreamError } from './stream';
 import type { StreamSummary } from './stream';
 import {
@@ -38,8 +38,8 @@ import {
 	isTargetUsable,
 	readOptionsConfiguration,
 	readOptionsGroup,
-} from './target';
-import type { ProviderTarget } from './target';
+} from '../runtime/target';
+import type { ProviderTarget } from '../runtime/target';
 import { createReplayMarkerPart } from './replay';
 import { calibrateCharsPerToken, estimateTokens } from './tokenizer';
 import {
@@ -83,7 +83,7 @@ export interface ChatProviderDeps {
 	readonly adapters: AdapterRegistry;
 	/** 取当前设置 */
 	getSettings(): NewApiSettings;
-	/** 上报用量，供状态面板统计 */
+	/** 上报用量，供状态栏悬浮提示统计 */
 	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, summary: StreamSummary): void;
 }
 
@@ -166,7 +166,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			return snapshot.models.map(config => toModelInformation(config, target));
 		} catch (error) {
 			// 这里绝不向外抛异常：模型列表加载失败时应该表现为「没有模型」，
-			// 由状态栏与面板负责告诉用户原因。
+			// 由状态栏负责告诉用户原因。
 			logger.error('获取模型列表失败', error);
 			return [];
 		}
@@ -418,7 +418,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 	/**
 	 * 把用量回传给 Copilot（会话信息里的「上下文窗口」靠它显示 token 数）。
 	 *
-	 * 不报这个部件时 Copilot 会自己拼一个 `prompt_tokens: 0` 的兑底值，面板就一直显示 `0/上限`。
+	 * 不报这个部件时 Copilot 会自己拼一个 `prompt_tokens: 0` 的兑底值，上下文窗口就一直显示 `0/上限`。
 	 * 上报失败不能影响已经流出的回答，因此这里兑住异常只记一条警告。
 	 */
 	private reportUsagePart(

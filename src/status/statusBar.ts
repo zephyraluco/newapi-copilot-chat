@@ -2,23 +2,27 @@
  * 状态栏 UI：只做渲染，不发请求、不做判断（状态全部来自 `StatusService`）。
  *
  * 状态栏只有一格位置，因此文本必须极短（`$(cloud) 12 模型`）。悬浮提示讲的是**本次会话**：
- * 请求次数、输入输出 token、缓存命中——用户盯的是「刚刚这一下贵不贵」。站点地址、网关版本、
- * 延迟、模型数量这些**站点细节在状态面板**里（那里铺得开，还能刷新），这里不复述。
+ * 请求次数、输入输出 token、缓存命中——用户盯的是「刚刚这一下贵不贵」。
  *
- * 两件刻意的事：
+ * 三件刻意的事：
  *
  * - **没有会话数据时不弹提示**。空闲时悬停给出一句「还没有请求」是纯噪声，还容易被当成出错。
  * - 提示里唯一保留的站点信息是「哪里出了问题」，因为状态栏此时已被着色，用户需要一个理由。
+ * - **图标不带点击命令**：它只陈述状态，不去猜用户点了想看什么；提示里的文案也因此不提「点击」。
  */
 
 import * as vscode from 'vscode';
-import { COMMANDS, MANAGE_MODELS_COMMAND, STATUS_BAR_PRIORITY } from '../consts';
+import { STATUS_BAR_PRIORITY } from '../consts';
 import { formatRelativeTime, formatTokens } from '../format';
 import type { Logger } from '../logger';
 import type { StatusState, TargetStatus, UsageStats } from './statusService';
 import { describeCacheHit } from '../usage';
 
-/** 状态栏项。 */
+/**
+ * 状态栏项。
+ *
+ * 图标本身**不带点击命令**：它只负责显示状态（文本 + 悬浮提示），不去猜用户点它是想看什么。
+ */
 export class NewApiStatusBar implements vscode.Disposable {
 	private readonly item: vscode.StatusBarItem;
 	private visible = false;
@@ -26,7 +30,8 @@ export class NewApiStatusBar implements vscode.Disposable {
 	constructor(private readonly logger: Logger) {
 		this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, STATUS_BAR_PRIORITY);
 		this.item.name = 'New API for Copilot Chat';
-		this.item.command = COMMANDS.showPanel;
+		// TODO(待办)：需要时再给状态栏挂点击命令（例如打开设置，或未配置时进「管理模型」）。
+		// 挂命令时记得同步悬浮提示里的说明，否则用户不知道为什么可以点。
 	}
 
 	/** 按状态渲染。 */
@@ -36,9 +41,7 @@ export class NewApiStatusBar implements vscode.Disposable {
 			return;
 		}
 
-		// 还没有可用配置时，点击直接进「管理模型」界面，
-		// 省掉一次「打开面板 → 再找配置入口」。
-		this.item.command = state.anyUsable ? COMMANDS.showPanel : MANAGE_MODELS_COMMAND;
+		// TODO(待办)：这里曾是「随可用性变化」的点击目标，现已移除（见构造函数里的说明）。
 		this.item.text = buildText(state);
 		this.item.backgroundColor = needsAttention(state)
 			? new vscode.ThemeColor('statusBarItem.warningBackground')
@@ -111,7 +114,7 @@ export function buildTooltip(state: StatusState): vscode.MarkdownString | undefi
 	if (state.targets.length === 0) {
 		const tooltip = createTooltip();
 		tooltip.appendMarkdown('$(warning) **尚未配置任何站点**\n\n');
-		tooltip.appendMarkdown('点击开始配置，或执行命令「New API: 管理模型」。');
+		tooltip.appendMarkdown('在「管理模型」里填入站点地址与 API Key，或执行命令「Manage Language Models」。');
 		return tooltip;
 	}
 
@@ -127,7 +130,6 @@ export function buildTooltip(state: StatusState): vscode.MarkdownString | undefi
 		return undefined;
 	}
 
-	blocks.push('点击打开状态面板，查看站点与模型详情。');
 	const tooltip = createTooltip();
 	tooltip.appendMarkdown(blocks.join('\n\n'));
 	return tooltip;
@@ -194,7 +196,7 @@ function describeCache(usage: UsageStats): string | undefined {
 /**
  * 只列需要用户动手的问题。
  *
- * 健康的站点不在这里出现——它的细节（地址、网关版本、延迟、模型数）都在面板里。
+ * 健康的站点不在这里出现——只有需要用户动手的问题才值得占一行。
  */
 function describeProblems(target: TargetStatus): string[] {
 	if (!target.usable) {

@@ -33,7 +33,7 @@ export interface ModelCatalogSnapshot {
 	readonly source: 'network' | 'cache';
 	/** 网关返回的原始条目数 */
 	readonly rawCount: number;
-	/** 被 include/exclude 过滤掉的模型（用于在面板里解释「为什么没看到某个模型」） */
+	/** 被 include/exclude 过滤掉的模型（用于解释「为什么没看到某个模型」） */
 	readonly filtered: readonly { readonly id: string; readonly reason: string }[];
 	/** 因缺少可用 id 或构建失败而被跳过的条目数 */
 	readonly invalidCount: number;

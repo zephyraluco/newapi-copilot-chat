@@ -11,11 +11,14 @@ import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'newapi.newapi-copilot-chat';
 
+/** 本扩展的 vendor 前缀（命令 ID 都挂在它下面）。 */
+const COMMAND_PREFIX = 'newapi-copilot-chat.';
+
 const EXPECTED_COMMANDS = [
-	'newapi-copilot-chat.testConnection',
-	'newapi-copilot-chat.refreshModels',
-	'newapi-copilot-chat.showPanel',
-	'newapi-copilot-chat.openSettings',
+	`${COMMAND_PREFIX}testConnection`,
+	`${COMMAND_PREFIX}refreshModels`,
+	`${COMMAND_PREFIX}openSettings`,
+	`${COMMAND_PREFIX}resetUsage`,
 ];
 
 suite('扩展装配', () => {
@@ -26,11 +29,17 @@ suite('扩展装配', () => {
 		assert.strictEqual(extension.isActive, true, '激活后 isActive 应该为 true');
 	});
 
-	test('所有命令都已注册', async () => {
-		const registered = await vscode.commands.getCommands(true);
-		for (const command of EXPECTED_COMMANDS) {
-			assert.ok(registered.includes(command), `命令 ${command} 未注册`);
-		}
+	test('命令与清单完全一致（不多不少）', async () => {
+		// 比对完整集合而不是逐个 contains：漏掉一个命令（例如 package.json 里贡献了
+		// 但忘了 registerCommand）与多出一个没人贡献的命令，都是真实的故障。
+		const registered = (await vscode.commands.getCommands(true))
+			.filter(command => command.startsWith(COMMAND_PREFIX));
+		assert.deepStrictEqual([...registered].sort(), [...EXPECTED_COMMANDS].sort());
+	});
+
+	test('重置用量可以在没有配置站点时安全调用', async () => {
+		// 命令面板里可以随时执行它，因此「尚未配置」与「还没有请求」都必须不报错
+		await vscode.commands.executeCommand(`${COMMAND_PREFIX}resetUsage`);
 	});
 
 	test('激活过程不会因缺少配置而失败', async () => {

@@ -43,7 +43,7 @@ export class AdapterRegistry {
 		return new DefaultModelAdapter();
 	}
 
-	/** 所有已注册的适配器（按优先级排序），面板会展示它。 */
+	/** 所有已注册的适配器（按优先级排序） */
 	list(): readonly ModelAdapter[] {
 		return this.adapters;
 	}

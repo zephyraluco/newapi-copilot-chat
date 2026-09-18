@@ -2,13 +2,13 @@ import * as assert from 'assert';
 import type { ModelDatasetEntry } from '../models/dataset';
 import { resolveModelConfig } from '../models/modelConfig';
 import { toModelInformation } from '../provider/chatProvider';
-import { SessionRegistry } from '../provider/session';
+import { SessionRegistry } from '../runtime/session';
 import {
 	createTarget,
 	isTargetUsable,
 	readOptionsConfiguration,
 	readOptionsGroup,
-} from '../provider/target';
+} from '../runtime/target';
 import { createModel, createSettings, datasetEntry, installTestDataset, testLogger } from './helpers';
 
 /**
