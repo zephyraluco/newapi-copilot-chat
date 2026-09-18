@@ -11,6 +11,7 @@ import { SseTruncatedError } from '../client/sse';
 import { safeJsonParse } from '../json';
 import type { Logger } from '../logger';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
+import { createThinkingPart, supportsThinkingPart } from './thinking';
 
 /** 本次流式响应的统计结果。 */
 export interface StreamSummary {
@@ -18,6 +19,13 @@ export interface StreamSummary {
 	readonly textLength: number;
 	/** 思维链的字符数 */
 	readonly reasoningLength: number;
+	/**
+	 * 思维链原文。
+	 *
+	 * 与「是否回显思考」无关：DeepSeek 要求思考态的工具调用历史回填 `reasoning_content`，
+	 * 用户关掉回显也不能把这份原文丢按（见 `replay.ts`）。
+	 */
+	readonly reasoningText: string;
 	/** 上报的工具调用数量 */
 	readonly toolCallCount: number;
 	/** 上游给出的结束原因 */
@@ -28,8 +36,15 @@ export interface StreamSummary {
 
 /** 翻译器配置。 */
 export interface StreamTranslatorOptions {
-	/** 是否把思维链作为正文回显 */
+	/** 是否把思维链回显给用户 */
 	readonly includeReasoning: boolean;
+	/**
+	 * 强制开关专用思考部件。
+	 *
+	 * 缺省时按运行时探测决定（宿主提供 `LanguageModelThinkingPart` 就用它）；
+	 * 显式传 `false` 则始终用 Markdown 引用块，便于对比两种渲染与写测试。
+	 */
+	readonly thinkingParts?: boolean;
 	readonly logger: Logger;
 	/** 仅用于日志 */
 	readonly modelId: string;
@@ -68,6 +83,8 @@ export function extractStreamError(chunk: ChatCompletionChunk): string | undefin
 export class StreamTranslator {
 	private textLength = 0;
 	private reasoningLength = 0;
+	/** 思维链原文，回放要用（与是否回显无关） */
+	private reasoningBuffer = '';
 	private finishReason: string | undefined;
 	private usage: ChatUsage | undefined;
 	private readonly toolCalls = new Map<number, ToolCallAccumulator>();
@@ -75,16 +92,21 @@ export class StreamTranslator {
 	private lastToolCallIndex: number | undefined;
 	/** 已经上报给 VS Code 的部件数：截断重试的门就卡在这个值上 */
 	private emitted = 0;
+	private toolCallCount = 0;
 	private reasoningStarted = false;
 	/** 思维链渲染时是否处于行首（决定要不要补 `> ` 前缀） */
 	private reasoningAtLineStart = true;
 	private contentStarted = false;
 	private warnedMultipleChoices = false;
+	/** 走专用思考部件（而不是 Markdown 引用块）；构造时定好，渲染路径才不会变得忽冷忽热 */
+	private readonly thinkingParts: boolean;
 
 	constructor(
 		private readonly progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 		private readonly options: StreamTranslatorOptions,
-	) { }
+	) {
+		this.thinkingParts = (options.thinkingParts ?? true) && supportsThinkingPart();
+	}
 
 	/** 已上报的部件数。 */
 	get emittedParts(): number {
@@ -140,47 +162,29 @@ export class StreamTranslator {
 				this.accumulateToolCall(call);
 			}
 		}
+
+		// 上游给出收尾信号时参数已经到齐，立即上报：等到流真正结束再报只会让 agent 循环
+		// 白白多等一个往返。剩下的分片（网关不发 finish_reason）仍在 flush 里补报。
+		if (this.finishReason === 'tool_calls' || this.finishReason === 'stop') {
+			this.reportToolCalls({});
+		}
 	}
 
 	/**
-	 * 结束本次流式响应：上报工具调用并返回统计。
-	 *
-	 * 工具调用统一在这里上报，因为只有流结束时才能确定参数已经拼完整。
+	 * 结束本次流式响应：补报剩下的工具调用并返回统计。
 	 *
 	 * @param options.dropIncompleteToolCalls 参数还没拼完的工具调用直接丢掉。
 	 *   用于「流被中途掐断」的场景：此时参数通常是半截 JSON，上报它只会让 VS Code
 	 *   拿着残缺参数去执行工具。
 	 */
 	flush(options: { dropIncompleteToolCalls?: boolean } = {}): StreamSummary {
-		if (this.reasoningStarted && !this.contentStarted && this.options.includeReasoning) {
-			// 只有思维链、没有正式回答（例如被截断），补一个换行避免格式粘连
+		if (!this.thinkingParts && this.reasoningStarted && !this.contentStarted && this.options.includeReasoning) {
+			// 只有思维链、没有正式回答（例如被截断），补一个换行避免格式粘连。
+			// 走专用思考部件时没有这个问题：它不在正文里。
 			this.report('\n');
 		}
 
-		let toolCallCount = 0;
-		const indices = [...this.toolCalls.keys()].sort((a, b) => a - b);
-		for (const index of indices) {
-			const call = this.toolCalls.get(index);
-			if (call === undefined) {
-				continue;
-			}
-			if (call.name.length === 0) {
-				this.options.logger.warn(`工具调用缺少函数名，已跳过（index=${index}）`);
-				continue;
-			}
-			const input = tryParseToolArguments(call.arguments, this.options.logger, call.name);
-			if (input === undefined) {
-				if (options.dropIncompleteToolCalls === true) {
-					this.options.logger.warn(`工具 ${call.name} 的参数不完整（流已中断），已丢弃这次调用`);
-					continue;
-				}
-				this.options.logger.error(`无法解析工具 ${call.name} 的参数`, call.arguments.trim());
-			}
-			const callId = call.id ?? `call_${index}_${Date.now().toString(36)}`;
-			this.progress.report(new vscode.LanguageModelToolCallPart(callId, call.name, input ?? {}));
-			this.emitted++;
-			toolCallCount++;
-		}
+		this.reportToolCalls({ dropIncomplete: options.dropIncompleteToolCalls === true });
 
 		if (this.finishReason === 'length') {
 			this.options.logger.warn('响应因达到长度上限被截断（finish_reason=length）');
@@ -196,10 +200,46 @@ export class StreamTranslator {
 		return {
 			textLength: this.textLength,
 			reasoningLength: this.reasoningLength,
-			toolCallCount,
+			reasoningText: this.reasoningBuffer,
+			toolCallCount: this.toolCallCount,
 			finishReason: this.finishReason,
 			usage: this.usage,
 		};
+	}
+
+	/**
+	 * 上报已累积的工具调用。
+	 *
+	 * 上报条件很关键：只有流结束了才能确定参数已经拼完整。上游给了 `finish_reason`
+	 * 就说明它写完了，那时报一次；没给（网关略过它）才等到 `flush`。
+	 */
+	private reportToolCalls(options: { dropIncomplete?: boolean }): void {
+		const indices = [...this.toolCalls.keys()].sort((a, b) => a - b);
+		for (const index of indices) {
+			const call = this.toolCalls.get(index);
+			this.toolCalls.delete(index);
+			if (call === undefined) {
+				continue;
+			}
+			if (call.name.length === 0) {
+				this.options.logger.warn(`工具调用缺少函数名，已跳过（index=${index}）`);
+				continue;
+			}
+			const input = tryParseToolArguments(call.arguments, this.options.logger, call.name);
+			if (input === undefined) {
+				if (options.dropIncomplete === true) {
+					this.options.logger.warn(`工具 ${call.name} 的参数不完整（流已中断），已丢弃这次调用`);
+					continue;
+				}
+				this.options.logger.error(`无法解析工具 ${call.name} 的参数`, call.arguments.trim());
+			}
+			const callId = call.id ?? `call_${index}_${Date.now().toString(36)}`;
+			this.progress.report(new vscode.LanguageModelToolCallPart(callId, call.name, input ?? {}));
+			this.emitted++;
+			this.toolCallCount++;
+		}
+		// 槽位已清空：下一个不带 index 的分片应该开新槽，而不是接到已上报的那次调用上
+		this.lastToolCallIndex = undefined;
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -208,8 +248,8 @@ export class StreamTranslator {
 	private emitContent(text: string): void {
 		if (!this.contentStarted) {
 			this.contentStarted = true;
-			if (this.reasoningStarted) {
-				// 与思维链分隔开，避免引用块和正文连在一起
+			if (this.reasoningStarted && !this.thinkingParts) {
+				// 与思维链分隔开，避免引用块和正文连在一起（思考部件不在正文里，无需分隔）
 				this.report('\n\n');
 			}
 		}
@@ -220,16 +260,26 @@ export class StreamTranslator {
 	/**
 	 * 输出思维链。
 	 *
-	 * 稳定的 VS Code API 目前没有专门的「思考内容」响应部件，因此思维链只能当正文发出。
-	 * 为了让它在视觉上与正式回答区分开，这里包成 Markdown 引用块。
+	 * 宿主提供 `LanguageModelThinkingPart`（proposed API）时用它：Copilot 会渲染成可折叠的
+	 * 思考块，「思考内容怎么显示」交给用户的外观设置。没有这个部件时才退回 Markdown 引用块
+	 * ——把思维链当正文发出去，视觉上只能靠引用块与正式回答区分。
 	 *
-	 * 一旦 VS Code 暴露专用部件（例如 `LanguageModelThinkingPart`），
-	 * 只需要改这一个方法即可——这也是把渲染收敛在此处的原因。
+	 * 无论回显与否都会累积原文：回填历史要用（见 `replay.ts`）。
 	 */
 	private emitReasoning(text: string): void {
+		this.reasoningBuffer += text;
 		this.reasoningLength += text.length;
 		if (!this.options.includeReasoning) {
 			return;
+		}
+		if (this.thinkingParts) {
+			const part = createThinkingPart(text);
+			if (part !== undefined) {
+				this.reasoningStarted = true;
+				this.progress.report(part);
+				this.emitted++;
+				return;
+			}
 		}
 		let output = '';
 		if (!this.reasoningStarted) {

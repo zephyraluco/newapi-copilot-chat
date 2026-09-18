@@ -17,13 +17,13 @@ import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
 import type { NewApiClient } from '../client/newApiClient';
-import { DEFAULTS, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, USAGE_DATA_MIME_TYPE } from '../consts';
+import { DEFAULTS, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION, USAGE_DATA_MIME_TYPE } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
 import { buildReportedUsage } from '../usage';
-import { convertMessages, convertToolChoice, convertTools } from './messages';
+import { convertMessages, convertToolChoice, convertTools, countRequestChars } from './messages';
 import {
 	applyReasoningEffort,
 	buildModelConfigurationSchema,
@@ -41,7 +41,14 @@ import {
 	readOptionsGroup,
 } from './target';
 import type { ProviderTarget } from './target';
-import { estimateTokens } from './tokenizer';
+import { createReplayMarkerPart } from './replay';
+import { calibrateCharsPerToken, estimateTokens } from './tokenizer';
+import {
+	MAX_PREFLIGHT_ROUNDS,
+	createPreflightCallId,
+	filterPreflightMessages,
+	inspectActivatePreflight,
+} from './toolFlow';
 
 /**
  * 提供给 VS Code 的模型信息。
@@ -86,6 +93,11 @@ export interface ChatProviderDeps {
 export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewApiModelInformation>, vscode.Disposable {
 	private readonly infoChanged = new vscode.EventEmitter<void>();
 	private readonly disposables: vscode.Disposable[] = [];
+	/**
+	 * 非 CJK 文本「多少字符约等于一个 token」，随上游返回的真实用量缓慢校准
+	 * （见 `tokenizer.calibrateCharsPerToken`）。
+	 */
+	private charsPerToken: number = TOKEN_ESTIMATION.charsPerToken;
 
 	/**
 	 * 模型集合发生变化时通知 VS Code 重新拉取。
@@ -209,6 +221,34 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		const logger = this.deps.logger;
 		const settings = this.deps.getSettings();
 		const config = model.config;
+
+		// 预激活控制流（伪调用与它们的结果）不能发给上游，无论设置是否开启都要过滤掉
+		const flowMessages = filterPreflightMessages(messages);
+		if (settings.request.stabilizeToolList) {
+			// 注意用**未过滤**的消息：已经激活过哪些工具组，只有伪调用还在时才能看出来
+			const preflight = inspectActivatePreflight(messages, options.tools);
+			if (preflight.remaining.length > 0) {
+				if (preflight.rounds >= MAX_PREFLIGHT_ROUNDS) {
+					throw new Error(
+						`连续 ${MAX_PREFLIGHT_ROUNDS} 轮都没有完成工具组展开，` +
+						'请关闭 request.stabilizeToolList 或减少启用的工具组。',
+					);
+				}
+				const round = preflight.rounds + 1;
+				logger.debug(
+					`预激活 ${preflight.remaining.length} 个工具组（第 ${round} 轮）：` +
+					preflight.remaining.join('、'),
+				);
+				// 上报伪调用就结束本次请求：宿主执行后会用展开完的工具列表重新发起
+				for (const name of preflight.remaining) {
+					progress.report(
+						new vscode.LanguageModelToolCallPart(createPreflightCallId(round, name), name, {}),
+					);
+				}
+				return;
+			}
+		}
+
 		const abort = fromCancellationToken(token, `chat:${config.id}`);
 		const adapter = this.deps.adapters.resolve(config);
 		// 模型选择器里的「思考强度」（未选择时为空，此时不往请求体里写任何额外字段）
@@ -224,7 +264,9 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		};
 
 		try {
-			const converted = convertMessages(messages, logger);
+			const converted = convertMessages(flowMessages, logger, {
+				echoReasoningContent: adapter.echoReasoningContent === true,
+			});
 			for (const warning of converted.warnings) {
 				logger.warn(warning);
 			}
@@ -268,6 +310,12 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				logger,
 			});
 			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
+			this.reportReplayMarker(progress, summary, adapter, config.id, logger);
+			this.charsPerToken = calibrateCharsPerToken(
+				countRequestChars(transformed.messages),
+				summary.usage?.prompt_tokens,
+				this.charsPerToken,
+			);
 		} catch (error) {
 			// 取消是正常流程，不是失败：VS Code 会在用户点「停止」时取消 token
 			if (isAbortError(error) || token.isCancellationRequested) {
@@ -412,6 +460,30 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		}
 	}
 
+	/**
+	 * 把本次的思考内容随响应一起留下（回放标记，见 `replay.ts`）。
+	 *
+	 * 只有声明了 `echoReasoningContent` 的适配器才需要它：标记的唯一用途就是在下一次请求里
+	 * 变回 `reasoning_content`（DeepSeek 的思考态工具调用历史要求这个字段）。上报失败不能
+	 * 影响已经流出的回答，因此只记一条 warn。
+	 */
+	private reportReplayMarker(
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+		summary: StreamSummary,
+		adapter: ModelAdapter,
+		modelId: string,
+		logger: Logger,
+	): void {
+		if (adapter.echoReasoningContent !== true || summary.reasoningText.length === 0) {
+			return;
+		}
+		try {
+			progress.report(createReplayMarkerPart(summary.reasoningText));
+		} catch (error) {
+			logger.warn(`${modelId}：思考内容的回放标记上报失败，后续请求将缺少 reasoning_content`, error);
+		}
+	}
+
 	/* ---------------------------------------------------------------------- */
 	/* Token 估算                                                              */
 	/* ---------------------------------------------------------------------- */
@@ -426,7 +498,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		text: string | vscode.LanguageModelChatRequestMessage,
 		_token: vscode.CancellationToken,
 	): Promise<number> {
-		return Math.max(1, estimateTokens(text));
+		return Math.max(1, estimateTokens(text, this.charsPerToken));
 	}
 
 	dispose(): void {

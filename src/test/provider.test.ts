@@ -8,9 +8,16 @@ import type { ModelConfig } from '../models/modelConfig';
 import { NewApiChatProvider } from '../provider/chatProvider';
 import type { ChatProviderDeps } from '../provider/chatProvider';
 import { convertMessages, convertToolChoice, convertTools } from '../provider/messages';
+import { REPLAY_MARKER_MIME, createReplayMarkerPart, parseReplayMarker } from '../provider/replay';
 import type { SessionRegistry } from '../provider/session';
 import { parseToolArguments, tryParseToolArguments } from '../provider/stream';
-import { estimateTextTokens } from '../provider/tokenizer';
+import { supportsThinkingPart } from '../provider/thinking';
+import { calibrateCharsPerToken, estimateTextTokens } from '../provider/tokenizer';
+import {
+	createPreflightCallId,
+	filterPreflightMessages,
+	inspectActivatePreflight,
+} from '../provider/toolFlow';
 import type { ChatCompletionChunk } from '../types';
 import { capturingLogger, testLogger } from './helpers';
 
@@ -23,6 +30,52 @@ function createMessage(
 	name?: string,
 ): vscode.LanguageModelChatRequestMessage {
 	return { role, content, name };
+}
+
+/** 一份最小的模型配置。 */
+function createConfig(id = 'test-model'): ModelConfig {
+	return {
+		id,
+		name: 'Test Model',
+		detail: '',
+		family: 'test-model',
+		version: '1',
+		tooltip: '',
+		contextWindow: 128_000,
+		maxInputTokens: 120_000,
+		maxOutputTokens: 8_192,
+		imageInput: false,
+		toolCalling: false,
+		reasoning: false,
+		reasoningEfforts: [],
+		meta: { provenance: {} },
+	};
+}
+
+/** 一份最小的设置。 */
+function createSettings(overrides: { stabilizeToolList?: boolean } = {}): NewApiSettings {
+	return {
+		logLevel: 'off',
+		models: {
+			include: [],
+			exclude: [],
+			cacheTtlMs: 300_000,
+			defaultContextWindow: 128_000,
+			defaultMaxOutputTokens: 8_192,
+		},
+		request: {
+			timeoutMs: 60_000,
+			streamIdleTimeoutMs: 60_000,
+			includeUsage: true,
+			maxRetries: 0,
+			temperature: undefined,
+			topP: undefined,
+			includeReasoning: false,
+			stabilizeToolList: overrides.stabilizeToolList ?? false,
+			extraBody: {},
+		},
+		status: { showStatusBar: false, refreshIntervalMs: 60_000 },
+	};
 }
 
 suite('provider / token 估算', () => {
@@ -191,51 +244,6 @@ suite('provider / 工具参数解析', () => {
 });
 
 suite('provider / 响应回传', () => {
-	/** 一份最小的模型配置。 */
-	function createConfig(): ModelConfig {
-		return {
-			id: 'test-model',
-			name: 'Test Model',
-			detail: '',
-			family: 'test-model',
-			version: '1',
-			tooltip: '',
-			contextWindow: 128_000,
-			maxInputTokens: 120_000,
-			maxOutputTokens: 8_192,
-			imageInput: false,
-			toolCalling: false,
-			reasoning: false,
-			reasoningEfforts: [],
-			meta: { provenance: {} },
-		};
-	}
-
-	/** 一份最小的设置。 */
-	function createSettings(): NewApiSettings {
-		return {
-			logLevel: 'off',
-			models: {
-				include: [],
-				exclude: [],
-				cacheTtlMs: 300_000,
-				defaultContextWindow: 128_000,
-				defaultMaxOutputTokens: 8_192,
-			},
-			request: {
-				timeoutMs: 60_000,
-				streamIdleTimeoutMs: 60_000,
-				includeUsage: true,
-				maxRetries: 0,
-				temperature: undefined,
-				topP: undefined,
-				includeReasoning: false,
-				extraBody: {},
-			},
-			status: { showStatusBar: false, refreshIntervalMs: 60_000 },
-		};
-	}
-
 	/**
 	 * 按脚本产出 chunk 的假客户端：脚本项是 `Error` 就抛出来（模拟连接被掐断），否则依次吐出。
 	 * 轮次超出脚本长度时重复最后一段，便于写「每一轮都一样」的用例。
@@ -263,11 +271,11 @@ suite('provider / 响应回传', () => {
 	}
 
 	/** 走一遍真实的 `provideLanguageModelChatResponse`。 */
-	async function runProvider(client: unknown): Promise<{
+	async function runProvider(client: unknown, modelId?: string): Promise<{
 		parts: vscode.LanguageModelResponsePart[];
 		error: unknown;
 	}> {
-		const config = createConfig();
+		const config = createConfig(modelId);
 		const deps = {
 			logger: capturingLogger().logger,
 			sessions: {
@@ -442,5 +450,334 @@ suite('provider / 响应回传', () => {
 
 		assert.strictEqual(result.error, undefined);
 		assert.strictEqual(usagePayload(result.parts)?.prompt_tokens, 100);
+	});
+
+	/* ---------------------------------------------------------------------- */
+	/* 思考内容的回放标记（下次请求要回填 reasoning_content）                    */
+	/* ---------------------------------------------------------------------- */
+
+	/** 取出回放标记部件。 */
+	function markerOf(parts: readonly vscode.LanguageModelResponsePart[]): vscode.LanguageModelDataPart | undefined {
+		return parts.find(
+			(part): part is vscode.LanguageModelDataPart =>
+				part instanceof vscode.LanguageModelDataPart && part.mimeType === REPLAY_MARKER_MIME,
+		);
+	}
+
+	/** 一段「思考 + 正文 + 收尾」的响应。 */
+	function scriptWithReasoning(): readonly ChatCompletionChunk[] {
+		return [
+			{ choices: [{ index: 0, delta: { reasoning_content: '先看调用链' } }] },
+			{ choices: [{ index: 0, delta: { content: '答案' } }] },
+			{ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+		];
+	}
+
+	test('DeepSeek：思考内容随响应一起留下，供下次请求回填', async () => {
+		const client = scriptedClient([scriptWithReasoning()]);
+
+		const result = await runProvider(client, 'deepseek-chat');
+
+		assert.strictEqual(result.error, undefined);
+		const marker = markerOf(result.parts);
+		assert.ok(marker !== undefined, '没有标记，下一轮就凑不出 DeepSeek 要求的 reasoning_content');
+		assert.strictEqual(parseReplayMarker(marker.data), '先看调用链');
+		assert.strictEqual(result.parts[result.parts.length - 1], marker, '标记必须在回答之后');
+	});
+
+	test('非 DeepSeek 模型不留标记（上游不认这个字段）', async () => {
+		const client = scriptedClient([scriptWithReasoning()]);
+
+		const result = await runProvider(client);
+
+		assert.strictEqual(result.error, undefined);
+		assert.strictEqual(markerOf(result.parts), undefined);
+		assert.deepStrictEqual(textsOf(result.parts), ['答案']);
+	});
+
+	test('上游没给思考内容时不发空标记', async () => {
+		const client = scriptedClient([[
+			{ choices: [{ index: 0, delta: { content: '答案' } }] },
+			{ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+		]]);
+
+		const result = await runProvider(client, 'deepseek-chat');
+
+		assert.strictEqual(markerOf(result.parts), undefined);
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+/* 思考内容回填                                                                */
+/* -------------------------------------------------------------------------- */
+
+suite('provider / 思考内容回填', () => {
+	/** 一条「助手回答了正文，并把思考留在回放标记里」的历史消息。 */
+	function historyWithReasoning(): vscode.LanguageModelChatRequestMessage {
+		return createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+			new vscode.LanguageModelTextPart('答案'),
+			createReplayMarkerPart('我想过了'),
+		]);
+	}
+
+	test('上游要求回填时，标记里的思考变成 reasoning_content', () => {
+		const result = convertMessages([historyWithReasoning()], testLogger(), { echoReasoningContent: true });
+
+		assert.strictEqual(result.messages[0].reasoning_content, '我想过了');
+		assert.strictEqual(result.messages[0].content, '答案', '标记本身不是内容');
+	});
+
+	test('默认不回填：标记既不进正文，也不会被当成内容发出去', () => {
+		const result = convertMessages([historyWithReasoning()], testLogger());
+
+		assert.strictEqual(result.messages[0].reasoning_content, undefined);
+		assert.strictEqual(result.messages[0].content, '答案');
+	});
+
+	test('标记落在用户消息里时也不会变成正文', () => {
+		const result = convertMessages([
+			createMessage(vscode.LanguageModelChatMessageRole.User, [
+				new vscode.LanguageModelTextPart('继续'),
+				createReplayMarkerPart('早先的思考'),
+			]),
+		], testLogger());
+
+		assert.strictEqual(result.messages.length, 1);
+		assert.strictEqual(result.messages[0].content, '继续');
+	});
+
+	test('没有标记时退回到宿主给的思考部件', () => {
+		if (!supportsThinkingPart()) {
+			return;
+		}
+		const Part = (vscode as unknown as {
+			LanguageModelThinkingPart: new (value: string) => object;
+		}).LanguageModelThinkingPart;
+		const result = convertMessages([
+			createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+				new vscode.LanguageModelTextPart('答案'),
+				new Part('来自思考部件'),
+			]),
+		], testLogger(), { echoReasoningContent: true });
+
+		assert.strictEqual(result.messages[0].reasoning_content, '来自思考部件');
+		assert.strictEqual(result.messages[0].content, '答案', '思考内容不能混进正文');
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+/* 工具组预激活                                                                */
+/* -------------------------------------------------------------------------- */
+
+suite('provider / 工具组预激活', () => {
+	/** 宿主给出的虚拟「工具组」工具。 */
+	function activateTool(name: string): vscode.LanguageModelChatTool {
+		return { name, description: '' };
+	}
+
+	/** 一个「被调用就记一次」的假客户端。 */
+	function scriptedClient(): {
+		readonly calls: number;
+		streamChatCompletion(): AsyncGenerator<ChatCompletionChunk>;
+	} {
+		let calls = 0;
+		return {
+			get calls(): number {
+				return calls;
+			},
+			async *streamChatCompletion(): AsyncGenerator<ChatCompletionChunk> {
+				calls++;
+				yield { choices: [{ index: 0, delta: { content: '回答' } }] };
+			},
+		};
+	}
+
+	/** 走一遍真实的 provider，只关心「有没有请求上游」与上报了哪些部件。 */
+	async function run(input: {
+		client: unknown;
+		tools: readonly vscode.LanguageModelChatTool[];
+		messages: readonly vscode.LanguageModelChatRequestMessage[];
+	}): Promise<{ parts: vscode.LanguageModelResponsePart[]; error: unknown }> {
+		const deps = {
+			logger: capturingLogger().logger,
+			sessions: {
+				find: () => ({ client: input.client }),
+				onDidChange: () => ({ dispose: () => { /* 用例里不关心模型列表变化 */ } }),
+			},
+			adapters: createDefaultAdapterRegistry(),
+			getSettings: () => createSettings({ stabilizeToolList: true }),
+		} as unknown as ChatProviderDeps;
+		const provider = new NewApiChatProvider(deps);
+		const tokenSource = new vscode.CancellationTokenSource();
+		const parts: vscode.LanguageModelResponsePart[] = [];
+		let error: unknown;
+
+		try {
+			await provider.provideLanguageModelChatResponse(
+				{
+					id: 'test-model',
+					name: 'Test Model',
+					family: 'test-model',
+					version: '1',
+					maxInputTokens: 120_000,
+					maxOutputTokens: 8_192,
+					capabilities: { imageInput: false, toolCalling: true },
+					config: createConfig(),
+					targetKey: 'key',
+					targetLabel: '测试组',
+				},
+				input.messages,
+				{
+					tools: input.tools,
+					toolMode: vscode.LanguageModelChatToolMode.Auto,
+				} as vscode.ProvideLanguageModelChatResponseOptions,
+				{ report: part => parts.push(part) },
+				tokenSource.token,
+			);
+		} catch (caught) {
+			error = caught;
+		} finally {
+			tokenSource.dispose();
+			provider.dispose();
+		}
+
+		return { parts, error };
+	}
+
+	/** 一条普通用户消息。 */
+	function ask(): vscode.LanguageModelChatRequestMessage {
+		return createMessage(vscode.LanguageModelChatMessageRole.User, [
+			new vscode.LanguageModelTextPart('帮我看看这个仓库'),
+		]);
+	}
+
+	test('过滤：伪调用与它们的结果不会发给上游', () => {
+		const callId = createPreflightCallId(1, 'activate_gitkraken');
+		const filtered = filterPreflightMessages([
+			createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+				new vscode.LanguageModelToolCallPart(callId, 'activate_gitkraken', {}),
+				new vscode.LanguageModelTextPart(''),
+			]),
+			createMessage(vscode.LanguageModelChatMessageRole.User, [
+				new vscode.LanguageModelToolResultPart(callId, [new vscode.LanguageModelTextPart('已展开')]),
+				new vscode.LanguageModelTextPart('继续'),
+			]),
+		]);
+
+		assert.strictEqual(filtered.length, 1, '只剩伪调用的那条消息应当整条丢掉');
+		assert.strictEqual(filtered[0].content.length, 1, '伪调用的结果也要删掉，但用户的话要保留');
+		assert.ok(filtered[0].content[0] instanceof vscode.LanguageModelTextPart);
+	});
+
+	test('识别：已经激活过的工具组不再重复激活', () => {
+		const callId = createPreflightCallId(1, 'activate_a');
+		// 真实顺序：用户开口 → 助手上报伪调用 → 用户消息里带回它的结果
+		const messages = [
+			ask(),
+			createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+				new vscode.LanguageModelToolCallPart(callId, 'activate_a', {}),
+			]),
+			createMessage(vscode.LanguageModelChatMessageRole.User, [
+				new vscode.LanguageModelToolResultPart(callId, [new vscode.LanguageModelTextPart('已展开')]),
+			]),
+		];
+
+		const preflight = inspectActivatePreflight(messages, [activateTool('activate_a'), activateTool('activate_b')]);
+
+		assert.strictEqual(preflight.rounds, 1);
+		assert.deepStrictEqual(preflight.remaining, ['activate_b']);
+	});
+
+	test('有待激活的工具组时只上报伪调用，不请求上游', async () => {
+		const client = scriptedClient();
+
+		const result = await run({ client, tools: [activateTool('activate_pylance')], messages: [ask()] });
+
+		assert.strictEqual(result.error, undefined);
+		assert.strictEqual(client.calls, 0, '展开工具组要用一次请求换下一轮，不必先问上游');
+		const calls = result.parts.filter(
+			(part): part is vscode.LanguageModelToolCallPart => part instanceof vscode.LanguageModelToolCallPart,
+		);
+		assert.deepStrictEqual(calls.map(call => call.name), ['activate_pylance']);
+		assert.ok(calls[0].callId.startsWith('newapi-preflight-'), '伪调用要能被下一轮认出来');
+	});
+
+	test('工具组已经激活过时正常请求上游', async () => {
+		const callId = createPreflightCallId(1, 'activate_pylance');
+		const client = scriptedClient();
+
+		const result = await run({
+			client,
+			tools: [activateTool('activate_pylance')],
+			messages: [
+				ask(),
+				createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+					new vscode.LanguageModelToolCallPart(callId, 'activate_pylance', {}),
+				]),
+				createMessage(vscode.LanguageModelChatMessageRole.User, [
+					new vscode.LanguageModelToolResultPart(callId, [new vscode.LanguageModelTextPart('已展开')]),
+				]),
+			],
+		});
+
+		assert.strictEqual(result.error, undefined);
+		assert.strictEqual(client.calls, 1);
+	});
+
+	test('没有 activate_* 工具时不受影响', async () => {
+		const client = scriptedClient();
+
+		const result = await run({ client, tools: [activateTool('read_file')], messages: [ask()] });
+
+		assert.strictEqual(result.error, undefined);
+		assert.strictEqual(client.calls, 1);
+	});
+
+	test('工具组迟迟展不开时报错，而不是一轮接一轮地重试', async () => {
+		const client = scriptedClient();
+		const messages = [
+			ask(),
+			createMessage(vscode.LanguageModelChatMessageRole.Assistant, [
+				new vscode.LanguageModelToolCallPart(createPreflightCallId(1, 'activate_a'), 'activate_a', {}),
+				new vscode.LanguageModelToolCallPart(createPreflightCallId(2, 'activate_a'), 'activate_a', {}),
+			]),
+		];
+
+		const result = await run({
+			client,
+			tools: [activateTool('activate_a'), activateTool('activate_b')],
+			messages,
+		});
+
+		assert.ok(result.error instanceof Error);
+		assert.strictEqual(client.calls, 0);
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+/* token 比例校准                                                              */
+/* -------------------------------------------------------------------------- */
+
+suite('provider / token 比例校准', () => {
+	test('朝观测值缓慢移动，而不是一步到位', () => {
+		assert.strictEqual(calibrateCharsPerToken(4_000, 1_000, 4), 4, '观测值与当前一致时不变');
+		const lowered = calibrateCharsPerToken(4_000, 2_000, 4);
+		assert.ok(Math.abs(lowered - 3.4) < 1e-9, `期望 4×0.7 + 2×0.3 = 3.4，实际 ${lowered}`);
+	});
+
+	test('拿不到用量或请求为空时保持不变', () => {
+		assert.strictEqual(calibrateCharsPerToken(1_000, undefined, 4), 4);
+		assert.strictEqual(calibrateCharsPerToken(1_000, 0, 4), 4, '上游报 0 不能拿来当除数');
+		assert.strictEqual(calibrateCharsPerToken(0, 100, 4), 4);
+	});
+
+	test('离谱的观测值被夹在合理区间内', () => {
+		// 上游少报 token（观测比例 0.001）不能让估算一路涨上去
+		const lowered = calibrateCharsPerToken(10, 10_000, 4);
+		assert.ok(lowered >= 1 && lowered < 4, `实际 ${lowered}`);
+
+		// 上游多报 token（观测比例 100000）也不能把比例推到天上
+		const raised = calibrateCharsPerToken(1_000_000, 10, 4);
+		assert.ok(raised <= 16, `实际 ${raised}`);
 	});
 });

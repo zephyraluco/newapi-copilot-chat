@@ -151,6 +151,7 @@ suite('provider / 会话注册表', () => {
 				temperature: undefined,
 				topP: undefined,
 				includeReasoning: false,
+				stabilizeToolList: false,
 				extraBody: {},
 			}),
 		});

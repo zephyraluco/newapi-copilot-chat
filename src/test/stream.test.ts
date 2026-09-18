@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { SseIdleTimeoutError, SseTruncatedError } from '../client/sse';
 import { StreamTranslator, decideStreamFailure } from '../provider/stream';
+import { isThinkingPart, supportsThinkingPart } from '../provider/thinking';
 import type { ChatCompletionChunk, ChatToolCallDelta } from '../types';
 import { capturingLogger } from './helpers';
 
@@ -25,7 +26,7 @@ function createRecorder(): Recorder {
 	return { parts, progress: { report: part => parts.push(part) } };
 }
 
-function createTranslator(options: { includeReasoning?: boolean } = {}): {
+function createTranslator(options: { includeReasoning?: boolean; thinkingParts?: boolean } = {}): {
 	translator: StreamTranslator;
 	recorder: Recorder;
 	logs: ReturnType<typeof capturingLogger>;
@@ -34,6 +35,7 @@ function createTranslator(options: { includeReasoning?: boolean } = {}): {
 	const logs = capturingLogger();
 	const translator = new StreamTranslator(recorder.progress, {
 		includeReasoning: options.includeReasoning ?? false,
+		thinkingParts: options.thinkingParts,
 		logger: logs.logger,
 		modelId: 'test-model',
 	});
@@ -50,6 +52,13 @@ function reasoningChunk(text: string): ChatCompletionChunk {
 
 function toolCallChunk(calls: readonly ChatToolCallDelta[]): ChatCompletionChunk {
 	return { choices: [{ index: 0, delta: { tool_calls: [...calls] } }] };
+}
+
+/** 取出上报的文本。 */
+function texts(recorder: Recorder): string[] {
+	return recorder.parts
+		.filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
+		.map(part => part.value);
 }
 
 /** 取出上报的工具调用部件。 */
@@ -136,6 +145,75 @@ suite('provider / 工具调用归并', () => {
 		assert.strictEqual(toolCalls(cut.recorder).length, 0, '半截 JSON 不该拿去执行工具');
 		assert.strictEqual(cutSummary.toolCallCount, 0);
 		assert.ok(cut.logs.messages('warn').some(line => line.includes('参数不完整')));
+	});
+});
+
+suite('provider / 工具调用与思考内容的时序', () => {
+	test('上游给出 finish_reason 就先报工具调用，不等流结束', () => {
+		const { translator, recorder } = createTranslator();
+
+		translator.handle(toolCallChunk([{ index: 0, id: 'c', function: { name: 'read_file', arguments: '{}' } }]));
+		assert.strictEqual(toolCalls(recorder).length, 0, '还没收到收尾信号时先攒着');
+
+		translator.handle({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+		assert.strictEqual(toolCalls(recorder).length, 1, '参数已到齐就报，agent 循环不必多等一个往返');
+
+		const summary = translator.flush();
+		assert.strictEqual(toolCalls(recorder).length, 1, 'flush 不能重复上报同一次调用');
+		assert.strictEqual(summary.toolCallCount, 1);
+	});
+
+	test('网关不发 finish_reason 时，工具调用在 flush 里补报', () => {
+		const { translator, recorder } = createTranslator();
+
+		translator.handle(toolCallChunk([{ index: 0, id: 'c', function: { name: 't', arguments: '{}' } }]));
+		const summary = translator.flush();
+
+		assert.strictEqual(toolCalls(recorder).length, 1);
+		assert.strictEqual(summary.toolCallCount, 1);
+	});
+
+	test('思考原文始终累积，与是否回显无关（回填 reasoning_content 要用）', () => {
+		const hidden = createTranslator({ includeReasoning: false });
+		hidden.translator.handle(reasoningChunk('想'));
+		hidden.translator.handle(reasoningChunk('一下'));
+		assert.strictEqual(hidden.translator.flush().reasoningText, '想一下');
+
+		const shown = createTranslator({ includeReasoning: true });
+		shown.translator.handle(reasoningChunk('想'));
+		assert.strictEqual(shown.translator.flush().reasoningText, '想');
+	});
+
+	test('没有思考部件时，思维链以 Markdown 引用块回显', () => {
+		const { translator, recorder } = createTranslator({ includeReasoning: true, thinkingParts: false });
+
+		translator.handle(reasoningChunk('想一下'));
+		translator.handle(contentChunk('答案'));
+		translator.flush();
+
+		const parts = texts(recorder);
+		assert.ok(
+			parts.some(text => text.includes('思考过程') && text.includes('> 想一下')),
+			'回退路径要把思维链包成引用块',
+		);
+		assert.ok(parts.includes('答案'));
+	});
+
+	test('宿主提供思考部件时，思维链不再当正文发出去', () => {
+		if (!supportsThinkingPart()) {
+			return;
+		}
+		const { translator, recorder } = createTranslator({ includeReasoning: true });
+
+		translator.handle(reasoningChunk('想一下'));
+		translator.handle(contentChunk('答案'));
+		translator.flush();
+
+		assert.deepStrictEqual(texts(recorder), ['答案'], '思维链走专用部件，正文里不该再出现它');
+		assert.strictEqual(
+			recorder.parts.some(part => isThinkingPart(part)),
+			true,
+		);
 	});
 });
 

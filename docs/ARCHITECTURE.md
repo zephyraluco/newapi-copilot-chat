@@ -239,20 +239,23 @@ flowchart TD
 | **`provider/`** 与 Copilot 交互 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
-| `chatProvider.ts` | 549 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
+| `chatProvider.ts` | 621 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
-| `messages.ts` | 344 | VS Code ⇄ OpenAI 兼容的消息转换 |
-| `stream.ts` | 381 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
-| `tokenizer.ts` | 110 | token 估算（刻意高估） |
+| `messages.ts` | 417 | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
+| `stream.ts` | 431 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
+| `tokenizer.ts` | 172 | token 估算（刻意高估，按真实用量校准比例） |
+| `thinking.ts` | 69 | 思考内容部件（proposed API）的探测、构造与读取 |
+| `replay.ts` | 105 | 思考内容的回放标记：随响应留下、下次请求读回 |
+| `toolFlow.ts` | 178 | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
 | **`adapter/`** 差异出口 | | |
-| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 188 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
-| `deepseek/`（2 个文件） | 254 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
+| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 196 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
+| `deepseek/`（2 个文件） | 257 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
 | `statusService.ts` | 352 | 状态的唯一真相来源，按配置组聚合 |
 | `statusBar.ts` | 211 | 状态栏渲染（悬浮提示 = 本次会话消耗，空闲时不弹） |
 | `panel.ts` | 633 | Webview 面板（HTML + 手写 DOM 脚本） |
 | **测试** | | |
-| `test/*.ts`（15 个文件） | 4,174 | 278 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
+| `test/*.ts`（17 个文件） | 4,739 | 310 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
 
 ## 4. 分层与依赖方向
 
@@ -600,12 +603,15 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
 ### 流式翻译（`stream.ts`）
 
 - **工具调用分片到达**：`function.arguments` 会被切开，必须按 `index` 归并、按到达顺序拼接，最后才能 parse。
-  **统一在流结束时上报**——只有那时才能确定参数拼完整了。网关省略 `index` 时按有没有 `id` 判断新调用，
+  上游给出 `finish_reason` 时**立即上报**（那时参数已经到齐，等到流真正结束只会让 agent 循环多等一个往返），
+  网关不发 `finish_reason` 时才在 `flush` 里补报。省略 `index` 时按有没有 `id` 判断新调用，
   续传分片接在最后一个槽位上（退回「槽位数量」当索引会把参数送进一个没有函数名的空槽，最后被丢弃，
   症状是「工具被执行了但参数全空」）。解析失败时：正常结束就返回空对象，让 VS Code 报出参数校验失败
   （模型可自我修正），比丢掉这次工具调用更好；**流被掐断时直接丢弃这次调用**，半截 JSON 拿去执行工具只会更糟。
   上游偶尔把 JSON 包在 Markdown 代码块里，会被自动剥离。
 - **思维链有两种字段名**：DeepSeek 用 `reasoning_content`，OpenRouter 等用 `reasoning`。
+  宿主提供 `LanguageModelThinkingPart`（proposed API）时走专用部件，否则包成 Markdown 引用块当正文发出
+  （见下文「思考内容」）。原文无论是否回显都会累积——回填历史要用。
 - **usage 只在最后一个 chunk**：单独记下用于统计。
 - **多 choice**：VS Code 的响应模型是单条回答，只取 `index === 0`（对 `n > 1` 给出警告）。
 - **已上报部件数**：`emittedParts` 是重发门的输入，只统计真正上报出去的东西（见上文「流被掐断时的处置」）。
@@ -634,11 +640,53 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 `prompt_tokens`。因此这两件事要一起做对，面板里才会有数——**只有用量、tokenizer 报不了数**（或反过来）
 都会得到残缺的显示。
 
+### 思考内容：渲染与回填（`thinking.ts` / `replay.ts`）
+
+两件事相互独立，不要混为一谈：**怎么显示**是外观问题，**要不要回填**是上游的协议要求。
+
+- **渲染**：宿主提供 `LanguageModelThinkingPart`（proposed API，`package.json` 里用
+  `enabledApiProposals` 声明）时，思维链走专用部件，Copilot 渲染成可折叠的思考块，
+  外观由用户自己的思考样式设置决定；宿主没提供（或用户关掉 `request.includeReasoning`）时
+  回退到 Markdown 引用块。三种情况都在 `StreamTranslator.emitReasoning` 一个方法里收敛。
+  探测只看构造函数是否存在，且按**构造时定好一次**处理：同一次响应里忽冷忽热地换渲染路径更糟。
+- **回填**：DeepSeek 在**思考态的工具调用历史**里要求助手消息带回 `reasoning_content`，
+  缺了这次请求会被拒。而稳定 API 不会把思考内容交还给 provider——历史里只剩正文与工具调用。
+  因此响应结束时额外上报一个 `mimeType` 为 `stateful_marker` 的 data 部件（宿主不渲染它，
+  但会留在会话历史里、在后续请求中原样回传），下次构造请求时再读出来填进 `reasoning_content`。
+  是否打开由适配器的 `echoReasoningContent` 决定（目前只有 DeepSeek）：对不认这个字段的实现，
+  多一个字段就是多一个 400 的理由。宿主真的回传了思考部件时，标记缺失也有一层回退。
+
+**标记格式**（`newapi-copilot\json:<base64url>`）自产自销，但仍然做了防御：前缀不是自己的、
+base64 非法、JSON 不是预期形状，一律当作「没有标记」——一个坏标记不该把整次请求弄崩。
+任何时候都读不出标记时，行为退化成「不回填」，与没有这个机制时完全一致。
+
+### 工具组预激活（`toolFlow.ts`）
+
+宿主把 MCP 工具组（GitKraken、Pylance 等）以 `activate_<组名>` 的**虚拟工具**给出，模型得先
+「调用」它，宿主才会把组里的真实工具展开到下一轮的 `tools` 里。这带来两个副作用：工具列表在
+展开前后两轮之间完全不同（上游的**前缀缓存**按工具定义算，前缀一变前面那段就白算了），
+以及是否去激活全看模型想不想得起来。
+
+`request.stabilizeToolList` 打开后（默认关闭），provider 在请求上游**之前**把还没激活的
+`activate_*` 逐个上报成工具调用就返回：宿主执行它们、展开工具组，然后带着完整列表重新发起本次请求。
+
+- 伪调用与它们的结果都带 `newapi-preflight-` 前缀，**后续任何请求里都会被过滤掉**（上游看不到这段
+  控制流，它也不会把工具调用历史弄脏）。过滤是无条件的：用户中途关掉设置时，历史里残留的伪调用同样不能发出去。
+- 同一个用户请求里最多预激活 `MAX_PREFLIGHT_ROUNDS` 轮，到顶就报错——不设上限时，宿主没执行或工具组
+  展不开会变成一轮接一轮的请求。
+- 识别范围是**最后一条人类消息之后**：上一轮用户请求的激活记录不该算数。
+
 ### Token 估算（`tokenizer.ts`）
 
 拿不到目标模型的真实分词器（各家不同、网关也不暴露），只能估算：CJK 按 1 字符 ≈ 1 token、
 其余按 4 字符 ≈ 1 token，再加消息 / 工具 / 图片的固定开销。**偏差方向是有意选择的**：宁可高估——
 高估会让 VS Code 更早裁剪历史，代价只是少一点上下文；低估则会把超长请求发给上游而被拒绝。
+
+比例不是常量：上游返回的真实用量可以用来反推「这次请求多少字符对应一个 token」
+（`calibrateCharsPerToken`，指数移动平均，新观测占三成）。没人报用量（站点关掉了 `stream_options`）
+或请求为空时就不校准；单个离谱的观测值会被夹在合理区间内，不让它把估算带偏一个量级。
+比例由 provider 持有并传进纯函数——估算过程不偷偷改全局状态，否则测试与并发请求会互相干扰。
+回放标记（`stateful_marker`）不计入 token：它不会发给上游。
 
 ## 9. `adapter/` —— 协议差异的出口
 
@@ -683,6 +731,10 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 
 `reasoning_effort` 的取值不做翻译：模型选择器里的档位本来就来自数据表。改写结果会带上请求种类
 写进 `debug` 日志，排查「哪些请求被关掉了思考」时不用靠猜。
+
+适配器还声明了 `echoReasoningContent`：思考态的历史助手消息要带回 `reasoning_content`，
+由 provider 用回放标记完成（机制见 §8「思考内容：渲染与回填」）。这是**上游的协议要求**，
+与「思维链要不要显示给用户」（`request.includeReasoning`）是两件事。
 
 ## 10. `status/` —— 状态栏与面板
 
@@ -781,11 +833,14 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 | 连接失败给用户的是「分类 + 错误码 + 建议」，不是原始错误链 | 链里的 `syscall` / `errno` 对用户没有意义；码留在方括号里（可搜索），明细进日志，两边都不丢信息 |
 | 错误码表不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，而丢掉码就等于把唯一的线索丢了 |
 | 交给 VS Code 的错误清掉 `stack` | Copilot 会把堆栈一起渲染；用户要的是原因，不是指向打包产物的调用链（原始异常已在日志里） |
+| 思考内容靠 `stateful_marker` 数据部件回环 | 稳定 API 不把思考内容交还给 provider，这是唯一能按轮次把 `reasoning_content` 带回上游的通道；宿主不回传时行为退化成「不回填」，不会出错 |
+| 用 proposed API 渲染思考内容（`enabledApiProposals`） | 可折叠的思考块只有它能做到；代价是宿主不提供该部件时才能回退到引用块，且这个提案将来可能变 |
+| 工具组预激活默认关闭 | 它换来的前缀缓存命中率要用每轮多带的工具定义 token 去换，工具不多时并不划算 |
 
 ## 13. 测试
 
 `npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-278 个用例，只覆盖**纯函数与装配**：
+310 个用例，只覆盖**纯函数与装配**：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -793,9 +848,11 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 | `test/sse.test.ts` | 事件分帧（含 CRLF 正好被切在分片之间）、多行 `data`、心跳注释、UTF-8 被从中间切开、静默超时、收尾信息回填、非 SSE 降级读取及其静默超时 |
 | `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮、失败建议 |
 | `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类各自的建议、含 `$` 序列的码、主机名）、日志用的一行明细（折叠换行、截断、成环） |
-| `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、已上报部件数、用量快照、`decideStreamFailure` 的四类处置 |
+| `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、`finish_reason` 立即上报与 `flush` 不重复上报、已上报部件数、用量快照、思考原文累积与两种渲染路径、`decideStreamFailure` 的四类处置 |
 | `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
-| `test/provider.test.ts` | token 估算、消息转换（工具/图片/system）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 用量部件，走真实的 `provideLanguageModelChatResponse`） |
+| `test/provider.test.ts` | token 估算与比例校准、消息转换（工具/图片/system/思考回填）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 用量部件 + 回放标记，走真实的 `provideLanguageModelChatResponse`）、工具组预激活（过滤、早退、轮数上限） |
+| `test/replay.test.ts` | 回放标记的读写：往返、非 ASCII 与特殊字符、前缀/分隔符/编码/JSON 形状的异常输入一律退化成「没有标记」 |
+| `test/thinking.test.ts` | 思考部件（proposed API）的可选契约：造不出来当且仅当宿主没提供；普通部件不会被误认成思考内容 |
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
 | `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
 | `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |

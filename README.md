@@ -15,7 +15,8 @@
   （`anthropic/claude-sonnet-4.5`）；数据表没有该模型时回退到 ID，选择器的副标题给出厂商与窗口。
 - **可解释的模型信息**：状态面板的模型清单里**每个数值都标注来源**（模型数据表 / 网关返回值 /
   默认值），来源冲突时会说明已采用哪个值；模型悬浮提示只列身份、规模与能力，且逐项一行、键值分列。
-- **真实流式输出**：逐块输出正文；思维链（`reasoning_content` / `reasoning`）可选择是否回显。
+- **真实流式输出**：逐块输出正文；思维链（`reasoning_content` / `reasoning`）可选择是否回显——
+  宿主提供「思考内容」部件时以**可折叠的思考块**呈现，否则回退到引用块。
 - **思考强度可调**：支持思考的模型会在模型选择器里提供「思考强度」选项，且**档位按模型从数据表取**
   （例如某模型能选 `max`/`high`/`low`，另一个只有 `xhigh`/`high`）。
 - **工具调用**：支持 Copilot Chat 的 Agent 模式与 MCP 工具，工具参数分片会正确合并。
@@ -27,8 +28,11 @@
 - **安全的密钥管理**：API Key 由 VS Code 存入系统钥匙串，不写入配置文件；日志中会自动脱敏。
 - **支持多个站点**：可建立多个配置组（例如官方站与自建站），每组独立维护连接与模型列表。
 - **DeepSeek 模型按官方形态发请求**：思考能力显式开关（`thinking`）；宿主发起的辅助请求
-  （起标题、写提交信息、生成分支名…）会关掉思考——它们的产出只有一行短文本。
+  （起标题、写提交信息、生成分支名…）会关掉思考——它们的产出只有一行短文本；
+  思考态的工具调用历史会回填 `reasoning_content`（DeepSeek 要求这个字段）。
   其余模型走恒等变换的兜底适配器，不做任何改写。
+- **可选的工具列表稳定化**：`request.stabilizeToolList` 打开后，扩展先把 `activate_*` 工具组
+  激活完再发请求，让每轮的工具列表保持一致（提高上游前缀缓存命中率）。
 
 ## 快速开始
 
@@ -73,7 +77,8 @@
 | `request.maxRetries` | `2` | 失败重试次数（不含首次）。只对网络错误、超时、429、5xx 生效；服务端要求等超过 30 秒的限流直接报错而不重试。 |
 | `request.temperature` | `null` | 留空则不发送该字段。 |
 | `request.topP` | `null` | 留空则不发送该字段。 |
-| `request.includeReasoning` | `false` | 是否把思维链作为正文回显。 |
+| `request.includeReasoning` | `false` | 是否把思维链回显给用户（宿主提供思考部件时为可折叠的思考块，否则是引用块）。不影响向 DeepSeek 回填 `reasoning_content`。 |
+| `request.stabilizeToolList` | `false` | 发请求前先把 `activate_*` 工具组激活完，让每轮工具列表一致（利于上游前缀缓存），代价是每轮多带工具定义。 |
 | `request.extraBody` | `{}` | 透传给所有模型的额外请求体字段。 |
 
 ### 状态
@@ -155,7 +160,7 @@ src/
   cancellation.ts     CancellationToken → AbortSignal 桥接
   client/             与 New API 交互（HTTP、SSE、端点封装）
   models/             模型信息整合（数据表、glob、配置解析、tooltip、缓存）
-  provider/           与 Copilot 交互（配置组解析、会话分配、provider、消息与流转换）
+  provider/           与 Copilot 交互（配置组解析、会话分配、provider、消息与流转换、思考回放、工具组预激活）
   adapter/            按模型处理协议差异（框架层 + 兑底模板）
     deepseek/         DeepSeek：请求种类识别、思考开关与辅助请求改写
   status/             状态栏与状态面板
@@ -168,10 +173,13 @@ src/
 
 ## 已知限制
 
-- **思维链渲染**：稳定的 VS Code API 没有专门的「思考内容」响应部件，因此开启
-  `request.includeReasoning` 后，思维链会以引用块的形式出现在回答前面，而不是独立的折叠区域。
+- **思维链渲染**：宿主提供「思考内容」部件（`LanguageModelThinkingPart`，proposed API）时以可折叠
+  的思考块呈现；宿主没有该部件时只能把思维链当正文发出去，包成引用块。
+- **思考内容回填依赖宿主保留数据部件**：DeepSeek 要求思考态的助手消息带回 `reasoning_content`，
+  而稳定 API 不会把思考内容交还给 provider，因此扩展额外上报一个 `stateful_marker` 数据部件再读回来。
+  宿主不保留它时，这层回填就静默失效（行为与没有这个机制时一致，不会报错）。
 - **Token 估算**：使用字符数启发式估算（CJK 按 1 字符 ≈ 1 token，其余按 4 字符 ≈ 1 token），
-  刻意偏保守地高估。它不是目标模型的真实分词器。
+  并按上游返回的真实用量缓慢校准比例。它不是目标模型的真实分词器。
 - **模型数据表会过期**：模型窗口与能力由厂商决定且会变化，请跑 `npm run models:openrouter` 重新生成。
 - **思考强度只对识别为「支持思考」的模型开放**：判断不出来时宁可不显示（也不发送参数），
   避免向不认识 `reasoning_effort` 的站点发出会被拒的请求。

@@ -10,6 +10,8 @@
  * 2. **`reasoning_effort` 只与「开启思考」共存**：关掉思考时一并去掉；模型不具备思考能力时
  *    也不该出现这个字段。
  * 3. **辅助请求不思考**：它们的产出只有一行短文本，思考只会让它们慢几倍。
+ * 4. **思考内容要回填历史**：思考态下的工具调用历史里缺 `reasoning_content` 会被上游拒掉，
+ *    因此打开 `echoReasoningContent`，由 provider 用回放标记把思考文本带回来（见 `provider/replay.ts`）。
  *
  * 行为不随站点变化：New API 是网关，模型后面接的是哪个上游、上游认不认这些字段都无法从
  * 地址上判断。`reasoning_effort` 的取值也不做翻译，档位本来就来自数据表。
@@ -40,6 +42,7 @@ export class DeepSeekAdapter implements ModelAdapter {
 	readonly id = 'deepseek';
 	readonly description = 'DeepSeek：显式写入思考开关，辅助请求关闭思考';
 	readonly priority = 100;
+	readonly echoReasoningContent = true;
 
 	supports(model: ModelConfig): boolean {
 		return isDeepSeekModel(model);

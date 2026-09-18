@@ -25,6 +25,9 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "enabledApiProposals": [
+    "languageModelThinkingPart"
+  ],
   "contributes": {
     "languageModelChatProviders": [
       {
@@ -193,8 +196,14 @@
         "newapi-copilot-chat.request.includeReasoning": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）作为正文回显。\n\n稳定的 VS Code API 目前没有专门的「思考内容」响应部件，因此开启后思维链会以引用块的形式出现在回答前面。",
+          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）回显给用户。\n\n宿主提供「思考内容」部件（`LanguageModelThinkingPart`）时，思维链会以可折叠的思考块呈现，外观由 Copilot 的思考样式设置决定；否则只能当正文发出去，以 Markdown 引用块的形式出现在回答前面。\n\n关闭它不影响向 DeepSeek 回填 `reasoning_content`：那是上游要求的请求字段，与是否展示无关。",
           "order": 26
+        },
+        "newapi-copilot-chat.request.stabilizeToolList": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "是否在请求上游之前先把 `activate_*` 工具组「预激活」一遍。\n\n宿主把 MCP 工具组（GitKraken、Pylance 等）以 `activate_<组名>` 的虚拟工具给出，模型调用后宿主才把组里的真实工具展开。预激活让每轮的工具列表保持一致，能提高上游前缀缓存的命中率（含 DeepSeek 的上下文缓存）。\n\n代价是每轮多带一批工具定义的输入 token，工具不多（几十个以内）时收益有限，默认关闭。预激活的伪调用与它们的结果不会发给上游。",
+          "order": 28
         },
         "newapi-copilot-chat.request.extraBody": {
           "type": "object",

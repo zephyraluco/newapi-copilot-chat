@@ -54,6 +54,7 @@ function contextFor(model: ModelConfig): AdapterContext {
 			temperature: undefined,
 			topP: undefined,
 			includeReasoning: false,
+			stabilizeToolList: false,
 			extraBody: {},
 		},
 		logger: testLogger(),

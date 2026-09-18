@@ -56,6 +56,14 @@ export interface ModelAdapter {
 	readonly priority?: number;
 	/** 判断是否由本适配器处理该模型 */
 	supports(model: ModelConfig): boolean;
+	/**
+	 * 历史里的助手消息是否要回填思考内容（`reasoning_content`）。
+	 *
+	 * 打开后 provider 会把上一次响应用**回放标记**留下的思考文本写回 assistant 消息
+	 * （见 `provider/replay.ts`）——宿主不会把思考内容放回历史里，不回填就永远拿不回来。
+	 * 只有确实要求这个字段的上游才该打开：对不认它的实现，多一个字段就是多一个 400 的理由。
+	 */
+	readonly echoReasoningContent?: boolean;
 	/** 请求发出前的最后一道改写（删除不支持的参数、补网关专属字段）；必须返回请求对象。 */
 	transformRequest?(
 		request: ChatCompletionRequest,

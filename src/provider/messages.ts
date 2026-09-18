@@ -10,6 +10,9 @@
  *
  * 因此一个 VS Code 消息可能被拆成**多条**上游消息，且顺序敏感：assistant(tool_calls) 之后
  * 必须紧跟若干条 tool 消息，顺序错了上游会直接报 400。
+ *
+ * 另外两类部件只在这条链路上处理：思考部件（proposed API）不能当正文发出去，
+ * 回放标记（见 `replay.ts`）是我们自己写进历史的元数据，也不能发出去。
  */
 
 import * as vscode from 'vscode';
@@ -23,6 +26,8 @@ import type {
 	ChatToolDefinition,
 	ChatToolChoice,
 } from '../types';
+import { isReplayMarkerPart, readReplayedReasoning } from './replay';
+import { readThinkingText } from './thinking';
 
 /** 转换结果。 */
 export interface ConvertedMessages {
@@ -42,6 +47,13 @@ export interface ConvertMessagesOptions {
 	 * 用 `name` 标记来源。稳妥起见默认开启，并在没有命中时保持原样。
 	 */
 	readonly promoteNamedSystemMessages?: boolean;
+	/**
+	 * 是否把历史里的思考内容回填成 assistant 消息的 `reasoning_content`。
+	 *
+	 * 只有明确需要它的上游才打开（例如 DeepSeek 在思考态的工具调用历史里要求这个字段，
+	 * 见 `adapter/deepseek`）；对不认这个字段的实现，多送一个字段就是多一个 400 的理由。
+	 */
+	readonly echoReasoningContent?: boolean;
 }
 
 /** 把 VS Code 的消息数组转换成 OpenAI 兼容格式。 */
@@ -51,6 +63,7 @@ export function convertMessages(
 	options: ConvertMessagesOptions = {},
 ): ConvertedMessages {
 	const promoteSystem = options.promoteNamedSystemMessages ?? true;
+	const echoReasoning = options.echoReasoningContent ?? false;
 	const result: ChatRequestMessage[] = [];
 	const warnings: string[] = [];
 	let skipped = 0;
@@ -60,7 +73,7 @@ export function convertMessages(
 		const isAssistant = message.role === vscode.LanguageModelChatMessageRole.Assistant;
 
 		if (isAssistant) {
-			const converted = convertAssistantMessage(message, parts, warnings);
+			const converted = convertAssistantMessage(message, parts, warnings, echoReasoning);
 			if (converted === undefined) {
 				skipped++;
 				continue;
@@ -88,6 +101,10 @@ export function convertMessages(
 				continue;
 			}
 			if (part instanceof vscode.LanguageModelDataPart) {
+				// 回放标记是我们自己写进历史的元数据，既不是图片也不是正文
+				if (isReplayMarkerPart(part)) {
+					continue;
+				}
 				const image = dataPartToImage(part, warnings);
 				if (image !== undefined) {
 					contentParts.push(image);
@@ -135,13 +152,21 @@ export function convertMessages(
 /* 助手消息                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/** 转换助手消息。返回 `undefined` 表示该消息没有任何有效内容。 */
+/**
+ * 转换助手消息。返回 `undefined` 表示该消息没有任何有效内容。
+ *
+ * `echoReasoningContent` 打开时，思考内容会被回填成 `reasoning_content`（见 `replay.ts`）。
+ * 优先用回放标记里的文本：宿主可能根本不把思考部件放回历史里，那时标记是唯一的来源；
+ * 只有标记缺失时才退回宿主给的思考部件。
+ */
 function convertAssistantMessage(
 	message: vscode.LanguageModelChatRequestMessage,
 	parts: readonly unknown[],
 	warnings: string[],
+	echoReasoningContent: boolean,
 ): ChatRequestMessage | undefined {
 	let text = '';
+	let thinking = '';
 	const toolCalls: ChatRequestToolCall[] = [];
 	const images: ChatContentPart[] = [];
 
@@ -162,10 +187,18 @@ function convertAssistantMessage(
 			continue;
 		}
 		if (part instanceof vscode.LanguageModelDataPart) {
+			if (isReplayMarkerPart(part)) {
+				continue;
+			}
 			const image = dataPartToImage(part, warnings);
 			if (image !== undefined) {
 				images.push(image);
 			}
+			continue;
+		}
+		const partThinking = readThinkingText(part);
+		if (partThinking !== undefined) {
+			thinking += partThinking;
 			continue;
 		}
 		const fallback = partToText(part);
@@ -184,12 +217,52 @@ function convertAssistantMessage(
 		: (toolCalls.length > 0 ? null : '');
 
 	const name = normalizeName(message.name);
+	const reasoning = echoReasoningContent
+		? (readReplayedReasoning(message) ?? thinking)
+		: '';
 	return {
 		role: 'assistant',
 		content,
 		...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 		...(name !== undefined && name !== 'system' ? { name } : {}),
+		...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
 	};
+}
+
+/**
+ * 统计请求体里的**文本**字符数，用于按上游返回的真实用量校准 token 估算比例。
+ *
+ * 图片以 `data:` URL 传输，字符数没有意义（还会把比例彻底带偏），因此只数文本、
+ * 工具调用与回填的思考内容。调用方拿到的是「与 `prompt_tokens` 对应的字符量」。
+ */
+export function countRequestChars(messages: readonly ChatRequestMessage[]): number {
+	let total = 0;
+	for (const message of messages) {
+		total += contentChars(message.content);
+		total += message.reasoning_content?.length ?? 0;
+		for (const call of message.tool_calls ?? []) {
+			total += call.function.name.length;
+			total += call.function.arguments.length;
+		}
+	}
+	return total;
+}
+
+/** 内容里可计入字符数的部分。 */
+function contentChars(content: ChatRequestMessage['content']): number {
+	if (typeof content === 'string') {
+		return content.length;
+	}
+	if (content === null) {
+		return 0;
+	}
+	let total = 0;
+	for (const part of content) {
+		if (part.type === 'text') {
+			total += part.text?.length ?? 0;
+		}
+	}
+	return total;
 }
 
 /* -------------------------------------------------------------------------- */

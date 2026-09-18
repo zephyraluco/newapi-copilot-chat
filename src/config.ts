@@ -49,8 +49,10 @@ export interface RequestSettings {
 	readonly temperature: number | undefined;
 	/** 核采样；未设置则不发送 */
 	readonly topP: number | undefined;
-	/** 是否把思维链（reasoning_content）作为正文回显 */
+	/** 是否把思维链（reasoning_content）回显给用户 */
 	readonly includeReasoning: boolean;
+	/** 是否在请求上游之前先激活 activate_* 工具组，让每轮的工具列表保持一致 */
+	readonly stabilizeToolList: boolean;
 	/** 透传给所有模型的额外请求体字段 */
 	readonly extraBody: Readonly<Record<string, unknown>>;
 }
@@ -181,6 +183,7 @@ export function readSettings(logger: Logger): NewApiSettings {
 			temperature: readTemperature(config, logger),
 			topP: readTopP(config, logger),
 			includeReasoning: asBoolean(config.get('request.includeReasoning')) ?? false,
+			stabilizeToolList: asBoolean(config.get('request.stabilizeToolList')) ?? false,
 			extraBody: readRecord(config, 'request.extraBody'),
 		},
 		status: {
@@ -238,6 +241,7 @@ export class ConfigService implements vscode.Disposable {
 				temperature: request.temperature,
 				topP: request.topP,
 				includeReasoning: request.includeReasoning,
+				stabilizeToolList: request.stabilizeToolList,
 			},
 			status,
 		};
