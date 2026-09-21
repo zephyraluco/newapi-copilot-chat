@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import type { ModelDatasetEntry } from '../models/dataset';
 import { resolveModelConfig } from '../models/modelConfig';
-import { toModelInformation } from '../provider/chatProvider';
+import { toModelInformation } from '../provider/modelInformation';
 import { SessionRegistry } from '../runtime/session';
 import {
 	createTarget,

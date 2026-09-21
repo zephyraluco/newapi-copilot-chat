@@ -88,11 +88,11 @@ flowchart TD
         c6["sse.parseSseStream<br/>字节流 → 事件 → JSON chunk"]
     end
 
-    subgraph s4["④ 逐块翻译（每个 chunk 一次）"]
+    subgraph s4["④ 逐块翻译（每个 chunk 一次，产中立部件）"]
         d1["extractStreamError<br/>上游可能把错误塞进 200 响应"]
         d3["StreamTranslator.handle"]
-        d4["content → LanguageModelTextPart"]
-        d5["reasoning → 思考部件，或 Markdown 引用块"]
+        d4["content → text 部件"]
+        d5["reasoning → reasoning 部件，或 Markdown 引用块"]
         d6["tool_calls → 按 index 累积，收尾时才上报"]
         d7["usage → 只记最后一个"]
     end
@@ -195,8 +195,11 @@ flowchart TD
 | `content-type` 不是 SSE | `client/newApiClient.ts` | 降级为单块 JSON，而不是静默失败 |
 | 静默超时（无新字节） | `client/sse.ts` | `SseIdleTimeoutError`，与用户取消区分 |
 | 流量正常结束但缺 `[DONE]` 与 `finish_reason` | `client/newApiClient.ts` | `SseTruncatedError`（半截回答不能当成功） |
-| 流被掐断、还没上报过任何部件 | `provider/chatProvider.ts` | 重发整次请求（最多 2 次） |
-| 流被掐断、但已上报过内容 | `provider/chatProvider.ts` | 保留已收到的内容，只记警告 |
+| 流被掐断、还没上报过任何部件 | `provider/streamFlow.ts` | 重发整次请求（最多 2 次） |
+| 流被掐断、但已上报过内容 | `provider/streamFlow.ts` | 保留已收到的内容，只记警告 |
+| **站点以 400 拒绝，且响应体点名了一个可选字段** | `provider/requestRepair.ts` | 去掉那个字段重发（最多 2 轮），已试过的步骤不重复 |
+| 站点以 400 拒绝，但没说清是哪个字段 | `provider/requestRepair.ts` | 不修，把上游原话交给用户（没有线索还乱改字段只会产生新问题） |
+| 自愈改过请求仍被 400 拒绝 | `provider/streamFlow.ts` | 记下「去掉过什么」后照常失败（见 §8） |
 | chunk 带 `error` 字段 | `provider/stream.ts` | 视为失败抛出（上游把错误塞进 200 响应） |
 | 工具调用缺少函数名 | `provider/stream.ts` | 记警告并跳过 |
 | 工具分片不带 `index` | `provider/stream.ts` | 按有无 `id` 判断新调用，续传分片接在同一个槽位 |
@@ -213,7 +216,7 @@ flowchart TD
 | `extension.ts` | 162 | 激活与装配。**只做接线**，读它能看清整体数据流 |
 | `commands.ts` | 132 | 命令实现（测试连接 / 刷新模型 / 打开设置 / 重置用量）与「刷新后通知宿主」 |
 | **基础层** | | |
-| `consts.ts` | 160 | 命令 ID、端点、默认值、思考强度键名、用量部件 MIME、运行时版本 |
+| `consts.ts` | 157 | 命令 ID、端点、默认值、思考强度键名、用量部件 MIME、运行时版本 |
 | `config.ts` | 254 | 共享调整项（模型过滤、请求参数、状态栏、日志级别）的读取与校验 |
 | `types.ts` | 272 | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 174 | 安全解析、类型收窄、按键取候选值 |
@@ -221,26 +224,36 @@ flowchart TD
 | `errors.ts` | 340 | 网络错误码 → 分类 → 人话，以及日志用的错误链渲染 |
 | `usage.ts` | 140 | 用量的读出：缓存命中与思维链 token、各网关字段名兼容，以及回传 Copilot 的载荷 |
 | `format.ts` | 67 | token / 相对时间格式化、Markdown 转义：**展示文案的唯一出口** |
-| `logger.ts` | 287 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
+| `logger.ts` | 286 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
 | `http.ts` | 489 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
 | `sse.ts` | 302 | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
-| `newApiClient.ts` | 474 | 端点封装、模型列表解析、错误描述与失败建议 |
+| `newApiClient.ts` | 480 | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 219 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
-| `modelConfig.ts` | 576 | 多来源合并、一致性校正、远端字段提取 |
-| `tooltip.ts` | 119 | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
+| `remoteHints.ts` | 159 | 远端字段提取：**唯一**知道各家网关字段名的地方 |
+| `limits.ts` | 93 | 窗口/输出/输入的一致性校正、显著差异判定 |
+| `modelConfig.ts` | 349 | 按优先级合并三路来源，记录来源与校正说明 |
+| `tooltip.ts` | 111 | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
 | `catalog.ts` | 218 | 拉取编排、缓存、并发合并、失败降级 |
 | **`runtime/`** 连接目标与会话 | | |
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
 | **`provider/`** 与 Copilot 交互 | | |
-| `chatProvider.ts` | 599 | 实现 `LanguageModelChatProvider`（重发门 + 回传用量部件 + 错误交还） |
+| `chatProvider.ts` | 319 | 实现 `LanguageModelChatProvider`：编排与生命周期（其余各事各有模块） |
+| `modelInformation.ts` | 63 | `ModelConfig` → `LanguageModelChatInformation` 的映射 |
+| `requestBuilder.ts` | 67 | 请求体组装（设置 → `extraBody` → 思考强度，写入顺序即优先级） |
+| `streamFlow.ts` | 223 | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是**传输维度的锚点**；中立部件 → 宿主部件的绑定 |
+| `requestRepair.ts` | 209 | HTTP 400 的自愈阶梯：去掉站点不认的那个可选字段，纯函数 |
+| `responseParts.ts` | 60 | 回传部件：用量数据部件与思考回放标记 |
+| `preflight.ts` | 51 | 工具组预激活的宿主侧（上报伪调用那一半） |
+| `errorMapping.ts` | 29 | 内部错误 → `vscode.LanguageModelError` 与清 `stack` |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 412 | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
-| `stream.ts` | 432 | 流式 chunk → 响应部件（工具调用分片合并、思维链、失败处置） |
+| `stream.ts` | 432 | 流式 chunk → **中立**响应部件（工具调用分片合并、思维链、失败处置）；不依赖 `vscode` |
+| `parts.ts` | 30 | 中立响应部件的形状与回调：翻译层的输出契约 |
 | `tokenizer.ts` | 152 | token 估算（刻意高估，按真实用量校准比例） |
 | `thinking.ts` | 69 | 思考内容部件（proposed API）的探测、构造与读取 |
 | `replay.ts` | 105 | 思考内容的回放标记：随响应留下、下次请求读回 |
@@ -250,9 +263,9 @@ flowchart TD
 | `deepseek/`（2 个文件） | 257 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
 | `statusService.ts` | 356 | 状态的唯一真相来源，按配置组聚合 |
-| `statusBar.ts` | 222 | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
+| `statusBar.ts` | 213 | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
 | **测试** | | |
-| `test/*.ts`（19 个文件） | 5,178 | 330 个用例 + 注入用的假对象，只覆盖纯函数与装配 |
+| `test/*.ts`（20 个文件） | 5,419 | 347 个用例（其中 9 个文件 181 例跑在纯逻辑套件里）+ 注入用的假对象 |
 
 ## 4. 分层与依赖方向
 
@@ -316,6 +329,10 @@ flowchart LR
 - **`usage.ts` / `reasoning.ts` 在基础层**：它们分别被 `status/` 与 `provider/`、`client/` 与 `provider/` 共用，
   放在任一侧都会让另一侧反向依赖（provider ← status 是本项目的方向）。
 - **`extension.ts` 不含业务逻辑**，是唯一知道「怎么把模块拼起来」的地方。
+- **这些约束有可执行的检查**：`npm run check-layering`（`scripts/check-layering.js`）维护一份
+  「允许依赖宿主」的名单，名单外的文件一旦出现**运行时** `import 'vscode'` 就失败
+  （`import type` 不算）。因此「`client` 不碰 vscode」「翻译层不碰 vscode」这类说法
+  不会因为一次顺手 import 而静默失效。
 
 ## 5. 基础层
 
@@ -509,6 +526,30 @@ vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
 
 ## 8. `provider/` —— 与 Copilot 交互
 
+provider 层按「一件事一个模块」展开，`chatProvider.ts` 自己只做编排与生命周期：
+
+| 模块 | 管什么 |
+| --- | --- |
+| `chatProvider.ts` | 实现三个接口方法、解析会话、按顺序把下面这些模块串起来 |
+| `modelInformation.ts` | 模型发现阶段的输出：`ModelConfig` → `LanguageModelChatInformation` |
+| `requestBuilder.ts` | 请求体的组装（写入顺序即优先级） |
+| `streamFlow.ts` | 消费一次流式响应与重发门；**传输维度的锚点**在这里 |
+| `responseParts.ts` | 把响应的元数据交给宿主（用量部件、思考回放标记） |
+| `preflight.ts` | 工具组预激活的宿主侧（上报伪调用那一半） |
+| `errorMapping.ts` | 交给 VS Code 的错误 |
+
+**翻译层不认识 VS Code**：`stream.ts` 产出的是 `parts.ts` 里那三种**中立部件**
+（`text` / `reasoning` / `toolCall`），让它们变成 `LanguageModelTextPart` 之类的事在
+`streamFlow.ts` 的 `reportResponsePart()` 里——那是流式翻译与宿主之间**唯一**的边界。
+这样做有两个后果，都是想要的：最容易出错的那一层（分片归并、引用块排版、截断判定）
+不再需要扩展宿主就能测（见 §13 的两套测试）；响应怎么渲染也可以整层替换。
+
+**传输维度的锚点是 `ChatStreamSource`**（`streamFlow.ts` 里由消费方声明的窄接口）：provider
+只要求「能按请求吐出一串 chunk」，并不知道它是怎么发出去的。chunk 的形状写在 `types.ts`，
+翻译在 `stream.ts`。因此换一种端点形态（别的路径、别的 chunk 形状）是**替换一个实现**，
+而不是在 provider 里加分支——这与 `status/` 用结构接口（`StatusSessionSource`）
+而不直接依赖 provider 是同一手法。
+
 ### 配置组解析（`runtime/target.ts`）
 
 > 本节与下一节的代码在 `runtime/` 而不是 `provider/`：它们是「目标是谁、它有哪些运行时对象」，
@@ -562,6 +603,30 @@ HTTP 错误是上游原话。两件事要做：
   `Blocked` 表示「被策略阻止」，与限流/超时不是一回事。
 
 唯一的加工是密钥脱敏（`describeError` 里的 `redactText`）。
+
+### 站点不认某个可选字段时（400 自愈）
+
+400 的常见成因不是「请求写错了」，而是**我们加了一个站点不认的可选字段**：拿用量的
+`stream_options`、采样参数 `temperature`、思考强度 `reasoning_effort`、`tool_choice`，
+或者用户在 `extraBody` 里填的网关专属参数。这些字段都是可选的——去掉之后请求仍然成立，
+用户只是少一项增强，而不是拿到一句「请求失败」。`requestRepair.ts` 就是这条阶梯：**上游点名了
+哪个字段，就去掉哪个重试**。
+
+- **只对 400 生效**：401/403/404/429 去掉字段也救不回来，重试只会白花一次请求。
+- **不猜**：要么响应体里点了名（被引号括着、或在冒号后面），要么出现了我们确知自己加过的字段名；
+  两者都没有就不修，把上游原话报出来。
+- **能精确就不连带**：上游说「不认 `temperature`」时只去掉它，`top_p` 留着（站点可能只是不认
+  其中一个）；只有在响应体笼统地说「采样参数不支持」时，才把整类一起去掉。
+- **骨架不动**：`model` / `messages` / `stream` 永远不会被这条路径删掉——宁可失败，也不能把
+  请求改成另一种意思。
+- **有界且不重复**：每个步骤在一轮响应里只用一次，总轮数由 `DEFAULTS.requestRepairRounds`
+  卡住；改不动（没有可删的字段）时不返回计划。自愈**不占**截断重发的额度，因为 400 一定发生在
+  任何内容产出之前，用户还什么都没看到。
+- **改过什么必须留痕**：每一轮都写一条 warn，最终仍然失败时再写一条 error 汇总——否则用户只会
+  看到一个没道理的 400。
+
+`stream_options` 是这里唯一不由请求体承载的字段（客户端按 `request.includeUsage` 加上去），
+因此去掉它走的是传输层的按次覆盖（`streamChatCompletion` 的第三个参数），而不是删请求体的键。
 
 ### 模型配置：思考强度（`modelConfiguration.ts`）
 
@@ -725,6 +790,10 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | `supports(model)` | 每次请求 | 决定这个模型交不交给本适配器 |
 | `transformRequest` | 请求发出前 | 删除不支持的参数、补充网关专属字段、改写字段名 |
 
+**适配器覆盖的是「请求体侧」的差异**。响应侧的形状（chunk 结构）属于传输维度，由
+`ChatStreamSource` + `stream.ts` 承接（见 §8）——两者刻意分开：改一个请求字段名与换一套流式协议
+是两类改动，混进同一个接口会让适配器被迫实现它并不关心的一半。
+
 **只有实际存在的差异才会被写成钩子。** 「每个 chunk 都能改写」「流结束时冲刷」这类钩子曾经留着，
 但没有任何适配器用得上，只会让 provider 的流循环多出分支；真需要时再加。同样，**通用容错不属于这里**：
 「思维链字段名各家不同」由 `reasoning.ts` 统一认，而不是让每个适配器写一遍。
@@ -812,13 +881,13 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
   动手前先分清「供应商差异」（进适配器）与「通用容错」（进基础层，例如 `reasoning.ts`）。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
   `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退，不要让整份配置失效）→ 在对应的
-  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `chatProvider.buildRequest`，
+  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `provider/requestBuilder.ts`，
   影响传输行为（超时、重试、`stream_options` 之类）则经 `runtime/session.ts` 传给 `NewApiClient`。
   改完记得同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：它不是设置项，而是随模型信息下发的 schema——
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
-  （带 `enum` 才会被渲染）→ `chatProvider` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的
+  （带 `enum` 才会被渲染）→ `provider/requestBuilder.ts` 写进请求体 → 有默认项就写进 schema 的
 	`default`（并保证它在 `enum` 里）→ 补测试。
   注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema（见 §8 思考强度）。
 - **新增配置组字段（站点 / 密钥类）**：这类字段**不是**设置项，声明在
@@ -850,7 +919,9 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者给出这段往返的耗时（「测试连接」要报它），并顺带确认该端点是否可用；两个请求开销都很小 |
 | 适配器对 DeepSeek 思考模型一律写入 `thinking`，辅助请求一律关闭思考 | 不写就等于把行为交给上游的默认值；New API 是网关，无法从地址判断上游是否认这个字段，因此不对站点做区分 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
-| 站点不认 `stream_options` 时用户只能关掉它 | 这是扩展主动加的字段（为了拿到用量），站点兼容性无法逐站探测 |
+| 站点不认 `stream_options` 时会自动去掉它再试一次 | 它是我们为了拿用量主动加的字段，站点兼容性无法逐站探测；去掉的代价只是上下文窗口不显示 token 数 |
+| 400 自愈不去掉 `tools` | 去掉工具会让模型没法干活，用户看到的是「回答变笨了」而不是一条错误；这一步留给人自己决定 |
+| 400 自愈有轮数上限，且每一轮必须真的改动请求体 | 站点一直不满意时继续试只会白花请求；「改不动却重发同一个请求」更糟，它会把 400 变成一个看不见的循环 |
 | 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字上报——宁可不显示 |
 | 明细占用的百分比可能与上游口径有出入 | 分母是上游的真实 `prompt_tokens`，分子是本地启发式估算（刻意高估，见 §8） |
 | 流被掐断时已流出的内容会保留（而不是报错让人重发） | 抛错只会在一个已经能用的回答上弹「重试」，但用户实际上需要的是完整的回答 |
@@ -866,8 +937,21 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 
 ## 13. 测试
 
-`npm test` 在真实 VS Code 测试宿主中运行（`@vscode/test-cli` + `@vscode/test-electron`），
-330 个用例，只覆盖**纯函数与装配**：
+两套测试，共 347 个用例，只覆盖**纯函数与装配**：
+
+| 命令 | 运行环境 | 覆盖 |
+| --- | --- | --- |
+| `npm run test:unit` | `node --test`，无扩展宿主 | 181 例（9 个文件）：SSE 分帧、错误码、chunk 归并、400 自愈、模型整合、适配器改写… |
+| `npm test` | 真实 VS Code 测试宿主（`@vscode/test-cli` + `@vscode/test-electron`） | 全部 347 例（含上面那 181 例） |
+
+两套的意义不在快（纯逻辑一套 0.5 秒、宿主一套 2 秒），而在**要求**：一个用例要进
+纯逻辑一套，它依赖的模块就必须真的不碰宿主（由 `check-layering` 守住）；跑不了的就是
+「确实需要宿主」的显式名单（`package.json` 里 `test:unit` 那一串文件），而不是一句含糊的约定。
+
+`scripts/unit-test-setup.cjs` 做两件事：把 `vscode` 换成最小替身
+（`scripts/vscode-stub.cjs`，只提供被用到的那几个形状），并把 `suite` / `test` / `setup` /
+`teardown` 映射到 `node:test` 的同义 API——因此**同一份测试文件两个运行器都能跑**，
+不必维护两份用例。
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -876,9 +960,10 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮、失败建议 |
 | `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类各自的建议、含 `$` 序列的码、主机名）、日志用的一行明细（折叠换行、截断、成环） |
 | `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、`finish_reason` 立即上报与 `flush` 不重复上报、已上报部件数、用量快照、思考原文累积与两种渲染路径、`decideStreamFailure` 的四类处置 |
+| `test/requestRepair.test.ts` | 400 自愈：非 400 与「服务器什么都没说」一律不修、点名 `stream_options` / 采样参数 / `reasoning_effort` / `tool_choice` / `extraBody` 字段各自的处置、骨架字段不会被删、没有可删字段时不返回计划、用过的步骤不重复 |
 | `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
 | `test/reasoning.test.ts` | 思维链字段读取：两种已知字段名、同时存在时的优先级、空串与非法类型一律退化成「没有思考内容」 |
-| `test/provider.test.ts` | token 估算与比例校准、消息转换（工具/图片/system/思考回填）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 用量部件 + 回放标记，走真实的 `provideLanguageModelChatResponse`）、工具组预激活（过滤、早退、轮数上限） |
+| `test/provider.test.ts` | token 估算与比例校准、消息转换（工具/图片/system/思考回填）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 400 自愈 + 用量部件 + 回放标记，走真实的 `provideLanguageModelChatResponse`）、工具组预激活（过滤、早退、轮数上限） |
 | `test/replay.test.ts` | 回放标记的读写：往返、非 ASCII 与特殊字符、前缀/分隔符/编码/JSON 形状的异常输入一律退化成「没有标记」 |
 | `test/thinking.test.ts` | 思考部件（proposed API）的可选契约：造不出来当且仅当宿主没提供；普通部件不会被误认成思考内容 |
 | `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
@@ -897,4 +982,5 @@ VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写�
 需要日志时用 `test/helpers.ts` 的 `testLogger()`（复用同一个关闭输出的通道）；`SessionRegistry`
 的用例记得 `dispose()`，否则会遗留事件订阅；`provider/chatProvider.ts` 的重发门可以直接手写一份
 `ChatProviderDeps`（假 `sessions.find` 返回一个按脚本产出 chunk 的假 client）走真实的
-`provideLanguageModelChatResponse`；涉及密钥的断言应当验证**指纹与序列化结果里不含明文**。
+`provideLanguageModelChatResponse`——`ChatStreamSource` 本身也能单独喂假实现（它只有一个方法）；
+涉及密钥的断言应当验证**指纹与序列化结果里不含明文**。

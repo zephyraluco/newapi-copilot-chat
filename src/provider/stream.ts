@@ -1,18 +1,21 @@
 /**
- * 流式响应翻译：上游 chunk → VS Code 响应部件。
+ * 流式响应翻译：上游 chunk → 中立响应部件。
  *
  * 几件琐事：工具调用参数分片到达（按 `index` 归并、按到达顺序拼接，最后才能 parse）；
  * 思维链字段名各家不同（统一由 `reasoning.ts` 认）；usage 只在最后一个 chunk 出现，
  * 单独记下用于统计；多 choice 时只取 `index === 0`。
+ *
+ * **本模块不依赖 `vscode`**：产出的是 `parts.ts` 里那三种中立部件，翻成宿主认的响应部件
+ * 由上报层（`streamFlow.ts`）负责。这一层最容易出错（分片归并、引用块排版、截断判定），
+ * 中立之后可以脱离宿主直接测；响应怎么渲染也是可以整层替换的事。
  */
 
-import * as vscode from 'vscode';
 import { SseTruncatedError } from '../client/sse';
 import { safeJsonParse } from '../json';
 import type { Logger } from '../logger';
 import { readReasoningText } from '../reasoning';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
-import { createThinkingPart, supportsThinkingPart } from './thinking';
+import type { ResponsePartSink } from './parts';
 
 /** 本次流式响应的统计结果。 */
 export interface StreamSummary {
@@ -40,12 +43,12 @@ export interface StreamTranslatorOptions {
 	/** 是否把思维链回显给用户 */
 	readonly includeReasoning: boolean;
 	/**
-	 * 强制开关专用思考部件。
+	 * 宿主是否提供专用思考部件（`LanguageModelThinkingPart`）。
 	 *
-	 * 缺省时按运行时探测决定（宿主提供 `LanguageModelThinkingPart` 就用它）；
-	 * 显式传 `false` 则始终用 Markdown 引用块，便于对比两种渲染与写测试。
+	 * 由上报层探测后传进来——翻译层不碰 `vscode`，也就不能自己问宿主。
+	 * 为 `false` 时思维链包成 Markdown 引用块当正文发出。
 	 */
-	readonly thinkingParts?: boolean;
+	readonly thinkingParts: boolean;
 	readonly logger: Logger;
 	/** 仅用于日志 */
 	readonly modelId: string;
@@ -72,11 +75,11 @@ export function extractStreamError(chunk: ChatCompletionChunk): string | undefin
 }
 
 /**
- * 把 chunk 流翻译成 `LanguageModelResponsePart`。
+ * 把 chunk 流翻译成中立响应部件。
  *
  * 使用方式：
  * ```ts
- * const translator = new StreamTranslator(progress, options);
+ * const translator = new StreamTranslator(sink, options);
  * for await (const chunk of stream) { translator.handle(chunk); }
  * const summary = translator.flush();
  * ```
@@ -103,10 +106,10 @@ export class StreamTranslator {
 	private readonly thinkingParts: boolean;
 
 	constructor(
-		private readonly progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+		private readonly sink: ResponsePartSink,
 		private readonly options: StreamTranslatorOptions,
 	) {
-		this.thinkingParts = (options.thinkingParts ?? true) && supportsThinkingPart();
+		this.thinkingParts = options.thinkingParts;
 	}
 
 	/** 已上报的部件数。 */
@@ -235,7 +238,7 @@ export class StreamTranslator {
 				this.options.logger.error(`无法解析工具 ${call.name} 的参数`, call.arguments.trim());
 			}
 			const callId = call.id ?? `call_${index}_${Date.now().toString(36)}`;
-			this.progress.report(new vscode.LanguageModelToolCallPart(callId, call.name, input ?? {}));
+			this.sink({ kind: 'toolCall', callId, name: call.name, input: input ?? {} });
 			this.emitted++;
 			this.toolCallCount++;
 		}
@@ -261,9 +264,9 @@ export class StreamTranslator {
 	/**
 	 * 输出思维链。
 	 *
-	 * 宿主提供 `LanguageModelThinkingPart`（proposed API）时用它：Copilot 会渲染成可折叠的
-	 * 思考块，「思考内容怎么显示」交给用户的外观设置。没有这个部件时才退回 Markdown 引用块
-	 * ——把思维链当正文发出去，视觉上只能靠引用块与正式回答区分。
+	 * `thinkingParts` 为真时只发一个中立部件，交由上报层构造宿主的思考部件（Copilot 会渲染成
+	 * 可折叠的思考块，「思考内容怎么显示」交给用户的外观设置）；为假时退回 Markdown 引用块
+	 * ——把思维链当正文发出去，视觉上只能靠引用块与正式回答区分，因此排版逻辑落在这一层。
 	 *
 	 * 无论回显与否都会累积原文：回填历史要用（见 `replay.ts`）。
 	 */
@@ -274,13 +277,10 @@ export class StreamTranslator {
 			return;
 		}
 		if (this.thinkingParts) {
-			const part = createThinkingPart(text);
-			if (part !== undefined) {
-				this.reasoningStarted = true;
-				this.progress.report(part);
-				this.emitted++;
-				return;
-			}
+			this.reasoningStarted = true;
+			this.sink({ kind: 'reasoning', text });
+			this.emitted++;
+			return;
 		}
 		let output = '';
 		if (!this.reasoningStarted) {
@@ -347,7 +347,7 @@ export class StreamTranslator {
 	}
 
 	private report(text: string): void {
-		this.progress.report(new vscode.LanguageModelTextPart(text));
+		this.sink({ kind: 'text', text });
 		this.emitted++;
 	}
 }

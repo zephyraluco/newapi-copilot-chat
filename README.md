@@ -33,6 +33,9 @@
   其余模型走恒等变换的兜底适配器，不做任何改写。
 - **可选的工具列表稳定化**：`request.stabilizeToolList` 打开后，扩展先把 `activate_*` 工具组
   激活完再发请求，让每轮的工具列表保持一致（提高上游前缀缓存命中率）。
+- **站点不认某个可选字段时自动绕过**：站点因为 `stream_options`、`temperature`、
+  `reasoning_effort`、`tool_choice` 或 `extraBody` 里的字段返回 400 时，扩展会**去掉被点名的那个字段
+  再试一次**（最多两轮），而不是把 400 直接丢给用户。上游没说清是哪个字段时不猜，原样报错。
 
 ## 快速开始
 
@@ -166,7 +169,7 @@ src/
   client/             与 New API 交互（HTTP、SSE、端点封装）
   models/             模型信息整合（数据表、glob、配置解析、tooltip、缓存）
   runtime/            连接目标与会话（配置组解析、按配置组分配 client 与模型目录）
-  provider/           与 Copilot 交互（provider、消息与流转换、思考回放、工具组预激活）
+  provider/           与 Copilot 交互（provider 编排、请求组装、流消费与自愈、回传部件）
   adapter/            按模型处理协议差异（框架层 + 兑底模板）
     deepseek/         DeepSeek：请求种类识别、思考开关与辅助请求改写
   status/             状态栏与状态服务（状态聚合、悬浮提示）
@@ -199,7 +202,9 @@ src/
 npm install
 npm run watch          # 或 npm run compile
 F5                     # 启动扩展开发宿主
-npm test               # 在测试宿主中运行单元测试
+npm run test:unit      # 纯逻辑测试（node --test，不需要扩展宿主）
+npm test               # 全部测试（在 VS Code 测试宿主里运行）
+npm run check          # 类型 + 分层约束 + 文档统计数字
 ```
 
 ## 相关文档

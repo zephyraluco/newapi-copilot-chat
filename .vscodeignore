@@ -14,6 +14,8 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 
 # 开发辅助，不参与打包
-# scripts/ 只是本地工具，扩展运行时用不到它。
+# scripts/ 只是本地工具（生成数据表、约束检查、纯逻辑测试的替身），扩展运行时用不到它。
 # data/ 相反：那是运行时数据（模型数据表，由 extension.ts 在激活时读取），必须打进去。
+# .github/ 只是 CI 配置，与扩展运行时无关。
 scripts/**
+.github/**

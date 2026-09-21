@@ -10,7 +10,8 @@ import {
 } from '../models/dataset';
 import type { ModelDatasetEntry } from '../models/dataset';
 import { findFilteringPattern, globToRegExp, matchAnyGlob } from '../models/matcher';
-import { buildModelConfigs, deriveFamily, extractRemoteHints, resolveModelConfig } from '../models/modelConfig';
+import { buildModelConfigs, deriveFamily, resolveModelConfig } from '../models/modelConfig';
+import { extractRemoteHints } from '../models/remoteHints';
 import type { NewApiModel } from '../types';
 import {
 	capturingLogger,

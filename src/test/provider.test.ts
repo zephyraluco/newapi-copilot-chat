@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { createDefaultAdapterRegistry } from '../adapter/registry';
+import { HttpError } from '../client/http';
 import { SseTruncatedError } from '../client/sse';
 import type { NewApiSettings } from '../config';
 import { USAGE_DATA_MIME_TYPE } from '../consts';
@@ -250,14 +251,29 @@ suite('provider / 响应回传', () => {
 	 */
 	function scriptedClient(scripts: readonly (readonly (ChatCompletionChunk | Error)[])[]): {
 		readonly calls: number;
-		streamChatCompletion(): AsyncGenerator<ChatCompletionChunk>;
+		/** 最后一次调用带上来的传输选项（自愈去掉 `stream_options` 时要看它） */
+		readonly lastOptions: { readonly includeUsage?: boolean } | undefined;
+		streamChatCompletion(
+			request?: unknown,
+			signal?: unknown,
+			options?: { readonly includeUsage?: boolean },
+		): AsyncGenerator<ChatCompletionChunk>;
 	} {
 		let calls = 0;
+		let lastOptions: { readonly includeUsage?: boolean } | undefined;
 		return {
 			get calls(): number {
 				return calls;
 			},
-			async *streamChatCompletion(): AsyncGenerator<ChatCompletionChunk> {
+			get lastOptions(): { readonly includeUsage?: boolean } | undefined {
+				return lastOptions;
+			},
+			async *streamChatCompletion(
+				_request?: unknown,
+				_signal?: unknown,
+				options?: { readonly includeUsage?: boolean },
+			): AsyncGenerator<ChatCompletionChunk> {
+				lastOptions = options;
 				const script = scripts[Math.min(calls, scripts.length - 1)] ?? [];
 				calls++;
 				for (const item of script) {
@@ -268,6 +284,11 @@ suite('provider / 响应回传', () => {
 				}
 			},
 		};
+	}
+
+	/** 一次 400：响应体里带着站点的不满。 */
+	function badRequest(body: string): HttpError {
+		return new HttpError(400, 'Bad Request', 'https://example.com/v1/chat/completions', body, body, undefined);
 	}
 
 	/** 走一遍真实的 `provideLanguageModelChatResponse`。 */
@@ -370,6 +391,47 @@ suite('provider / 响应回传', () => {
 		assert.ok(result.error instanceof Error);
 		assert.ok((result.error as Error).message.includes('断开'));
 		assert.strictEqual(client.calls, 3, '首次 + 两次重发');
+	});
+
+	/* ---------------------------------------------------------------------- */
+	/* 站点不认某个可选字段时的自愈（400）                                      */
+	/* ---------------------------------------------------------------------- */
+
+	test('站点抱怨 stream_options 时去掉它再试一次，回答照常给出', async () => {
+		const client = scriptedClient([
+			[badRequest('{"error":{"message":"unknown field: stream_options"}}')],
+			[
+				{ choices: [{ index: 0, delta: { content: '你好' } }] },
+				{ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+			],
+		]);
+
+		const result = await runProvider(client);
+
+		assert.strictEqual(result.error, undefined, '去掉那个字段之后就该成功，用户不该看到 400');
+		assert.deepStrictEqual(textsOf(result.parts), ['你好']);
+		assert.strictEqual(client.calls, 2, '自愈只多发一次请求');
+		assert.deepStrictEqual(client.lastOptions, { includeUsage: false }, '重试时不能再带 stream_options');
+	});
+
+	test('同一个字段不会反复去掉：改不动了就正常报错', async () => {
+		// 每次都是同一个 400，第一轮去掉 stream_options 之后就没有可去掉的了
+		const client = scriptedClient([[badRequest('unknown field: stream_options')]]);
+
+		const result = await runProvider(client);
+
+		assert.ok(result.error instanceof Error, '还是不通就把错误交出去，不能无限试下去');
+		assert.strictEqual(client.calls, 2, '首次 + 一次自愈');
+	});
+
+	test('400 里没有可用线索时不自愈，直接报出上游原话', async () => {
+		const client = scriptedClient([[badRequest('bad request')]]);
+
+		const result = await runProvider(client);
+
+		assert.ok(result.error instanceof Error);
+		assert.ok((result.error as Error).message.includes('bad request'), '上游说了什么就报什么');
+		assert.strictEqual(client.calls, 1, '没有线索还重试只会白花一次请求');
 	});
 
 	/* ---------------------------------------------------------------------- */

@@ -135,8 +135,8 @@ export const DEFAULTS = {
 	/** 服务端 `Retry-After` 超过这个时长就不再重试：等一小会儿再撞一次 429 只是白拖时间 */
 	retryAfterMaxWaitMs: 30_000,
 	/** 流在给出任何可见内容之前被掐断时的重试次数 */
-	streamTruncationRetries: 2,
-} as const;
+	streamTruncationRetries: 2,	/** HTTP 400 时「去掉一个字段再试」的轮数上限（见 provider/requestRepair.ts） */
+	requestRepairRounds: 2,} as const;
 
 /** 状态刷新间隔下限，避免用户把它配成 1 秒把网关打爆。 */
 export const MIN_STATUS_REFRESH_MS = 10_000;

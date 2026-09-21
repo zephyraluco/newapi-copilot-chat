@@ -1,8 +1,7 @@
 import * as assert from 'assert';
-import * as vscode from 'vscode';
 import { SseIdleTimeoutError, SseTruncatedError } from '../client/sse';
+import type { ResponsePart, ResponsePartSink } from '../provider/parts';
 import { StreamTranslator, decideStreamFailure } from '../provider/stream';
-import { isThinkingPart, supportsThinkingPart } from '../provider/thinking';
 import type { ChatCompletionChunk, ChatToolCallDelta } from '../types';
 import { capturingLogger } from './helpers';
 
@@ -13,17 +12,19 @@ import { capturingLogger } from './helpers';
  * - **工具调用按 `index` 归并**：兼容网关可能不发 `index`，这时参数续传分片必须接在同一个
  *   调用上，否则参数会落进一个没有函数名的空槽并被丢弃（症状是「工具被执行了但参数全空」）；
  * - **已上报部件数**：provider 拿它当「截断后能不能重发」的门，数错了要么丢内容要么重复回答。
+ *
+ * 翻译层产出的是中立部件（`provider/parts.ts`），因此本文件不需要 VS Code 宿主。
  */
 
-/** 收集上报内容的假 `progress`。 */
+/** 收集上报部件的假 sink。 */
 interface Recorder {
-	readonly progress: vscode.Progress<vscode.LanguageModelResponsePart>;
-	readonly parts: vscode.LanguageModelResponsePart[];
+	readonly sink: ResponsePartSink;
+	readonly parts: ResponsePart[];
 }
 
 function createRecorder(): Recorder {
-	const parts: vscode.LanguageModelResponsePart[] = [];
-	return { parts, progress: { report: part => parts.push(part) } };
+	const parts: ResponsePart[] = [];
+	return { parts, sink: part => parts.push(part) };
 }
 
 function createTranslator(options: { includeReasoning?: boolean; thinkingParts?: boolean } = {}): {
@@ -33,9 +34,9 @@ function createTranslator(options: { includeReasoning?: boolean; thinkingParts?:
 } {
 	const recorder = createRecorder();
 	const logs = capturingLogger();
-	const translator = new StreamTranslator(recorder.progress, {
+	const translator = new StreamTranslator(recorder.sink, {
 		includeReasoning: options.includeReasoning ?? false,
-		thinkingParts: options.thinkingParts,
+		thinkingParts: options.thinkingParts ?? false,
 		logger: logs.logger,
 		modelId: 'test-model',
 	});
@@ -57,14 +58,14 @@ function toolCallChunk(calls: readonly ChatToolCallDelta[]): ChatCompletionChunk
 /** 取出上报的文本。 */
 function texts(recorder: Recorder): string[] {
 	return recorder.parts
-		.filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
-		.map(part => part.value);
+		.filter((part): part is Extract<ResponsePart, { kind: 'text' }> => part.kind === 'text')
+		.map(part => part.text);
 }
 
 /** 取出上报的工具调用部件。 */
-function toolCalls(recorder: Recorder): vscode.LanguageModelToolCallPart[] {
+function toolCalls(recorder: Recorder): Extract<ResponsePart, { kind: 'toolCall' }>[] {
 	return recorder.parts.filter(
-		(part): part is vscode.LanguageModelToolCallPart => part instanceof vscode.LanguageModelToolCallPart,
+		(part): part is Extract<ResponsePart, { kind: 'toolCall' }> => part.kind === 'toolCall',
 	);
 }
 
@@ -199,11 +200,8 @@ suite('provider / 工具调用与思考内容的时序', () => {
 		assert.ok(parts.includes('答案'));
 	});
 
-	test('宿主提供思考部件时，思维链不再当正文发出去', () => {
-		if (!supportsThinkingPart()) {
-			return;
-		}
-		const { translator, recorder } = createTranslator({ includeReasoning: true });
+	test('走专用思考部件时，思维链不再当正文发出去', () => {
+		const { translator, recorder } = createTranslator({ includeReasoning: true, thinkingParts: true });
 
 		translator.handle(reasoningChunk('想一下'));
 		translator.handle(contentChunk('答案'));
@@ -211,8 +209,9 @@ suite('provider / 工具调用与思考内容的时序', () => {
 
 		assert.deepStrictEqual(texts(recorder), ['答案'], '思维链走专用部件，正文里不该再出现它');
 		assert.strictEqual(
-			recorder.parts.some(part => isThinkingPart(part)),
-			true,
+			recorder.parts.filter(part => part.kind === 'reasoning').length,
+			1,
+			'思维链应以独立的 reasoning 部件上报',
 		);
 	});
 });

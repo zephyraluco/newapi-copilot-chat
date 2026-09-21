@@ -182,12 +182,18 @@ export class NewApiClient {
 	async *streamChatCompletion(
 		request: ChatCompletionRequest,
 		signal?: AbortSignal,
+		/**
+		 * 单次请求的传输覆盖。目前只有一项：站点不认 `stream_options` 时（400 自愈阶梯）
+		 * 本次不再要求上游返回用量。
+		 */
+		options?: { readonly includeUsage?: boolean },
 	): AsyncGenerator<ChatCompletionChunk> {
 		const url = joinUrl(this.options.baseUrl, ENDPOINTS.chatCompletions);
+		const includeUsage = options?.includeUsage ?? this.options.includeUsage;
 		const body = safeJsonStringify({
 			...request,
 			stream: true,
-			...(this.options.includeUsage === false ? {} : { stream_options: { include_usage: true } }),
+			...(includeUsage === false ? {} : { stream_options: { include_usage: true } }),
 		});
 		if (body === undefined) {
 			throw new TransportError('network', '请求体无法序列化为 JSON');
