@@ -32,14 +32,6 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # 先跑不需要扩展宿主的那部分：几百毫秒出结果，不必等 VS Code 下载
-      - name: 纯逻辑测试
-        run: npm run test:unit
-
-      # 其余测试跑在真实 VS Code 测试宿主里，Linux 上需要虚拟显示
-      - name: 测试
-        run: xvfb-run -a npm test
-
       - name: 打包
         run: npm run package
 

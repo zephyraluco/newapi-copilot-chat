@@ -33,7 +33,7 @@ function trimTrailingZero(value: number): string {
  * 把时间戳格式化成相对时间：`刚刚` / `3 分钟前` / `2 小时前` / `昨天`。
  *
  * @param timestamp 毫秒时间戳；`undefined` 表示从未发生。
- * @param now 当前时间，便于测试固定。
+ * @param now 当前时间；调用方显式传入，格式化结果因此只取决于入参。
  */
 export function formatRelativeTime(timestamp: number | undefined, now = Date.now()): string {
 	if (timestamp === undefined || !Number.isFinite(timestamp)) {

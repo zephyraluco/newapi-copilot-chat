@@ -122,7 +122,7 @@ function parseEntry(raw: unknown): ModelDatasetEntry | undefined {
  * 校验原始数据。
  *
  * 接受生成脚本的完整输出（`{ models: [...] }`）与裸数组两种形态：
- * 前者是数据文件，后者便于测试与手工准备的小表。
+ * 前者是数据文件，后者便于手工准备的小表。
  */
 export function parseModelDataset(raw: unknown): ModelDataset {
 	const list = Array.isArray(raw)

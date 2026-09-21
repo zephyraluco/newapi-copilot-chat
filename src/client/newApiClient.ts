@@ -62,8 +62,6 @@ export interface NewApiClientOptions {
 	/** 失败重试次数 */
 	maxRetries: number;
 	logger: Logger;
-	/** 便于测试注入 */
-	fetchImpl?: typeof fetch;
 }
 
 /** `/api/status` 的读取结果。该端点是 New API 自有扩展，可能被关闭，因此单独建模。 */
@@ -91,7 +89,6 @@ export class NewApiClient {
 			maxRetries: options.maxRetries,
 			userAgent: buildUserAgent(),
 			logger: options.logger.child('http'),
-			fetchImpl: options.fetchImpl,
 		});
 	}
 

@@ -2,7 +2,7 @@
  * 校验分层约束：**只有明确列出的文件可以依赖 VS Code 运行时**。
  *
  * 文档里写着「`client` 不 import vscode」「翻译层不碰 vscode」，但这类约定靠人守不住：
- * 一次顺手 `import * as vscode` 就会让纯逻辑模块变成必须跑在扩展宿主里才能测。
+ * 一次顺手 `import * as vscode` 就会把纯逻辑模块变成必须在扩展宿主里才能加载。
  * 因此把「谁可以与宿主有关」写成一张显式的名单，其余文件一旦出现运行时依赖（非 `import type`）
  * 就报错并退出码 1。
  *
@@ -20,7 +20,7 @@ const SRC = path.join(ROOT, 'src');
  *
  * 划进来的理由只有两类：**它就是与宿主对话的那一层**（provider 的上报/编排、status 的界面、
  * extension 的装配、logger 的输出通道），或者**它读设置与取消信号**（config、cancellation）。
- * 其余模块应当是纯逻辑——跑在 `npm run test:unit` 里，不需要扩展宿主。
+ * 其余模块应当是纯逻辑——不需要扩展宿主就能加载，也就不必为了碰它们而启动一个 VS Code。
  */
 const HOST_DEPENDENT = [
 	'extension.ts',
@@ -52,10 +52,7 @@ function listSourceFiles(dir) {
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 		const full = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
-			// 测试自己有宿主与纯逻辑之分（见 package.json 的 test:unit 清单），不在这条规则的范围内
-			if (entry.name !== 'test') {
-				out.push(...listSourceFiles(full));
-			}
+			out.push(...listSourceFiles(full));
 		} else if (entry.name.endsWith('.ts')) {
 			out.push(full);
 		}

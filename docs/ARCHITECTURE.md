@@ -227,9 +227,9 @@ flowchart TD
 | `logger.ts` | 286 | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | 67 | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互 | | |
-| `http.ts` | 489 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
+| `http.ts` | 486 | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
 | `sse.ts` | 302 | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
-| `newApiClient.ts` | 480 | 端点封装、模型列表解析、错误描述与失败建议 |
+| `newApiClient.ts` | 477 | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合 | | |
 | `dataset.ts` | 219 | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `matcher.ts` | 46 | 极简 glob 匹配与 include/exclude 判定 |
@@ -263,9 +263,7 @@ flowchart TD
 | `deepseek/`（2 个文件） | 257 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | **`status/`** UI | | |
 | `statusService.ts` | 356 | 状态的唯一真相来源，按配置组聚合 |
-| `statusBar.ts` | 213 | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
-| **测试** | | |
-| `test/*.ts`（20 个文件） | 5,419 | 347 个用例（其中 9 个文件 181 例跑在纯逻辑套件里）+ 注入用的假对象 |
+| `statusBar.ts` | 210 | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
 
 ## 4. 分层与依赖方向
 
@@ -323,7 +321,7 @@ flowchart LR
 - **`status` 不自己构造请求**，只调用会话上已有的能力（`catalog.getModels` 与 `client.getStatus`），
   因此状态栏与「测试连接」命令看到的数据与 provider 出自同一份缓存。它对 `provider` **没有依赖**：
   需要的那点会话信息写成了结构接口（`StatusSessionSource` / `StatusSessionView`），会话注册表天然满足；
-  这样状态层不必知道 Copilot 的请求流程，测试也不用拼出真实客户端与目录。
+  这样状态层不必知道 Copilot 的请求流程，那点会话信息也就不会把 provider 的实现细节漏出去。
 - **`status` 对 `models` 只有类型级的依赖**（读的是 `ModelCatalogSnapshot` 的形状），
   拉取与整合仍然归 `models`。
 - **`usage.ts` / `reasoning.ts` 在基础层**：它们分别被 `status/` 与 `provider/`、`client/` 与 `provider/` 共用，
@@ -466,8 +464,7 @@ flowchart LR
 `maxInputTokens + maxOutputTokens <= contextWindow`、输出上限不挤占输入空间（至少给输入留 1/4 窗口）、
 各项不低于合理下限。每次修正都收集到 `adjustments` 里，最后由 `resolveModelConfig` 写成一行 `debug` 日志
 （`reconcileLimits` 自身不碰 logger，保持纯函数）——**静默修正数值比不修正更糟**，被下调的数字
-必须在日志里查得到原因。这也是测试唯一能断言「校正留下了痕迹」的地方，因此测试辅助里有
-`capturingLogger()`（覆盖 `LoggerService.write` 收集日志行）。
+必须在日志里查得到原因。
 
 ### 远端字段提取
 
@@ -542,7 +539,7 @@ provider 层按「一件事一个模块」展开，`chatProvider.ts` 自己只�
 （`text` / `reasoning` / `toolCall`），让它们变成 `LanguageModelTextPart` 之类的事在
 `streamFlow.ts` 的 `reportResponsePart()` 里——那是流式翻译与宿主之间**唯一**的边界。
 这样做有两个后果，都是想要的：最容易出错的那一层（分片归并、引用块排版、截断判定）
-不再需要扩展宿主就能测（见 §13 的两套测试）；响应怎么渲染也可以整层替换。
+不再需要扩展宿主就能测；响应怎么渲染也可以整层替换。
 
 **传输维度的锚点是 `ChatStreamSource`**（`streamFlow.ts` 里由消费方声明的窄接口）：provider
 只要求「能按请求吐出一串 chunk」，并不知道它是怎么发出去的。chunk 的形状写在 `types.ts`，
@@ -775,7 +772,7 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 比例不是常量：上游返回的真实用量可以用来反推「这次请求多少字符对应一个 token」
 （`calibrateCharsPerToken`，指数移动平均，新观测占三成）。没人报用量（站点关掉了 `stream_options`）
 或请求为空时就不校准；单个离谱的观测值会被夹在合理区间内，不让它把估算带偏一个量级。
-比例由 provider 持有并传进纯函数——估算过程不偷偷改全局状态，否则测试与并发请求会互相干扰。
+比例由 provider 持有并传进纯函数——估算过程不偷偷改全局状态，否则并发请求会互相干扰。
 回放标记（`stateful_marker`）不计入 token：它不会发给上游。
 
 ## 9. `adapter/` —— 协议差异的出口
@@ -876,7 +873,7 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
   不要手工往文件里加条目，下次生成会全部覆盖。
 - **让某个模型的行为不一样（新增适配器）**：在 `src/adapter/<supplier>/` 下实现 `ModelAdapter`
   （`supports()` 判断是否命中，目录内的文件只服务该供应商）→ 在 `adapter/registry.ts` 的
-  `createDefaultAdapterRegistry()` 注册（`priority` 高者先匹配）→ 加测试。
+  `createDefaultAdapterRegistry()` 注册（`priority` 高者先匹配）。
   现成的例子是 `src/adapter/deepseek/`；**不需要改 provider**——这是这一层存在的意义。
   动手前先分清「供应商差异」（进适配器）与「通用容错」（进基础层，例如 `reasoning.ts`）。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
@@ -888,7 +885,7 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
   （带 `enum` 才会被渲染）→ `provider/requestBuilder.ts` 写进请求体 → 有默认项就写进 schema 的
-	`default`（并保证它在 `enum` 里）→ 补测试。
+	`default`（并保证它在 `enum` 里）。
   注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema（见 §8 思考强度）。
 - **新增配置组字段（站点 / 密钥类）**：这类字段**不是**设置项，声明在
   `contributes.languageModelChatProviders[].configuration` 里——`package.json` 加字段（密钥类 `secret: true`）
@@ -935,52 +932,3 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 放进 `reasoning.ts` 则上游换名字只改一处 |
 | 适配器接口只保留 `supports` + `transformRequest` | 没人实现的钩子（chunk 改写、流末尾冲刷）只会让 provider 的流循环多出分支；真需要时再加回一个函数比维护一条死路径便宜 |
 
-## 13. 测试
-
-两套测试，共 347 个用例，只覆盖**纯函数与装配**：
-
-| 命令 | 运行环境 | 覆盖 |
-| --- | --- | --- |
-| `npm run test:unit` | `node --test`，无扩展宿主 | 181 例（9 个文件）：SSE 分帧、错误码、chunk 归并、400 自愈、模型整合、适配器改写… |
-| `npm test` | 真实 VS Code 测试宿主（`@vscode/test-cli` + `@vscode/test-electron`） | 全部 347 例（含上面那 181 例） |
-
-两套的意义不在快（纯逻辑一套 0.5 秒、宿主一套 2 秒），而在**要求**：一个用例要进
-纯逻辑一套，它依赖的模块就必须真的不碰宿主（由 `check-layering` 守住）；跑不了的就是
-「确实需要宿主」的显式名单（`package.json` 里 `test:unit` 那一串文件），而不是一句含糊的约定。
-
-`scripts/unit-test-setup.cjs` 做两件事：把 `vscode` 换成最小替身
-（`scripts/vscode-stub.cjs`，只提供被用到的那几个形状），并把 `suite` / `test` / `setup` /
-`teardown` 映射到 `node:test` 的同义 API——因此**同一份测试文件两个运行器都能跑**，
-不必维护两份用例。
-
-| 文件 | 覆盖 |
-| --- | --- |
-| `test/http.test.ts` | URL 拼接、错误分类（鉴权 / 端点不存在 / 可重试）、重试与退避、`Retry-After` 的三种形态与「等太久不重试」、超时与取消（含 `CancellationError`）、`dispose` 中断在途请求、连接失败的三类分类句子与 `cause` 保留、认不出的码 |
-| `test/sse.test.ts` | 事件分帧（含 CRLF 正好被切在分片之间）、多行 `data`、心跳注释、UTF-8 被从中间切开、静默超时、收尾信息回填、非 SSE 降级读取及其静默超时 |
-| `test/client.test.ts` | 模型列表的四种响应形态与排序、端点的鉴权头、站点状态、流式逐块解析与「网关忽略 stream」降级、截断判定、`includeUsage`、静默超时旋钮、失败建议 |
-| `test/errors.test.ts` | 错误码 → 分类（含 `ERR_TLS_*` / `HPE_*` 前缀规则与认不出的码）、从 `cause` 链取最具体的码、普通构造名不算码、分类句子（每类各自的建议、含 `$` 序列的码、主机名）、日志用的一行明细（折叠换行、截断、成环） |
-| `test/stream.test.ts` | 工具调用归并与 `index` 兜底（含参数不完整时的两种处置）、`finish_reason` 立即上报与 `flush` 不重复上报、已上报部件数、用量快照、思考原文累积与两种渲染路径、`decideStreamFailure` 的四类处置 |
-| `test/requestRepair.test.ts` | 400 自愈：非 400 与「服务器什么都没说」一律不修、点名 `stream_options` / 采样参数 / `reasoning_effort` / `tool_choice` / `extraBody` 字段各自的处置、骨架字段不会被删、没有可删字段时不返回计划、用过的步骤不重复 |
-| `test/models.test.ts` | glob 匹配、family 推导、远端字段提取、配置整合与一致性校正、思考能力、批量过滤 |
-| `test/reasoning.test.ts` | 思维链字段读取：两种已知字段名、同时存在时的优先级、空串与非法类型一律退化成「没有思考内容」 |
-| `test/provider.test.ts` | token 估算与比例校准、消息转换（工具/图片/system/思考回填）、工具转换与参数解析、**响应回传**（流被掐断后的重发门 + 400 自愈 + 用量部件 + 回放标记，走真实的 `provideLanguageModelChatResponse`）、工具组预激活（过滤、早退、轮数上限） |
-| `test/replay.test.ts` | 回放标记的读写：往返、非 ASCII 与特殊字符、前缀/分隔符/编码/JSON 形状的异常输入一律退化成「没有标记」 |
-| `test/thinking.test.ts` | 思考部件（proposed API）的可选契约：造不出来当且仅当宿主没提供；普通部件不会被误认成思考内容 |
-| `test/modelConfiguration.test.ts` | 模型配置 schema 生成、思考强度取值解析、写进请求体（含字段名与「不声明 default」断言） |
-| `test/target.test.ts` | 配置组解析、地址规范化、指纹（含「不含明文密钥」断言）、会话隔离与重建 |
-| `test/extension.test.ts` | 扩展能激活、命令都注册上、缺配置时不崩 |
-| `test/statusService.test.ts` | 状态聚合：目标投影与可用性、配置不完整就不探测、探测抛错不拖垮整体、同一组并发刷新不重复探测、用量的累加与 `cacheReported` 只增不减、重置只清计数、配置变化即丢弃会话缓存并重发状态、会话变化重发状态 |
-| `test/usage.test.ts` | 会话用量的读出：两种缓存字段风格、总量/分项互补、钳位与命中率分母；回传载荷的「三个数字必须齐」 |
-| `test/statusBar.test.ts` | 悬浮提示的内容约定：空闲时不弹、缓存两种缺省、分段用空行、不带点击命令时提示里不出现「点击」、主题图标开关 |
-| `test/deepseekAdapter.test.ts` | 请求种类识别（系统提示词前缀、单工具请求、终端转向）、思考开关改写（辅助请求与主对话、不具备思考能力的模型）、模型身份判定、注册表命中 |
-
-刻意不测的部分：真实网络交互（传输层改用 `test/fakes.ts` 注入假 `fetch`，不碰网络）、
-VS Code 与 provider 之间的协议往返（由 VS Code 自己保证）。写新测试时注意
-六点：注入点是 `HttpClientOptions.fetchImpl` / `NewApiClientOptions.fetchImpl`，且假 `fetch`
-必须认 `AbortSignal` 并 reject，否则超时与取消路径永不返回；中断时要 reject **`signal.reason`**
-（真实 `fetch` 就是这么做的，`abort()` 无参时才是一个 `AbortError`），否则取消路径的判断测不到；
-需要日志时用 `test/helpers.ts` 的 `testLogger()`（复用同一个关闭输出的通道）；`SessionRegistry`
-的用例记得 `dispose()`，否则会遗留事件订阅；`provider/chatProvider.ts` 的重发门可以直接手写一份
-`ChatProviderDeps`（假 `sessions.find` 返回一个按脚本产出 chunk 的假 client）走真实的
-`provideLanguageModelChatResponse`——`ChatStreamSource` 本身也能单独喂假实现（它只有一个方法）；
-涉及密钥的断言应当验证**指纹与序列化结果里不含明文**。

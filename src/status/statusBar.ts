@@ -105,11 +105,8 @@ function isRefreshing(state: StatusState): boolean {
  *
  * **没有会话数据、也没有问题时返回 `undefined`**——那样悬停不该弹出任何东西。空壳提示
  * （一句「还没有请求」）既没信息量，又让人以为扩展在报错；状态栏文本自己就说明了可用性。
- *
- * 导出供测试：它需要 `vscode` 才能构造 MarkdownString，但逻辑是纯的（同输入同输出），
- * 而「空闲时不弹提示」正是容易在后续改动中被弄丢的约定。
  */
-export function buildTooltip(state: StatusState): vscode.MarkdownString | undefined {
+function buildTooltip(state: StatusState): vscode.MarkdownString | undefined {
 	// 还没配置站点是唯一「悬停就该知道怎么办」的场景：状态栏本身只有「New API」两个字
 	if (state.targets.length === 0) {
 		const tooltip = createTooltip();

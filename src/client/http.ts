@@ -209,8 +209,6 @@ export interface HttpClientOptions {
 	maxRetries: number;
 	userAgent: string;
 	logger: Logger;
-	/** 便于测试注入；默认用全局 `fetch` */
-	fetchImpl?: typeof fetch;
 }
 
 /**
@@ -359,9 +357,8 @@ export class HttpClient {
 
 	/** 单次 fetch。 */
 	private async doFetch(options: RequestOptions, signal: AbortSignal): Promise<Response> {
-		const fetchImpl = this.options.fetchImpl ?? fetch;
 		this.options.logger.trace(`→ ${options.method ?? 'GET'} ${options.url}`);
-		return await fetchImpl(options.url, {
+		return await fetch(options.url, {
 			method: options.method ?? 'GET',
 			headers: {
 				'User-Agent': this.options.userAgent,

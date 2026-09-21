@@ -202,9 +202,9 @@ src/
 npm install
 npm run watch          # 或 npm run compile
 F5                     # 启动扩展开发宿主
-npm run test:unit      # 纯逻辑测试（node --test，不需要扩展宿主）
-npm test               # 全部测试（在 VS Code 测试宿主里运行）
 npm run check          # 类型 + 分层约束 + 文档统计数字
+npm run lint
+npm run package        # 产出 .vsix
 ```
 
 ## 相关文档

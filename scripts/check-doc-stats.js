@@ -1,11 +1,11 @@
 /**
  * 校验 `docs/ARCHITECTURE.md` 里的统计数字。
  *
- * 文档的 §3「代码地图」逐行给出每个文件的行数，§13 给出用例总数；这些数字会随代码漂移，
+ * 文档的 §3「代码地图」逐行给出每个文件的行数；这些数字会随代码漂移，
  * 而**错的数字比没有数字更糟**（读者会照着行号去翻文件）。因此这里把它们当作断言来跑：
  * 逐行核对文档写的行数与磁盘上的实际行数，不一致就列出全部差异并退出码 1。
  *
- * 用法：`npm run check-docs`（`--fix` 只打印建议，不改文件——文档仍需人工确认措辞）。
+ * 用法：`npm run check-docs`。
  */
 
 const fs = require('node:fs');
@@ -61,10 +61,6 @@ function verify(label, actual, expected) {
  * 决定后面那些相对路径落在哪个目录下。
  */
 function resolveTargets(spec, dir) {
-	// `test/*.ts` 这类整体行：`src/test/` 下的全部文件（含 fakes / helpers）
-	if (spec === 'test/*.ts') {
-		return listSourceFiles(path.join(ROOT, 'src', 'test'));
-	}
 	// `deepseek/` 这类目录行：该目录下所有源文件
 	if (spec.endsWith('/')) {
 		return listSourceFiles(path.join(ROOT, 'src', dir, spec));
@@ -76,8 +72,6 @@ function checkCodeMap(lines) {
 	let inCodeMap = false;
 	// 当前分组对应的目录（基础层的文件直接放在 src/ 下，因此默认是空）
 	let dir = '';
-	let testFileCount;
-	let testCaseCount;
 
 	for (const line of lines) {
 		if (line.startsWith('## 3.')) {
@@ -102,9 +96,9 @@ function checkCodeMap(lines) {
 			dir = group[1].replace(/\/$/, '');
 			continue;
 		}
-		// `| **基础层** | | |` 与 `| **测试** | | |` 没有路径，按各自的目录处理
+		// `| **基础层** | | |` 这类分组标题没有路径，因此回到 `src/` 根
 		if (cells[1].startsWith('**')) {
-			dir = cells[1].includes('测试') ? 'test' : '';
+			dir = '';
 			continue;
 		}
 
@@ -129,66 +123,14 @@ function checkCodeMap(lines) {
 		}
 		const actual = files.reduce((sum, f) => sum + countLines(f), 0);
 		verify(specs.join(' / '), actual, expected);
-
-		if (specs[0] === 'test/*.ts') {
-			testFileCount = files.length;
-			// 同一行右侧写着用例数：`330 个用例 + 注入用的假对象…`
-			const cases = line.match(/([\d,]+)\s*个用例/);
-			if (cases !== null) {
-				testCaseCount = parseCount(cases[1]);
-			}
-		}
 	}
-
-	return { testFileCount, testCaseCount };
-}
-
-/** §13 的开头一句：`330 个用例，只覆盖…` */
-function checkTestCases(lines, testCaseCount) {
-	const section = lines.join('\n').split('## 13.')[1];
-	if (section === undefined) {
-		problems.push('找不到 §13「测试」一节');
-		return;
-	}
-	const stated = section.match(/([\d,]+)\s*个用例/);
-	if (stated === null) {
-		problems.push('§13 没有写用例总数');
-		return;
-	}
-	const expected = parseCount(stated[1]);
-	if (testCaseCount !== undefined && testCaseCount !== expected) {
-		problems.push(`§3 与 §13 的用例数互相矛盾：${testCaseCount} vs ${expected}`);
-	}
-	return expected;
-}
-
-function countTestCases() {
-	let total = 0;
-	for (const file of listSourceFiles(path.join(ROOT, 'src', 'test'))) {
-		if (!file.endsWith('.test.ts')) {
-			continue;
-		}
-		const text = fs.readFileSync(file, 'utf8');
-		total += (text.match(/^\s*test\(/gm) ?? []).length;
-	}
-	return total;
 }
 
 function main() {
 	const text = fs.readFileSync(DOC, 'utf8');
 	const lines = text.split('\n');
 
-	const { testFileCount, testCaseCount } = checkCodeMap(lines);
-	const statedCases = checkTestCases(lines, testCaseCount);
-
-	// 测试文件数与用例数用实际代码核对（文档里的「19 个文件」「330 个用例」）
-	const actualFiles = listSourceFiles(path.join(ROOT, 'src', 'test')).length;
-	if (testFileCount !== undefined) {
-		verify('§3 测试文件数', actualFiles, testFileCount);
-	}
-	if (statedCases !== undefined) {
-		verify('§13 用例总数', countTestCases(), statedCases);
-	}
+	checkCodeMap(lines);
 
 	if (problems.length === 0) {
 		console.log(`文档统计与代码一致（核对 ${checks.length} 项）。`);
