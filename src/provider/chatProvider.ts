@@ -5,10 +5,11 @@
  * 这个类是「编排者」：网络交互在 `client`，模型信息整合在 `models`，格式转换在
  * `messages.ts` / `stream.ts`，差异处理在 `adapter`，会话与连接目标在 `target.ts` / `session.ts`。
  *
- * 它自己只做「按顺序把上面那些模块串起来」，因此每一件事都有对应的模块：
- * 模型信息的映射 → `modelInformation.ts`；请求体的组装 → `requestBuilder.ts`；
- * 流的消费与重发门 → `streamFlow.ts`；响应回传的部件 → `responseParts.ts`；
- * 工具组预激活的宿主侧 → `preflight.ts`；交给 VS Code 的错误 → `errorMapping.ts`。
+ * 它自己只做「按顺序把上面那些模块串起来」，另外三件**只服务本文件**的事就地写在本文件末尾：
+ * 模型信息的映射（`toModelInformation`）、请求体的组装（`buildRequest`）、交给 VS Code 的错误
+ * （`toLanguageModelError`）——它们都只有这一个消费者，单独成文件只是多一层跳转。独立成
+ * 模块的是那些**被两个以上地方用**或**变化原因不同**的：流的消费与收尾 → `streamFlow.ts`，
+ * 工具组预激活的宿主侧 → `preflight.ts`。
  *
  * VS Code 为每个配置组分别调用本 provider，因此发现模型时必须先从 `options` 解析出连接目标，
  * 而处理请求时靠 `model` 里带的指纹找回同一个会话——否则多组共存时会把 A 站的模型用 B 站的地址去请求。
@@ -18,21 +19,23 @@ import * as vscode from 'vscode';
 import type { AdapterContext } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
-import { isAbortError } from '../client/http';
-import { MANAGE_MODELS_COMMAND, TOKEN_ESTIMATION } from '../consts';
+import { HttpError, isAbortError } from '../client/http';
+import { describeError } from '../client/newApiClient';
+import { MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
-import type { ChatUsage } from '../types';
-import { convertMessages, convertTools, countRequestChars } from './messages';
-import { toLanguageModelError } from './errorMapping';
-import { toModelInformation } from './modelInformation';
-import type { NewApiModelInformation } from './modelInformation';
-import { selectReasoningEffort } from './modelConfiguration';
+import type { ModelConfig } from '../models/modelConfig';
+import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
+import { convertMessages, convertToolChoice, convertTools, countRequestChars } from './messages';
+import {
+	applyReasoningEffort,
+	buildModelConfigurationSchema,
+	selectReasoningEffort,
+} from './modelConfiguration';
+import type { ModelConfigurationSchema } from './modelConfiguration';
 import { runToolGroupPreflight } from './preflight';
-import { buildRequest } from './requestBuilder';
-import { reportReplayMarker } from './responseParts';
 import type { ProviderSession, SessionRegistry } from '../runtime/session';
-import { streamResponse } from './streamFlow';
+import { reportReplayMarker, streamResponse } from './streamFlow';
 import type { StreamSummary } from './stream';
 import {
 	createTarget,
@@ -44,6 +47,32 @@ import {
 import type { ProviderTarget } from '../runtime/target';
 import { calibrateCharsPerToken, estimateTokens } from './tokenizer';
 import { filterPreflightMessages } from './toolFlow';
+
+/**
+ * 提供给 VS Code 的模型信息。
+ *
+ * 通过泛型参数携带额外字段：VS Code 会把 `provideLanguageModelChatInformation`
+ * 返回的对象原样传回 `provideLanguageModelChatResponse`，因此这里挂上的内容
+ * 在响应阶段可以放心使用（也是官方泛型设计的目的）。
+ *
+ * 注意只挂**目标指纹**而不是目标本身：这些字段会随模型元数据留在 VS Code 的
+ * 模型缓存里，而 `ProviderTarget` 含有明文 API Key。
+ */
+export interface NewApiModelInformation extends vscode.LanguageModelChatInformation {
+	/** 整合后的完整配置 */
+	readonly config: ModelConfig;
+	/**
+	 * 模型级配置项（当前只有「思考强度」）。
+	 *
+	 * 这个字段不在 stable typings 里，但 VS Code 会把它当模型元数据收下，
+	 * 并据此在模型选择器里渲染控件。
+	 */
+	readonly configurationSchema?: ModelConfigurationSchema;
+	/** 该模型所属连接目标的指纹，用于在响应阶段找回同一个会话 */
+	readonly targetKey: string;
+	/** 目标标签，仅用于错误提示 */
+	readonly targetLabel: string;
+}
 
 /** provider 的依赖。 */
 export interface ChatProviderDeps {
@@ -316,4 +345,112 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			await vscode.commands.executeCommand(MANAGE_MODELS_COMMAND);
 		}
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/* 下面的三件事只服务本文件                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** 把内部配置映射成 VS Code 需要的模型信息。 */
+function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApiModelInformation {
+	return {
+		id: config.id,
+		name: config.name,
+		family: config.family,
+		version: config.version,
+		detail: config.detail,
+		tooltip: config.tooltip,
+		maxInputTokens: config.maxInputTokens,
+		maxOutputTokens: config.maxOutputTokens,
+		capabilities: {
+			imageInput: config.imageInput,
+			// 上游对单次请求的工具数量通常没有硬上限，用布尔值表达「支持」
+			toolCalling: config.toolCalling,
+		},
+		// 空值时表示「不展示任何模型级控件」（模型不支持思考，或没有可选的思考强度档位）
+		configurationSchema: buildModelConfigurationSchema(config),
+		config,
+		// 只带指纹与标签，不带 target 本体（后者含明文密钥）
+		targetKey: target.key,
+		targetLabel: target.label,
+	};
+}
+
+/**
+ * 组装请求体。
+ *
+ * 写入顺序是语义的一部分（后面的可以盖过前面的）：
+ *
+ * ```
+ *   model + messages
+ *   → temperature / top_p / tools（来自设置）
+ *   → extraBody 里的额外字段
+ *   → 思考强度（来自模型选择器里的选择，最具体，因此最后写）
+ * ```
+ *
+ * 适配器看到的是本函数产出的完整请求体，因此**这里不处理供应商差异**（见 `adapter/`）。
+ */
+function buildRequest(input: {
+	config: ModelConfig;
+	settings: NewApiSettings;
+	messages: ChatCompletionRequest['messages'];
+	tools: ChatToolDefinition[] | undefined;
+	toolMode: vscode.LanguageModelChatToolMode;
+	reasoningEffort: string | undefined;
+}): ChatCompletionRequest {
+	const { config, settings, messages, tools, toolMode, reasoningEffort } = input;
+	const request: ChatCompletionRequest = { model: config.id, messages };
+
+	const { temperature, topP } = settings.request;
+	if (temperature !== undefined) {
+		request.temperature = temperature;
+	}
+	if (topP !== undefined) {
+		request.top_p = topP;
+	}
+	if (tools !== undefined) {
+		request.tools = tools;
+		const choice = convertToolChoice(toolMode, true);
+		if (choice !== undefined) {
+			request.tool_choice = choice;
+		}
+	}
+
+	// 额外字段：结构化字段被排除在外——让一个 JSON 设置项覆盖 `messages` 只会制造无从排查的故障。
+	for (const [key, value] of Object.entries(settings.request.extraBody)) {
+		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {
+			request[key] = value;
+		}
+	}
+
+	// 模型选择器里的选择比静态设置更具体，因此在额外字段之后写入，可以盖过它们。
+	if (reasoningEffort !== undefined) {
+		applyReasoningEffort(request, reasoningEffort);
+	}
+
+	return request;
+}
+
+/**
+ * 把内部错误交给 VS Code。
+ *
+ * 消息已经是面向用户的：网络故障是「分类 + 错误码 + 站点 + 该改什么」（`src/errors.ts`），
+ * HTTP 错误是上游原话。两件事要做：
+ *
+ * - **清掉 `stack`**：Copilot 会把 `name: message` 与堆栈一起渲染（`extChatEndpoint` 的
+ *   `toErrorMessage(e, true)`），而用户要的是原因；原始异常已经写进日志。
+ * - **只在语义真正吻合时换用工厂方法**：401/403 → `NoPermissions`、404 → `NotFound`；
+ *   `Blocked` 表示「被策略阻止」，与限流/超时不是一回事，硬套会误导用户。
+ *
+ * 唯一的加工是密钥脱敏（`describeError` 里的 `redactText`）。
+ */
+function toLanguageModelError(error: unknown): Error {
+	const message = describeError(error);
+	const result = error instanceof HttpError && error.isAuthError
+		? vscode.LanguageModelError.NoPermissions(message)
+		: error instanceof HttpError && error.isNotFound
+			? vscode.LanguageModelError.NotFound(message)
+			: new Error(message);
+	result.stack = undefined;
+	return result;
 }

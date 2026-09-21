@@ -5,9 +5,9 @@
  * 思维链字段名各家不同（统一由 `reasoning.ts` 认）；usage 只在最后一个 chunk 出现，
  * 单独记下用于统计；多 choice 时只取 `index === 0`。
  *
- * **本模块不依赖 `vscode`**：产出的是 `parts.ts` 里那三种中立部件，翻成宿主认的响应部件
+ * **本模块不依赖 `vscode`**：产出的是下面 `ResponsePart` 那三种中立部件，翻成宿主认的响应部件
  * 由上报层（`streamFlow.ts`）负责。这一层最容易出错（分片归并、引用块排版、截断判定），
- * 中立之后可以脱离宿主直接测；响应怎么渲染也是可以整层替换的事。
+ * 中立之后不必为了碰它而启动扩展宿主；响应怎么渲染也是可以整层替换的事。
  */
 
 import { SseTruncatedError } from '../client/sse';
@@ -15,7 +15,28 @@ import { safeJsonParse } from '../json';
 import type { Logger } from '../logger';
 import { readReasoningText } from '../reasoning';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
-import type { ResponsePartSink } from './parts';
+
+/**
+ * 一个响应部件：本模块的输出契约。
+ *
+ * 刻意不做成「一个部件一个类」：这三种形状互不重叠，判别式联合让上报层的一处 `switch`
+ * 就能穷尽，新增一种部件时类型检查会指出所有需要处理的地方。
+ */
+export type ResponsePart =
+	/** 正式回答的正文 */
+	| { readonly kind: 'text'; readonly text: string }
+	/** 思维链；宿主有专用思考部件时用它渲染 */
+	| { readonly kind: 'reasoning'; readonly text: string }
+	/** 一次工具调用 */
+	| {
+		readonly kind: 'toolCall';
+		readonly callId: string;
+		readonly name: string;
+		readonly input: object;
+	};
+
+/** 接收中立部件的回调。 */
+export type ResponsePartSink = (part: ResponsePart) => void;
 
 /** 本次流式响应的统计结果。 */
 export interface StreamSummary {

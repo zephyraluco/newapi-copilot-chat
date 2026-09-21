@@ -242,22 +242,17 @@ flowchart TD
 | `target.ts` | 125 | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 171 | 按配置组缓存 client + catalog |
 | **`provider/`** 与 Copilot 交互 | | |
-| `chatProvider.ts` | 319 | 实现 `LanguageModelChatProvider`：编排与生命周期（其余各事各有模块） |
-| `modelInformation.ts` | 63 | `ModelConfig` → `LanguageModelChatInformation` 的映射 |
-| `requestBuilder.ts` | 67 | 请求体组装（设置 → `extraBody` → 思考强度，写入顺序即优先级） |
-| `streamFlow.ts` | 223 | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是**传输维度的锚点**；中立部件 → 宿主部件的绑定 |
-| `requestRepair.ts` | 209 | HTTP 400 的自愈阶梯：去掉站点不认的那个可选字段，纯函数 |
-| `responseParts.ts` | 60 | 回传部件：用量数据部件与思考回放标记 |
-| `preflight.ts` | 51 | 工具组预激活的宿主侧（上报伪调用那一半） |
-| `errorMapping.ts` | 29 | 内部错误 → `vscode.LanguageModelError` 与清 `stack` |
+| `chatProvider.ts` | 456 | 实现 `LanguageModelChatProvider`：编排与生命周期，外加三件只服务本文件的辅助（模型信息映射、请求体组装、错误交还） |
 | `modelConfiguration.ts` | 161 | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | 412 | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
-| `stream.ts` | 432 | 流式 chunk → **中立**响应部件（工具调用分片合并、思维链、失败处置）；不依赖 `vscode` |
-| `parts.ts` | 30 | 中立响应部件的形状与回调：翻译层的输出契约 |
+| `stream.ts` | 453 | 流式 chunk → **中立**响应部件的翻译（工具调用分片合并、思维链、失败处置）；不依赖 `vscode` |
+| `streamFlow.ts` | 275 | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是**传输维度的锚点**；中立部件 → 宿主部件的绑定与响应侧回传 |
+| `requestRepair.ts` | 209 | HTTP 400 的自愈阶梯：去掉站点不认的那个可选字段，纯函数 |
 | `tokenizer.ts` | 152 | token 估算（刻意高估，按真实用量校准比例） |
 | `thinking.ts` | 69 | 思考内容部件（proposed API）的探测、构造与读取 |
 | `replay.ts` | 105 | 思考内容的回放标记：随响应留下、下次请求读回 |
 | `toolFlow.ts` | 178 | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
+| `preflight.ts` | 51 | 工具组预激活的宿主侧：与 `toolFlow.ts` 分开是为了让它保持不依赖 `vscode` |
 | **`adapter/`** 差异出口 | | |
 | `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 142 | 框架层：钩子接口与上下文、注册与解析、兑底与模板 |
 | `deepseek/`（2 个文件） | 257 | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
@@ -523,23 +518,23 @@ vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
 
 ## 8. `provider/` —— 与 Copilot 交互
 
-provider 层按「一件事一个模块」展开，`chatProvider.ts` 自己只做编排与生命周期：
+拆分的标准是**消费者与变化原因**，不是「一件事一个文件」：只有 `chatProvider` 一个消费者的
+辅助函数就地写在它末尾（省掉一层跳转），被两处以上用、或成因完全不同的才独立成模块。
 
 | 模块 | 管什么 |
 | --- | --- |
-| `chatProvider.ts` | 实现三个接口方法、解析会话、按顺序把下面这些模块串起来 |
-| `modelInformation.ts` | 模型发现阶段的输出：`ModelConfig` → `LanguageModelChatInformation` |
-| `requestBuilder.ts` | 请求体的组装（写入顺序即优先级） |
-| `streamFlow.ts` | 消费一次流式响应与重发门；**传输维度的锚点**在这里 |
-| `responseParts.ts` | 把响应的元数据交给宿主（用量部件、思考回放标记） |
-| `preflight.ts` | 工具组预激活的宿主侧（上报伪调用那一半） |
-| `errorMapping.ts` | 交给 VS Code 的错误 |
+| `chatProvider.ts` | 实现三个接口方法、解析会话、按顺序把下面这些模块串起来；末尾三件只服务本文件的辅助：模型信息映射、请求体组装、交给 VS Code 的错误 |
+| `streamFlow.ts` | 消费一次流式响应与重发门；**传输维度的锚点**在这里；响应侧的两件收尾事（回传用量、留下回放标记）也在这里 |
+| `requestRepair.ts` | 站点以 400 拒绝时去掉被点名的可选字段（见下文） |
+| `preflight.ts` | 工具组预激活的宿主侧；它独立于 `toolFlow.ts` 是因为后者必须不依赖 `vscode` |
+| `modelConfiguration.ts` | 模型级配置（思考强度）的 schema 与取值 |
+| `messages.ts` / `stream.ts` / `tokenizer.ts` / `thinking.ts` / `replay.ts` / `toolFlow.ts` | 各自成层：消息转换、流式翻译、token 估算、思考部件探测、回放标记、预激活判据 |
 
-**翻译层不认识 VS Code**：`stream.ts` 产出的是 `parts.ts` 里那三种**中立部件**
-（`text` / `reasoning` / `toolCall`），让它们变成 `LanguageModelTextPart` 之类的事在
-`streamFlow.ts` 的 `reportResponsePart()` 里——那是流式翻译与宿主之间**唯一**的边界。
-这样做有两个后果，都是想要的：最容易出错的那一层（分片归并、引用块排版、截断判定）
-不再需要扩展宿主就能测；响应怎么渲染也可以整层替换。
+**翻译层不认识 VS Code**：`stream.ts` 自己声明并产出三种**中立部件**
+（`ResponsePart`：`text` / `reasoning` / `toolCall`），让它们变成 `LanguageModelTextPart`
+之类的事在 `streamFlow.ts` 的 `reportResponsePart()` 里——那是流式翻译与宿主之间**唯一**的边界。
+最容易出错的那一层（分片归并、引用块排版、截断判定）因此不必为了碰它而启动一个扩展宿主；
+响应怎么渲染也可以整层替换。
 
 **传输维度的锚点是 `ChatStreamSource`**（`streamFlow.ts` 里由消费方声明的窄接口）：provider
 只要求「能按请求吐出一串 chunk」，并不知道它是怎么发出去的。chunk 的形状写在 `types.ts`，
@@ -878,13 +873,13 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
   动手前先分清「供应商差异」（进适配器）与「通用容错」（进基础层，例如 `reasoning.ts`）。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties`（类型、默认值、说明）→
   `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退，不要让整份配置失效）→ 在对应的
-  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `provider/requestBuilder.ts`，
+  Settings 接口加字段 → 影响模型配置则改 `models/modelConfig.ts`，影响请求体则改 `provider/chatProvider.ts` 的 `buildRequest`，
   影响传输行为（超时、重试、`stream_options` 之类）则经 `runtime/session.ts` 传给 `NewApiClient`。
   改完记得同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：它不是设置项，而是随模型信息下发的 schema——
   `models/modelConfig.ts` 把能力纳入 `ModelConfig`（写 `meta.provenance`，遵从 §7 的优先级）→
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性、在取值侧加解析
-  （带 `enum` 才会被渲染）→ `provider/requestBuilder.ts` 写进请求体 → 有默认项就写进 schema 的
+  （带 `enum` 才会被渲染）→ `provider/chatProvider.ts` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的
 	`default`（并保证它在 `enum` 里）。
   注意「支持该能力」与「有可选项」是两件事：没有可选项时同样不声明 schema（见 §8 思考强度）。
 - **新增配置组字段（站点 / 密钥类）**：这类字段**不是**设置项，声明在

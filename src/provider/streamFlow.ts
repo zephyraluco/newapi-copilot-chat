@@ -16,18 +16,25 @@
  * `NewApiClient` 类。因此换一种传输（别的端点形态、别的 chunk 形状）只需要换一个实现：
  * 这个接口就是传输维度的锚点，`chatProvider` 不必知道请求是怎么发出去的。
  * chunk 形状由 `types.ts` 的 `ChatCompletionChunk` 描述，翻译在 `stream.ts`。
+ *
+ * ## 响应侧的两件收尾事
+ *
+ * `reportUsagePart` 报用量（Copilot 的「会话信息 → 上下文窗口」靠它显示 token 数），
+ * `reportReplayMarker` 留下思考内容（下次请求读回来填 `reasoning_content`）。两者都不参与
+ * 回答本身，因此上报失败**不能影响已经流出的内容**：这里兜住异常只记一条警告。
  */
 
 import * as vscode from 'vscode';
 import type { ChatCompletionChunk, ChatCompletionRequest } from '../types';
-import { DEFAULTS } from '../consts';
+import type { ModelAdapter } from '../adapter/adapter';
+import { DEFAULTS, USAGE_DATA_MIME_TYPE } from '../consts';
 import { HttpError } from '../client/http';
 import type { Logger } from '../logger';
-import type { ResponsePart, ResponsePartSink } from './parts';
+import { buildReportedUsage } from '../usage';
 import { planRequestRepair } from './requestRepair';
-import { reportUsagePart } from './responseParts';
+import { createReplayMarkerPart } from './replay';
 import { StreamTranslator, decideStreamFailure, extractStreamError } from './stream';
-import type { StreamSummary } from './stream';
+import type { ResponsePart, ResponsePartSink, StreamSummary } from './stream';
 import { createThinkingPart, supportsThinkingPart } from './thinking';
 
 /** 单次请求可覆盖的传输选项。 */
@@ -91,7 +98,7 @@ export function reportResponsePart(
 			const part = createThinkingPart(responsePart.text);
 			if (part === undefined) {
 				// 只有探测到宿主提供思考部件时，翻译层才会发出这种部件；
-				// 这里兑住「探测与实际不符」，宁可少一种渲染方式，不能少内容。
+				// 这里兜住「探测与实际不符」，宁可少一种渲染方式，不能少内容。
 				logger.warn(`${modelId}：无法构造思考部件，思维链按正文回显`);
 				progress.report(new vscode.LanguageModelTextPart(responsePart.text));
 				return;
@@ -219,5 +226,50 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 			}
 			throw error;
 		}
+	}
+}
+
+/**
+ * 把用量回传给 Copilot（会话信息里的「上下文窗口」靠它显示 token 数）。
+ *
+ * 不报这个部件时 Copilot 会自己拼一个 `prompt_tokens: 0` 的兜底值，上下文窗口就一直显示 `0/上限`。
+ */
+export function reportUsagePart(
+	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+	summary: StreamSummary,
+	logger: Logger,
+): void {
+	const payload = buildReportedUsage(summary.usage);
+	if (payload === undefined) {
+		return;
+	}
+	try {
+		const data = new TextEncoder().encode(JSON.stringify(payload));
+		progress.report(new vscode.LanguageModelDataPart(data, USAGE_DATA_MIME_TYPE));
+	} catch (error) {
+		logger.warn('上报用量部件失败（不影响本次回答）', error);
+	}
+}
+
+/**
+ * 把本次的思考内容随响应一起留下（回放标记）。
+ *
+ * 只有声明了 `echoReasoningContent` 的适配器才需要它：标记的唯一用途就是在下一次请求里
+ * 变回 `reasoning_content`（DeepSeek 的思考态工具调用历史要求这个字段）。
+ */
+export function reportReplayMarker(
+	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+	summary: StreamSummary,
+	adapter: ModelAdapter,
+	modelId: string,
+	logger: Logger,
+): void {
+	if (adapter.echoReasoningContent !== true || summary.reasoningText.length === 0) {
+		return;
+	}
+	try {
+		progress.report(createReplayMarkerPart(summary.reasoningText));
+	} catch (error) {
+		logger.warn(`${modelId}：思考内容的回放标记上报失败，后续请求将缺少 reasoning_content`, error);
 	}
 }

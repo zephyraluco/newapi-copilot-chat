@@ -30,11 +30,9 @@ const HOST_DEPENDENT = [
 	'logger.ts',
 	'models/catalog.ts',
 	'provider/chatProvider.ts',
-	'provider/errorMapping.ts',
 	'provider/messages.ts',
 	'provider/preflight.ts',
 	'provider/replay.ts',
-	'provider/responseParts.ts',
 	'provider/streamFlow.ts',
 	'provider/thinking.ts',
 	'provider/tokenizer.ts',
@@ -63,6 +61,14 @@ function listSourceFiles(dir) {
 function main() {
 	const allowed = new Set(HOST_DEPENDENT);
 	const violations = [];
+
+	// 名单里的条目必须真实存在。少查这一条，删掉一个文件后它就会在名单里静默变成死条目，
+	// 而下面那个循环只遍历磁盘上的文件，永远看不见它。
+	for (const relative of HOST_DEPENDENT) {
+		if (!fs.existsSync(path.join(SRC, relative))) {
+			violations.push(`${relative}：名单里有它，但文件已不存在，请删掉这条`);
+		}
+	}
 
 	for (const file of listSourceFiles(SRC)) {
 		const relative = path.relative(SRC, file).split(path.sep).join('/');
