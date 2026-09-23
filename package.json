@@ -2,7 +2,7 @@
   "name": "newapi-copilot-chat",
   "displayName": "New API for Copilot Chat",
   "description": "把 New API（OpenAI 兼容网关）中的模型作为自带密钥（BYOK）供应商接入 GitHub Copilot Chat",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "zephyraluco",
   "license": "MIT",
   "engines": {
