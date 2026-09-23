@@ -215,7 +215,8 @@ export class StreamTranslator {
 			this.options.logger.warn('响应因达到长度上限被截断（finish_reason=length）');
 		}
 		if (this.usage !== undefined) {
-			this.options.logger.info(
+			// debug 级：这是每轮响应的诊断细节，会话用量已由状态栏展示
+			this.options.logger.debug(
 				`用量：输入 ${this.usage.prompt_tokens ?? '?'} / 输出 ${this.usage.completion_tokens ?? '?'} / ` +
 				`合计 ${this.usage.total_tokens ?? '?'} token`,
 				this.options.modelId,

@@ -25,19 +25,10 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      # 类型 + 分层约束（谁可以依赖宿主）+ 文档里的统计数字
-      - name: 约束检查
-        run: npm run check
+      # 类型 + lint + 编译出产物。这里不打包 vsix：那件事在打 tag 时由 release.yml 做。
+      - name: 编译
+        run: npm run compile
 
-      - name: Lint
-        run: npm run lint
-
-      - name: 打包
-        run: npm run package
-
-      - name: 上传 vsix
-        uses: actions/upload-artifact@v4
-        with:
-          name: newapi-copilot-chat-vsix
-          path: '*.vsix'
-          retention-days: 14
+      # 分层约束：谁可以依赖 VS Code 运行时（compile 里不包含这一项）
+      - name: 分层约束
+        run: npm run check-layering

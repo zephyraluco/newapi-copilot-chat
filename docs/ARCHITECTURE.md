@@ -249,7 +249,7 @@ flowchart TD
 | `streamFlow.ts` | 275 | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是**传输维度的锚点**；中立部件 → 宿主部件的绑定与响应侧回传 |
 | `requestRepair.ts` | 209 | HTTP 400 的自愈阶梯：去掉站点不认的那个可选字段，纯函数 |
 | `tokenizer.ts` | 152 | token 估算（刻意高估，按真实用量校准比例） |
-| `thinking.ts` | 69 | 思考内容部件（proposed API）的探测、构造与读取 |
+| `thinking.ts` | 69 | 思考内容部件的探测、构造与读取（宿主提供时才存在） |
 | `replay.ts` | 105 | 思考内容的回放标记：随响应留下、下次请求读回 |
 | `toolFlow.ts` | 178 | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
 | `preflight.ts` | 51 | 工具组预激活的宿主侧：与 `toolFlow.ts` 分开是为了让它保持不依赖 `vscode` |
@@ -692,7 +692,7 @@ options.modelConfiguration ──▶ selectReasoningEffort() ──▶ applyReas
   上游偶尔把 JSON 包在 Markdown 代码块里，会被自动剥离。
 - **思维链的字段名由 `reasoning.ts` 统一认**：DeepSeek 用 `reasoning_content`，OpenRouter 等用 `reasoning`，
   流式与非流式（网关忽略 `stream` 时的降级路径）走的是同一个读取器，不会一边宽容一边严格。
-  宿主提供 `LanguageModelThinkingPart`（proposed API）时走专用部件，否则包成 Markdown 引用块当正文发出
+  宿主提供 `LanguageModelThinkingPart` 时走专用部件，否则包成 Markdown 引用块当正文发出
   （见下文「思考内容」）。原文无论是否回显都会累积——回填历史要用。
 - **usage 只在最后一个 chunk**：单独记下用于统计。
 - **多 choice**：VS Code 的响应模型是单条回答，只取 `index === 0`（对 `n > 1` 给出警告）。
@@ -726,11 +726,12 @@ Copilot 的「会话信息 → 上下文窗口」读的是响应上的 `usage`�
 
 两件事相互独立，不要混为一谈：**怎么显示**是外观问题，**要不要回填**是上游的协议要求。
 
-- **渲染**：宿主提供 `LanguageModelThinkingPart`（proposed API，`package.json` 里用
-  `enabledApiProposals` 声明）时，思维链走专用部件，Copilot 渲染成可折叠的思考块，
+- **渲染**：宿主提供 `LanguageModelThinkingPart` 时，思维链走专用部件，Copilot 渲染成可折叠的思考块，
   外观由用户自己的思考样式设置决定；宿主没提供（或用户关掉 `request.includeReasoning`）时
   回退到 Markdown 引用块。三种情况都在 `StreamTranslator.emitReasoning` 一个方法里收敛。
   探测只看构造函数是否存在，且按**构造时定好一次**处理：同一次响应里忽冷忽热地换渲染路径更糟。
+  这个部件属提案 API，扩展不声明 `enabledApiProposals`（提案 API 不允许发布到 Marketplace），
+  因此只有宿主主动提供时才会用到它——**引用块是常规路径，专用部件是例外**。
 - **回填**：DeepSeek 在**思考态的工具调用历史**里要求助手消息带回 `reasoning_content`，
   缺了这次请求会被拒。而稳定 API 不会把思考内容交还给 provider——历史里只剩正文与工具调用。
   因此响应结束时额外上报一个 `mimeType` 为 `stateful_marker` 的 data 部件（宿主不渲染它，
@@ -921,7 +922,7 @@ base64 非法、JSON 不是预期形状，一律当作「没有标记」——�
 | 错误码表不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，而丢掉码就等于把唯一的线索丢了 |
 | 交给 VS Code 的错误清掉 `stack` | Copilot 会把堆栈一起渲染；用户要的是原因，不是指向打包产物的调用链（原始异常已在日志里） |
 | 思考内容靠 `stateful_marker` 数据部件回环 | 稳定 API 不把思考内容交还给 provider，这是唯一能按轮次把 `reasoning_content` 带回上游的通道；宿主不回传时行为退化成「不回填」，不会出错 |
-| 用 proposed API 渲染思考内容（`enabledApiProposals`） | 可折叠的思考块只有它能做到；代价是宿主不提供该部件时才能回退到引用块，且这个提案将来可能变 |
+| 不声明 `enabledApiProposals`（因而不用可折叠思考块） | 思考块要的那个部件还没进稳定 API，而提案 API **不允许发布到 Marketplace**；用引用块回显是它在商店里的唯一可行形态。代价是 Copilot 自己的思考样式设置对它不生效 |
 | 工具组预激活默认关闭 | 它换来的前缀缓存命中率要用每轮多带的工具定义 token 去换，工具不多时并不划算 |
 | 供应商差异进 `adapter/`，通用容错进基础层 | 「思维链字段名各家不同」这类事情**每个上游都可能遇到**，写进适配器就要写很多遍，而且会随时间漂移；
 放进 `reasoning.ts` 则上游换名字只改一处 |

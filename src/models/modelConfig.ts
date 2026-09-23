@@ -343,7 +343,8 @@ export function buildModelConfigs(
 	}
 
 	if (filtered.length > 0) {
-		logger.info(`已按 include/exclude 过滤 ${filtered.length} 个模型`);
+		// debug 级：每次模型列表刷新都会重复同一条统计
+		logger.debug(`已按 include/exclude 过滤 ${filtered.length} 个模型`);
 	}
 	return { configs, filtered, invalidCount };
 }

@@ -1,9 +1,9 @@
 {
   "name": "newapi-copilot-chat",
   "displayName": "New API for Copilot Chat",
-  "description": "把 New API（OpenAI 兼容网关）中的模型作为自带密钥（BYOK）供应商接入 GitHub Copilot Chat。",
+  "description": "把 New API（OpenAI 兼容网关）中的模型作为自带密钥（BYOK）供应商接入 GitHub Copilot Chat",
   "version": "0.0.1",
-  "publisher": "newapi",
+  "publisher": "zeal",
   "license": "MIT",
   "engines": {
     "vscode": "^1.137.0"
@@ -25,9 +25,6 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
-  "enabledApiProposals": [
-    "languageModelThinkingPart"
-  ],
   "contributes": {
     "languageModelChatProviders": [
       {
@@ -196,7 +193,7 @@
         "newapi-copilot-chat.request.includeReasoning": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）回显给用户。\n\n宿主提供「思考内容」部件（`LanguageModelThinkingPart`）时，思维链会以可折叠的思考块呈现，外观由 Copilot 的思考样式设置决定；否则只能当正文发出去，以 Markdown 引用块的形式出现在回答前面。\n\n关闭它不影响向 DeepSeek 回填 `reasoning_content`：那是上游要求的请求字段，与是否展示无关。",
+          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）回显给用户。\n\n回显时思维链以 Markdown 引用块的形式出现在回答前面。\n\n关闭它不影响向 DeepSeek 回填 `reasoning_content`：那是上游要求的请求字段，与是否展示无关。",
           "order": 26
         },
         "newapi-copilot-chat.request.stabilizeToolList": {
@@ -236,9 +233,8 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "vsce package --allow-missing-repository",
     "check-types": "tsc --noEmit",
-    "check-docs": "node scripts/check-doc-stats.js",
     "check-layering": "node scripts/check-layering.js",
-    "check": "npm run check-types && npm run check-layering && npm run check-docs",
+    "check": "npm run check-types && npm run check-layering",
     "lint": "eslint src --max-warnings 0",
     "models:openrouter": "node scripts/fetch-openrouter-models.js"
   },

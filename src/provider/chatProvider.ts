@@ -261,9 +261,10 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				reasoningEffort: effort.effort,
 			});
 
-			// 日志里不写密钥，但要能看出「用没用上模型配置」
+			// debug 级：每轮对话都会打一条，属于诊断细节。日志里不写密钥，
+			// 但要能看出「用没用上模型配置」。
 			const effortNote = effort.effort === undefined ? '思考强度未指定' : `思考强度 ${effort.effort}`;
-			logger.info(
+			logger.debug(
 				`→ ${config.id}：${converted.messages.length} 条消息，` +
 				`${tools?.length ?? 0} 个工具，适配器 ${adapter.id}，${effortNote}，` +
 				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,

@@ -154,7 +154,8 @@ export class ModelCatalog implements vscode.Disposable {
 			this.snapshot = snapshot;
 			this.lastSettingsFingerprint = fingerprint;
 			this.lastFailure = undefined;
-			logger.info(
+			// debug 级：状态刷新会周期性强制重拉，每次都打同样一行毫无信息量
+			logger.debug(
 				`模型列表已刷新：${built.configs.length}/${raw.length} 可用，` +
 				`耗时 ${Date.now() - startedAt}ms`,
 			);

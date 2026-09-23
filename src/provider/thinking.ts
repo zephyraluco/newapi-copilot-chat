@@ -1,13 +1,14 @@
 /**
  * 思考内容部件（`LanguageModelThinkingPart`）。
  *
- * 它是 proposed API：typings 里没有（本项目自带声明，见根目录
- * `vscode.proposed.languageModelThinkingPart.d.ts`），运行时的 VS Code 也未必提供。
- * 因此「探测 / 构造 / 读取」都收敛在这里：
+ * 它不在稳定 typings（`@types/vscode`）里，运行时也未必存在，因此「探测 / 构造 / 读取」
+ * 都收敛在这里：
  *
- * - 宿主支持时，思考内容走专用部件，Copilot 把它渲染成可折叠的思考块，
+ * - 扩展**不声明** `enabledApiProposals`（提案 API 不允许发布到 Marketplace），
+ *   所以不能指望这个部件一定存在，一切访问都必须经过运行时探测；
+ * - 宿主提供了这个部件时，思考内容走它，Copilot 把它渲染成可折叠的思考块，
  *   并且 `chat.agent.thinkingStyle` 之类的外观设置才会生效；
- * - 宿主不支持时调用方回退到 Markdown 引用块（见 `provider/stream.ts`）；
+ * - 宿主没提供时调用方回退到 Markdown 引用块（见 `provider/stream.ts`）；
  * - 读取侧按形状识别而不只靠 `instanceof`：宿主回传的历史部件可能来自**另一个模块实例**，
  *   那时 `instanceof` 会失效（`messages.ts` 里转换文本部件时也踩过同一个坑）。
  */
