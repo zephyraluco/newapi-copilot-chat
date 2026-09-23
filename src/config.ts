@@ -3,7 +3,7 @@
  *
  * **站点地址与 API Key 不在这里**（由 provider 配置组提供，见 `runtime/target.ts`），
  * **模型元数据也不在这里**（由只读的模型数据表提供，见 `models/dataset.ts`）。
- * 这里只有与连接无关的共享调整项：模型过滤、请求参数、状态栏、日志级别。
+ * 这里只有与连接无关的共享调整项：模型列表缓存与兜底值、请求参数、状态栏、日志级别。
  */
 
 import * as vscode from 'vscode';
@@ -15,18 +15,13 @@ import {
 import {
 	asBoolean,
 	asNumber,
-	asStringArray,
 	isRecord,
 } from './json';
 import type { Logger, LogLevelName } from './logger';
 import { parseLogLevelName } from './logger';
 
-/** 模型发现与过滤相关设置。 */
+/** 模型发现相关设置。 */
 export interface ModelSettings {
-	/** 白名单 glob；为空表示全部保留 */
-	readonly include: readonly string[];
-	/** 黑名单 glob；优先级高于 include */
-	readonly exclude: readonly string[];
 	/** 模型列表缓存有效期 */
 	readonly cacheTtlMs: number;
 	/** 未知模型的兜底上下文窗口 */
@@ -157,8 +152,6 @@ export function readSettings(logger: Logger): NewApiSettings {
 	return {
 		logLevel: parseLogLevelName(config.get('logLevel')),
 		models: {
-			include: asStringArray(config.get('models.include')) ?? [],
-			exclude: asStringArray(config.get('models.exclude')) ?? [],
 			cacheTtlMs: readPositiveInt(config.get('models.cacheTtl'), DEFAULTS.modelCacheTtlMs, 5_000),
 			defaultContextWindow: readPositiveInt(
 				config.get('models.defaultContextWindow'),
@@ -229,8 +222,6 @@ export class ConfigService implements vscode.Disposable {
 		return {
 			logLevel,
 			models: {
-				include: models.include,
-				exclude: models.exclude,
 				cacheTtlMs: models.cacheTtlMs,
 			},
 			request: {

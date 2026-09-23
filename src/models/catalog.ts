@@ -17,7 +17,7 @@ import { buildModelConfigs, type ModelConfig } from './modelConfig';
 
 /** 一次模型列表快照。 */
 export interface ModelCatalogSnapshot {
-	/** 整合后的模型配置，已按 include/exclude 过滤 */
+	/** 整合后的模型配置 */
 	readonly models: readonly ModelConfig[];
 	/** 拉取时间（毫秒时间戳） */
 	readonly fetchedAt: number;
@@ -33,8 +33,6 @@ export interface ModelCatalogSnapshot {
 	readonly source: 'network' | 'cache';
 	/** 网关返回的原始条目数 */
 	readonly rawCount: number;
-	/** 被 include/exclude 过滤掉的模型（用于解释「为什么没看到某个模型」） */
-	readonly filtered: readonly { readonly id: string; readonly reason: string }[];
 	/** 因缺少可用 id 或构建失败而被跳过的条目数 */
 	readonly invalidCount: number;
 }
@@ -148,7 +146,6 @@ export class ModelCatalog implements vscode.Disposable {
 				fetchedAt: Date.now(),
 				source: 'network',
 				rawCount: raw.length,
-				filtered: built.filtered,
 				invalidCount: built.invalidCount,
 			};
 			this.snapshot = snapshot;
@@ -183,7 +180,6 @@ export class ModelCatalog implements vscode.Disposable {
 				fetchedAt: Date.now(),
 				source: 'cache',
 				rawCount: 0,
-				filtered: [],
 				invalidCount: 0,
 				error: message,
 				hint,
@@ -211,8 +207,6 @@ const FAILURE_BACKOFF_MS = 10_000;
  */
 export function fingerprintOf(settings: ModelSettings): string {
 	return safeJsonStringify({
-		include: [...settings.include].sort(),
-		exclude: [...settings.exclude].sort(),
 		defaultContextWindow: settings.defaultContextWindow,
 		defaultMaxOutputTokens: settings.defaultMaxOutputTokens,
 	}) ?? '';

@@ -32,7 +32,7 @@ export const COMMANDS = {
 	testConnection: `${EXTENSION_ID}.testConnection`,
 	/** 忽略缓存，重新拉取所有配置组的模型列表 */
 	refreshModels: `${EXTENSION_ID}.refreshModels`,
-	/** 打开本扩展的设置页（模型过滤、请求参数等） */
+	/** 打开本扩展的设置页（请求参数、状态栏等） */
 	openSettings: `${EXTENSION_ID}.openSettings`,
 	/** 清空本次会话的用量统计 */
 	resetUsage: `${EXTENSION_ID}.resetUsage`,

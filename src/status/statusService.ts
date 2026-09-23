@@ -19,10 +19,8 @@ import { readUsageDelta } from '../usage';
 
 /** 单个目标的模型列表概要。 */
 export interface ModelSummary {
-	/** 可用模型数（已过滤） */
+	/** 可用模型数 */
 	readonly count: number;
-	/** 被 include/exclude 过滤掉的数量 */
-	readonly filteredCount: number;
 	/** 上次刷新的错误 */
 	readonly error?: string;
 	/** 针对该错误的可操作建议 */
@@ -112,7 +110,7 @@ export interface StatusSessionView {
 export interface StatusSessionSource {
 	list(): readonly StatusSessionView[];
 	readonly onDidChange: vscode.Event<void>;
-	/** 让各会话丢弃缓存（模型过滤设置变化时用） */
+	/** 让各会话丢弃缓存（模型设置变化时用） */
 	invalidate(): void;
 }
 
@@ -161,7 +159,7 @@ export class StatusService implements vscode.Disposable {
 		this.disposables.push(
 			this.deps.sessions.onDidChange(() => this.emit()),
 			this.deps.config.onDidChange(() => {
-				// 模型过滤设置变了，各会话的缓存需要失效——直接丢弃会话，
+				// 模型设置变了，各会话的缓存需要失效——直接丢弃会话，
 				// 下一次模型发现会按新设置重建。
 				this.deps.sessions.invalidate();
 				this.restartTimer();
@@ -328,7 +326,6 @@ export class StatusService implements vscode.Disposable {
 			issues: target.issues,
 			models: {
 				count: snapshot?.models.length ?? 0,
-				filteredCount: snapshot?.filtered.length ?? 0,
 				error: snapshot?.error,
 				hint: snapshot?.hint,
 			},

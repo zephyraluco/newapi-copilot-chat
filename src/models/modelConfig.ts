@@ -26,7 +26,6 @@ import type { ModelSettings } from '../config';
 import type { NewApiModel } from '../types';
 import { matchModelDataset } from './dataset';
 import { isSignificantlyDifferent, reconcileLimits } from './limits';
-import { findFilteringPattern } from './matcher';
 import { extractRemoteHints } from './remoteHints';
 import { buildModelDetail, buildModelTooltip } from './tooltip';
 
@@ -102,12 +101,10 @@ export interface BuildModelConfigsOptions {
 	readonly logger: Logger;
 }
 
-/** 构建结果。除了可用的配置，还带上被过滤/被判定为非法的模型，便于解释「为何少了某些模型」。 */
+/** 构建结果。除了可用的配置，还带上无法构建的条目数，便于解释「为何少了某些模型」。 */
 export interface BuildModelConfigsResult {
 	readonly configs: readonly ModelConfig[];
-	/** 被 include/exclude 规则挡掉的模型 */
-	readonly filtered: readonly { readonly id: string; readonly reason: string }[];
-	/** 缺少可用 id 而无法构建的条目数 */
+	/** 缺少可用 id 或构建失败的条目数 */
 	readonly invalidCount: number;
 }
 
@@ -303,33 +300,22 @@ export function deriveFamily(modelId: string): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * 批量构建模型配置，并应用 include / exclude 过滤。
+ * 批量构建模型配置。
  *
- * 过滤语义：
- * - `exclude` 优先于 `include`；
- * - `include` 为空数组表示「全部保留」，非空表示白名单。
+ * 单个模型构建失败不会拖垮整个列表：只计数并记一条 error 日志。
  */
 export function buildModelConfigs(
 	raw: readonly NewApiModel[],
 	options: BuildModelConfigsOptions,
 ): BuildModelConfigsResult {
-	const { settings, logger } = options;
+	const { logger } = options;
 	const configs: ModelConfig[] = [];
-	const filtered: { id: string; reason: string }[] = [];
 	let invalidCount = 0;
 
 	for (const model of raw) {
 		const id = asNonEmptyString(model.id);
 		if (id === undefined) {
 			invalidCount++;
-			continue;
-		}
-		const filter = findFilteringPattern(id, settings.include, settings.exclude);
-		if (filter !== undefined) {
-			const reason = filter.kind === 'exclude'
-				? `命中排除规则 ${filter.pattern}`
-				: `未命中包含规则（${filter.pattern}）`;
-			filtered.push({ id, reason });
 			continue;
 		}
 
@@ -342,9 +328,5 @@ export function buildModelConfigs(
 		}
 	}
 
-	if (filtered.length > 0) {
-		// debug 级：每次模型列表刷新都会重复同一条统计
-		logger.debug(`已按 include/exclude 过滤 ${filtered.length} 个模型`);
-	}
-	return { configs, filtered, invalidCount };
+	return { configs, invalidCount };
 }

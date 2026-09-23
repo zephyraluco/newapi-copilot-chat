@@ -54,7 +54,7 @@ export async function openModelManagement(): Promise<void> {
 	await vscode.commands.executeCommand(MANAGE_MODELS_COMMAND);
 }
 
-/** 打开本扩展的设置页（模型过滤、请求参数等）。 */
+/** 打开本扩展的设置页（请求参数、状态栏等）。 */
 export async function openSettings(extensionId: string): Promise<void> {
 	await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${extensionId}`);
 }
@@ -124,9 +124,7 @@ async function refreshModels(deps: CommandDeps): Promise<void> {
 	}
 
 	const total = targets.reduce((sum, target) => sum + target.models.count, 0);
-	const filteredCount = targets.reduce((sum, target) => sum + target.models.filteredCount, 0);
 	vscode.window.showInformationMessage(
-		`已刷新：${targets.length} 个配置组共 ${total} 个可用模型` +
-		(filteredCount > 0 ? `，已按过滤设置排除 ${filteredCount} 个。` : '。'),
+		`已刷新：${targets.length} 个配置组共 ${total} 个可用模型。`,
 	);
 }

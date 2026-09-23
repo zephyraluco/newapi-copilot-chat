@@ -157,8 +157,6 @@ macOS 钥匙串 / Linux 密钥环）。它**不写入 `settings.json`，也不�
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `models.include` | `[]` | 白名单 glob（`*`、`?`），留空表示全部保留。 |
-| `models.exclude` | `[]` | 黑名单 glob，**优先级高于白名单**。 |
 | `models.cacheTtl` | `300000` | 模型列表缓存有效期（毫秒）。 |
 | `models.defaultContextWindow` | `128000` | 未知模型的兜底上下文窗口。 |
 | `models.defaultMaxOutputTokens` | `8192` | 未知模型的兜底最大输出。 |
@@ -189,9 +187,9 @@ macOS 钥匙串 / Linux 密钥环）。它**不写入 `settings.json`，也不�
 
 ```json
 {
+  "newapi-copilot-chat.models.cacheTtl": 600000,
   "newapi-copilot-chat.request.temperature": 0.7,
-  "newapi-copilot-chat.request.streamIdleTimeoutMs": 180000,
-  "newapi-copilot-chat.models.exclude": ["*-preview"]
+  "newapi-copilot-chat.request.streamIdleTimeoutMs": 180000
 }
 ```
 
@@ -234,7 +232,7 @@ VS Code 据此在「管理模型」界面生成本扩展的配置表单：
 | --- | --- |
 | New API: 测试连接 | 重新探测所有配置组，并报告延迟与模型数量。 |
 | New API: 刷新模型列表 | 忽略缓存强制重新拉取所有配置组。 |
-| New API: 打开设置 | 定位到本扩展的设置页（模型过滤、请求参数等）。 |
+| New API: 打开设置 | 定位到本扩展的设置页（请求参数、状态栏等）。 |
 | New API: 重置用量统计 | 把状态栏悬浮提示里的会话用量归零。 |
 
 配置站点与密钥请用模型选择器里的 **管理模型**，或命令面板的 **Manage Language Models**。
@@ -248,7 +246,7 @@ VS Code 据此在「管理模型」界面生成本扩展的配置表单：
 src/
   extension.ts        激活与装配（只做接线）
   commands.ts         命令实现（测试连接 / 刷新模型 / 打开设置 / 重置用量）
-  config.ts           VS Code 配置读取（模型过滤、请求参数、状态栏）
+  config.ts           VS Code 配置读取（请求参数、状态栏）
   consts.ts           常量（命令 ID、端点、默认值）
   types.ts            New API / OpenAI 兼容（DeepSeek 风格）数据结构
   logger.ts           日志（LogOutputChannel）+ 密钥脱敏
@@ -257,7 +255,7 @@ src/
   format.ts           展示层格式化（token、相对时间、Markdown 转义）
   cancellation.ts     CancellationToken → AbortSignal 桥接
   client/             与 New API 交互（HTTP、SSE、端点封装）
-  models/             模型信息整合（数据表、glob、配置解析、tooltip、缓存）
+  models/             模型信息整合（数据表、配置解析、tooltip、缓存）
   runtime/            连接目标与会话（配置组解析、按配置组分配 client 与模型目录）
   provider/           与 Copilot 交互（provider 编排、请求组装、流消费与自愈、回传部件）
   adapter/            按模型处理协议差异（框架层 + 兜底模板）

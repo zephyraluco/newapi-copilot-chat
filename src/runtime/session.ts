@@ -28,7 +28,7 @@ export interface ProviderSession {
 /** 会话注册表的依赖。 */
 export interface SessionRegistryDeps {
 	readonly logger: Logger;
-	/** 取模型过滤 / 覆盖设置。这部分对所有目标共享 */
+	/** 取模型共享设置（缓存有效期与未知模型的兜底值） */
 	getModelSettings(): ModelSettings;
 	/** 取请求设置（超时、重试） */
 	getRequestSettings(): RequestSettings;
@@ -101,7 +101,7 @@ export class SessionRegistry implements vscode.Disposable {
 	/**
 	 * 丢弃会话。
 	 *
-	 * 用于「模型过滤设置变更」这类需要让缓存失效的场景：会话被释放后，
+	 * 用于「模型设置变更」这类需要让缓存失效的场景：会话被释放后，
 	 * 下一次模型发现会按新设置重新创建。
 	 */
 	invalidate(): void {

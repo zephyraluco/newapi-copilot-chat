@@ -3,7 +3,7 @@
   "displayName": "New API for Copilot Chat",
   "description": "把 New API（OpenAI 兼容网关）中的模型作为自带密钥（BYOK）供应商接入 GitHub Copilot Chat",
   "version": "0.0.1",
-  "publisher": "zeal",
+  "publisher": "zephyraluco",
   "license": "MIT",
   "engines": {
     "vscode": "^1.137.0"
@@ -101,44 +101,26 @@
           "markdownDescription": "扩展日志级别，日志输出到「输出」面板的 `New API for Copilot Chat` 通道。\n\n注意：该通道自身也有日志级别；若这里的级别更详细而通道级别更低，日志仍会被过滤掉（扩展检测到这种情况时会在日志中提示）。",
           "order": 1
         },
-        "newapi-copilot-chat.models.include": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "markdownDescription": "模型白名单，支持 `*` 与 `?` 通配符，大小写不敏感。\n\n留空表示「全部保留」。例如：`[\"gpt-*\", \"claude-*\"]`。",
-          "order": 10
-        },
-        "newapi-copilot-chat.models.exclude": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "markdownDescription": "模型黑名单，语法与白名单一致，**优先级高于白名单**。\n\n例如：`[\"*-vision\", \"*-embedding\"]`。",
-          "order": 11
-        },
         "newapi-copilot-chat.models.cacheTtl": {
           "type": "number",
           "default": 300000,
           "minimum": 5000,
           "markdownDescription": "模型列表缓存有效期（毫秒），默认 5 分钟。",
-          "order": 13
+          "order": 10
         },
         "newapi-copilot-chat.models.defaultContextWindow": {
           "type": "number",
           "default": 128000,
           "minimum": 2048,
           "markdownDescription": "未知模型的兜底上下文窗口：当模型数据表与网关都没有给出信息时使用。",
-          "order": 14
+          "order": 11
         },
         "newapi-copilot-chat.models.defaultMaxOutputTokens": {
           "type": "number",
           "default": 8192,
           "minimum": 256,
           "markdownDescription": "未知模型的兜底最大输出 token。",
-          "order": 15
+          "order": 12
         },
         "newapi-copilot-chat.request.timeoutMs": {
           "type": "number",
