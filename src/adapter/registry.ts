@@ -8,6 +8,7 @@ import type { ModelConfig } from '../models/modelConfig';
 import type { ModelAdapter } from './adapter';
 import { DefaultModelAdapter } from './defaultAdapter';
 import { DeepSeekAdapter } from './deepseek/deepseekAdapter';
+import { Gpt6ChatAdapter } from './openai/gpt6ChatAdapter';
 
 /** 适配器注册表。 */
 export class AdapterRegistry {
@@ -59,6 +60,7 @@ export function createDefaultAdapterRegistry(logger?: Logger): AdapterRegistry {
 	const registry = new AdapterRegistry();
 
 	registry.register(new DeepSeekAdapter(), logger);
+	registry.register(new Gpt6ChatAdapter(), logger);
 	registry.register(new DefaultModelAdapter(), logger);
 
 	return registry;
