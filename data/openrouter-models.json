@@ -1,15 +1,15 @@
 {
   "source": "https://openrouter.ai/api/v1/models",
-  "generatedAt": "2026-09-16T04:23:51.081Z",
-  "totalFetched": 443,
-  "count": 343,
+  "generatedAt": "2026-09-27T08:21:47.489Z",
+  "totalFetched": 458,
+  "count": 362,
   "dropped": {
     "invalidEntry": 0,
-    "variant": 94,
+    "variant": 89,
     "noTextInput": 0,
     "noTextOutput": 0,
     "noContextWindow": 0,
-    "noMaxOutput": 6,
+    "noMaxOutput": 7,
     "expired": 0,
     "belowMinContext": 0,
     "duplicate": 0
@@ -46,6 +46,38 @@
       "reasoning": true
     },
     {
+      "id": "aion-3.5",
+      "vendor": "AionLabs",
+      "displayName": "Aion 3.5",
+      "contextWindow": 262144,
+      "maxOutputTokens": 32768,
+      "imageInput": false,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "id": "aion-3.5-mini",
+      "vendor": "AionLabs",
+      "displayName": "Aion 3.5 Mini",
+      "contextWindow": 262144,
+      "maxOutputTokens": 32768,
+      "imageInput": false,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
+    },
+    {
       "id": "aion-rp-llama-3.1-8b",
       "vendor": "AionLabs",
       "displayName": "Aion-RP 1.0 (8B)",
@@ -53,16 +85,6 @@
       "maxOutputTokens": 29491,
       "imageInput": false,
       "toolCalling": false,
-      "reasoning": false
-    },
-    {
-      "id": "claude-3-haiku",
-      "vendor": "Anthropic",
-      "displayName": "Claude 3 Haiku",
-      "contextWindow": 200000,
-      "maxOutputTokens": 4096,
-      "imageInput": true,
-      "toolCalling": true,
       "reasoning": false
     },
     {
@@ -135,16 +157,6 @@
       "displayName": "Claude Haiku Latest",
       "contextWindow": 200000,
       "maxOutputTokens": 64000,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
-      "id": "claude-opus-4",
-      "vendor": "Anthropic",
-      "displayName": "Claude Opus 4",
-      "contextWindow": 200000,
-      "maxOutputTokens": 32000,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -226,6 +238,24 @@
       "id": "claude-opus-5",
       "vendor": "Anthropic",
       "displayName": "Claude Opus 5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "id": "claude-opus-5.5",
+      "vendor": "Anthropic",
+      "displayName": "Claude Opus 5.5",
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "imageInput": true,
@@ -352,6 +382,16 @@
       "reasoning": false
     },
     {
+      "id": "command-a-plus",
+      "vendor": "Cohere",
+      "displayName": "Command A+",
+      "contextWindow": 192000,
+      "maxOutputTokens": 64000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true
+    },
+    {
       "id": "command-r-08-2024",
       "vendor": "Cohere",
       "displayName": "Command R (08-2024)",
@@ -395,8 +435,8 @@
       "id": "deepseek-chat",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V3",
-      "contextWindow": 128000,
-      "maxOutputTokens": 16000,
+      "contextWindow": 163840,
+      "maxOutputTokens": 16384,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -425,8 +465,8 @@
       "id": "deepseek-flash-latest",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek Flash Latest",
-      "contextWindow": 1048576,
-      "maxOutputTokens": 943718,
+      "contextWindow": 1040000,
+      "maxOutputTokens": 384000,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -442,7 +482,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek Pro Latest",
       "contextWindow": 1048576,
-      "maxOutputTokens": 384000,
+      "maxOutputTokens": 393216,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -517,8 +557,8 @@
       "id": "deepseek-v4-flash",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Flash 0423",
-      "contextWindow": 1024000,
-      "maxOutputTokens": 384000,
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -549,7 +589,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Flash Latest",
       "contextWindow": 1048576,
-      "maxOutputTokens": 393216,
+      "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -565,7 +605,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Flash Vision Exp",
       "contextWindow": 1048576,
-      "maxOutputTokens": 943718,
+      "maxOutputTokens": 262144,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -580,8 +620,8 @@
       "id": "deepseek-v4-pro",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Pro 0423",
-      "contextWindow": 1048576,
-      "maxOutputTokens": 393216,
+      "contextWindow": 1024000,
+      "maxOutputTokens": 384000,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -595,8 +635,8 @@
       "id": "deepseek-v4-pro-0813",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Pro 0813",
-      "contextWindow": 1024000,
-      "maxOutputTokens": 384000,
+      "contextWindow": 1048576,
+      "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -608,10 +648,10 @@
       "defaultReasoningEffort": "high"
     },
     {
-      "id": "deepseek-flash",
+      "id": "deepseek-v4.1-flash",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4.1 Flash",
-      "contextWindow": 1048576,
+      "contextWindow": 1040000,
       "maxOutputTokens": 384000,
       "imageInput": true,
       "toolCalling": true,
@@ -642,6 +682,22 @@
       "imageInput": false,
       "toolCalling": false,
       "reasoning": false
+    },
+    {
+      "id": "ember-1",
+      "vendor": "Fireworks",
+      "displayName": "Ember-1",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 943718,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
     },
     {
       "id": "ernie-4.5-vl-424b-a47b",
@@ -1168,8 +1224,8 @@
       "id": "glm-5.1",
       "vendor": "Z.ai",
       "displayName": "GLM 5.1",
-      "contextWindow": 200000,
-      "maxOutputTokens": 128000,
+      "contextWindow": 202752,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -1179,7 +1235,7 @@
       "vendor": "Z.ai",
       "displayName": "GLM 5.2",
       "contextWindow": 1048576,
-      "maxOutputTokens": 128000,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -1193,8 +1249,8 @@
       "id": "glm-5.3",
       "vendor": "Z.ai",
       "displayName": "GLM 5.3",
-      "contextWindow": 1048575,
-      "maxOutputTokens": 943717,
+      "contextWindow": 1048576,
+      "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -1210,8 +1266,40 @@
       "vendor": "Z.ai",
       "displayName": "GLM 5.3 Flash",
       "contextWindow": 1048576,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
+    },
+    {
+      "id": "glm-5.3-flashx",
+      "vendor": "Z.ai",
+      "displayName": "GLM 5.3 FlashX",
+      "contextWindow": 1048576,
       "maxOutputTokens": 131072,
       "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "high",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
+    },
+    {
+      "id": "glm-5.3-prime",
+      "vendor": "Z.ai",
+      "displayName": "GLM 5.3 Prime",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 131072,
+      "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
       "supportsReasoningEffort": [
@@ -1236,7 +1324,7 @@
       "vendor": "Z.ai",
       "displayName": "GLM Flash Latest",
       "contextWindow": 1048576,
-      "maxOutputTokens": 131072,
+      "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -1251,8 +1339,8 @@
       "id": "glm-latest",
       "vendor": "Z.ai",
       "displayName": "GLM Latest",
-      "contextWindow": 262144,
-      "maxOutputTokens": 235929,
+      "contextWindow": 1048576,
+      "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -1916,6 +2004,82 @@
       "defaultReasoningEffort": "medium"
     },
     {
+      "id": "gpt-6-luna",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6 Luna",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "gpt-6-luna-pro",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6 Luna Pro",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "gpt-6-sol",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6 Sol",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "gpt-6-sol-pro",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6 Sol Pro",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
       "id": "gpt-astra-latest",
       "vendor": "OpenAI",
       "displayName": "GPT Astra Latest",
@@ -2005,7 +2169,7 @@
       "vendor": "OpenAI",
       "displayName": "gpt-oss-120b",
       "contextWindow": 131072,
-      "maxOutputTokens": 117964,
+      "maxOutputTokens": 65536,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -2021,7 +2185,7 @@
       "vendor": "OpenAI",
       "displayName": "gpt-oss-20b",
       "contextWindow": 131072,
-      "maxOutputTokens": 117964,
+      "maxOutputTokens": 32768,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -2170,6 +2334,23 @@
       "id": "grok-4.6",
       "vendor": "SpaceXAI",
       "displayName": "Grok 4.6",
+      "contextWindow": 500000,
+      "maxOutputTokens": 450000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "id": "grok-4.7",
+      "vendor": "SpaceXAI",
+      "displayName": "Grok 4.7",
       "contextWindow": 500000,
       "maxOutputTokens": 450000,
       "imageInput": true,
@@ -2367,16 +2548,6 @@
       "defaultReasoningEffort": "high"
     },
     {
-      "id": "kat-coder-pro-v2",
-      "vendor": "Kwaipilot",
-      "displayName": "KAT-Coder-Pro V2",
-      "contextWindow": 262144,
-      "maxOutputTokens": 144000,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": false
-    },
-    {
       "id": "kat-coder-pro-v2.5",
       "vendor": "Kwaipilot",
       "displayName": "KAT-Coder-Pro V2.5",
@@ -2552,7 +2723,7 @@
       "id": "ling-3.0-flash-vl",
       "vendor": "inclusionAI",
       "displayName": "Ling 3.0 Flash VL",
-      "contextWindow": 131072,
+      "contextWindow": 262144,
       "maxOutputTokens": 32768,
       "imageInput": true,
       "toolCalling": true,
@@ -2733,6 +2904,36 @@
       "reasoning": true
     },
     {
+      "id": "mimo-v2.6-flash",
+      "vendor": "Xiaomi",
+      "displayName": "MiMo-V2.6-Flash",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true
+    },
+    {
+      "id": "mimo-v2.6-pro",
+      "vendor": "Xiaomi",
+      "displayName": "MiMo-V2.6-Pro",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true
+    },
+    {
+      "id": "mimo-v2.6-pro-ultraspeed",
+      "vendor": "Xiaomi",
+      "displayName": "MiMo-V2.6-Pro-UltraSpeed",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true
+    },
+    {
       "id": "minimax-01",
       "vendor": "MiniMax",
       "displayName": "MiniMax-01",
@@ -2796,8 +2997,8 @@
       "id": "minimax-m2.7",
       "vendor": "MiniMax",
       "displayName": "MiniMax M2.7",
-      "contextWindow": 204800,
-      "maxOutputTokens": 131072,
+      "contextWindow": 196608,
+      "maxOutputTokens": 176947,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -2959,7 +3160,7 @@
       "contextWindow": 128000,
       "maxOutputTokens": 102400,
       "imageInput": true,
-      "toolCalling": false,
+      "toolCalling": true,
       "reasoning": false
     },
     {
@@ -3007,7 +3208,7 @@
       "vendor": "Meta",
       "displayName": "Muse Glimmer 30B",
       "contextWindow": 131072,
-      "maxOutputTokens": 117964,
+      "maxOutputTokens": 16384,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -3150,8 +3351,8 @@
       "id": "nemotron-3-ultra-550b-a55b",
       "vendor": "NVIDIA",
       "displayName": "Nemotron 3 Ultra",
-      "contextWindow": 256000,
-      "maxOutputTokens": 32768,
+      "contextWindow": 202800,
+      "maxOutputTokens": 182520,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -3330,6 +3531,16 @@
       "reasoning": false
     },
     {
+      "id": "pareto",
+      "vendor": "Unbiased",
+      "displayName": "Pareto",
+      "contextWindow": 262144,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": false
+    },
+    {
       "id": "perceptron-mk1",
       "vendor": "Perceptron",
       "displayName": "Perceptron Mk1",
@@ -3338,6 +3549,24 @@
       "imageInput": true,
       "toolCalling": false,
       "reasoning": true
+    },
+    {
+      "id": "perceptron-mk1.5",
+      "vendor": "Perceptron",
+      "displayName": "Perceptron Mk1.5",
+      "contextWindow": 36864,
+      "maxOutputTokens": 8192,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "phi-4",
@@ -3463,8 +3692,8 @@
       "id": "qwen3-30b-a3b-instruct-2507",
       "vendor": "Qwen",
       "displayName": "Qwen3 30B A3B Instruct 2507",
-      "contextWindow": 128000,
-      "maxOutputTokens": 32000,
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -3574,7 +3803,7 @@
       "vendor": "Qwen",
       "displayName": "Qwen3 Next 80B A3B Instruct",
       "contextWindow": 262144,
-      "maxOutputTokens": 16384,
+      "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -3583,8 +3812,8 @@
       "id": "qwen3-next-80b-a3b-thinking",
       "vendor": "Qwen",
       "displayName": "Qwen3 Next 80B A3B Thinking",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -3613,8 +3842,8 @@
       "id": "qwen3-vl-30b-a3b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen3 VL 30B A3B Instruct",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
+      "contextWindow": 262144,
+      "maxOutputTokens": 16384,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": false
@@ -3664,7 +3893,7 @@
       "vendor": "Qwen",
       "displayName": "Qwen3.5-122B-A10B",
       "contextWindow": 262144,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 235929,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -3683,8 +3912,8 @@
       "id": "qwen3.5-35b-a3b",
       "vendor": "Qwen",
       "displayName": "Qwen3.5-35B-A3B",
-      "contextWindow": 262144,
-      "maxOutputTokens": 65536,
+      "contextWindow": 256000,
+      "maxOutputTokens": 16384,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -3703,8 +3932,8 @@
       "id": "qwen3.5-9b",
       "vendor": "Qwen",
       "displayName": "Qwen3.5-9B",
-      "contextWindow": 262144,
-      "maxOutputTokens": 235929,
+      "contextWindow": 256000,
+      "maxOutputTokens": 32768,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -3744,7 +3973,7 @@
       "vendor": "Qwen",
       "displayName": "Qwen3.6 27B",
       "contextWindow": 262144,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 81920,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -3839,7 +4068,7 @@
       "id": "qwen3.8-27b",
       "vendor": "Qwen",
       "displayName": "Qwen3.8 27B",
-      "contextWindow": 262144,
+      "contextWindow": 1000000,
       "maxOutputTokens": 131072,
       "imageInput": true,
       "toolCalling": true,
@@ -3878,6 +4107,34 @@
         "minimal"
       ],
       "defaultReasoningEffort": "xhigh"
+    },
+    {
+      "id": "qwen3.8-max-prime",
+      "vendor": "Qwen",
+      "displayName": "Qwen3.8 Max Prime",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "xhigh"
+    },
+    {
+      "id": "qwen3.8-omni-flash",
+      "vendor": "Qwen",
+      "displayName": "Qwen3.8 Omni Flash",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true
     },
     {
       "id": "reka-edge",
@@ -4055,6 +4312,26 @@
       "reasoning": false
     },
     {
+      "id": "solar-mini4",
+      "vendor": "Upstage",
+      "displayName": "Solar Mini 4",
+      "contextWindow": 524288,
+      "maxOutputTokens": 131072,
+      "imageInput": false,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
       "id": "solar-pro-3",
       "vendor": "Upstage",
       "displayName": "Solar Pro 3",
@@ -4062,7 +4339,15 @@
       "maxOutputTokens": 117964,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "solar-pro4",
@@ -4072,7 +4357,17 @@
       "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "sonar",
@@ -4125,6 +4420,24 @@
       "reasoning": true
     },
     {
+      "id": "space-bunny-alpha",
+      "vendor": "Stealth",
+      "displayName": "Space Bunny Alpha",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 524288,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "max"
+    },
+    {
       "id": "step-3.5-flash",
       "vendor": "StepFun",
       "displayName": "Step 3.5 Flash",
@@ -4149,6 +4462,21 @@
         "low"
       ],
       "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "ternary-bonsai-2-27b",
+      "vendor": "PrismML",
+      "displayName": "Ternary Bonsai 2 27B",
+      "contextWindow": 262144,
+      "maxOutputTokens": 32768,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "xhigh",
+        "medium"
+      ],
+      "defaultReasoningEffort": "xhigh"
     },
     {
       "id": "trinity-large-thinking",
@@ -4177,7 +4505,7 @@
       "contextWindow": 1024000,
       "maxOutputTokens": 819200,
       "imageInput": false,
-      "toolCalling": true,
+      "toolCalling": false,
       "reasoning": false
     },
     {
