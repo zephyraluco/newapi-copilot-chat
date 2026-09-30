@@ -8,29 +8,15 @@
 
 **用你自己 New API 站点上的模型驱动 Copilot Chat —— 不换界面，不放弃 Agent 模式**
 
-把 [New API](https://github.com/QuantumNous/new-api) 这类 OpenAI 兼容网关接成 Copilot Chat 的
-**自带密钥（BYOK）语言模型供应商**：没有新侧边栏、没有新聊天界面，只是模型选择器里多了一项
-
-## 为什么用它？
-
-- **不替换 Copilot，而是给它换个引擎** —— 模型选择器里多一项而已
-- **Agent 模式、工具调用、Instructions、MCP、Skills 照常工作** —— 接的是原生 provider API，整套能力栈直接复用
-- **元数据是补齐出来的，不是猜的** —— 网关不返回时用随包数据表兜底，每个数值的来源写进 debug 日志
-- **站点不认某个字段也不会直接失败** —— 上游点名了哪个可选字段，就去掉那个字段重试
-- **密钥不进配置文件** —— API Key 由 VS Code 存入系统钥匙串，日志自动脱敏
+把 [New API](https://github.com/QuantumNous/new-api) 这类 OpenAI 兼容网关接成 Copilot Chat 的自带密钥（BYOK）语言模型供应商
 
 ## 功能特性
 
-- **站点上的模型自动出现**：读取站点的 `/v1/models` 并逐个注册；支持**多个配置组**（例如官方站 + 自建站），每组有独立的 HTTP 客户端与模型缓存
-- **可读的模型名、可解释的元数据**：选择器显示**展示名**（`Claude Sonnet 4.5`）而不是回传给站点的模型 ID（`anthropic/claude-sonnet-4.5`）；悬浮提示只列身份、规模与能力，逐项一行、键值分列，数值来源与校正原因写进 debug 日志
-- **真实流式输出与思维链回显**：正文逐块输出；思维链（`reasoning_content` / `reasoning`）可选回显，以 Markdown 引用块出现在回答前面（宿主提供专用「思考内容」部件时自动改用可折叠的思考块）
-- **思考强度按模型可调**：档位**逐模型从数据表读取**（某个模型可能是 `max` / `high` / `low`，另一个只有 `xhigh` / `high`），选项文字直接用上游原值，不翻译也不缩写
-- **继承 Copilot 的整套能力**（接入的是原生 provider API，这些不用本扩展实现）：**Agent 模式**、**工具调用**（文件编辑、终端、搜索、Git、测试，参数分片会正确合并）、**Instructions 与 MCP**、**上下文窗口用量**（回传上游 `usage`，「会话信息」里能看到 token 数与各分类占比）
-- **安全优先**：API Key 声明为 `secret`，由 VS Code 存入系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux 密钥环），**不写入 `settings.json`，也不进 Git 历史**；日志一律脱敏
-- **零运行时依赖**：纯 VS Code API + Node.js 内置模块，没有 Python、没有 Docker、不需要额外的本地代理进程
-- **站点不认某个可选字段时自动绕过**：因 `stream_options`、`temperature`、`reasoning_effort`、`tool_choice` 或 `extraBody` 子字段返回 400 时，**去掉被点名的那个字段再试一次**（最多两轮）；上游没说清是哪个字段时不猜，原样报错
-- **DeepSeek 模型按官方形态发请求**：思考能力显式开关（`thinking`）；宿主发起的辅助请求（起标题、写提交信息、生成分支名等）关掉思考；思考态的工具调用历史回填 `reasoning_content`；其余模型走恒等变换的兜底适配器
-- **状态栏**：显示连接状态与模型总数，悬停给出**本次会话**的输入输出与缓存命中，需要你处理的问题（配置不完整、站点连不上）逐组列出原因与建议
+- **站点模型自动出现**：读取 `/v1/models` 逐个注册；支持多个配置组（例如官方站 + 自建站），各自独立的客户端与缓存
+- **可读的模型信息**：选择器显示展示名而非回传给站点的模型 ID；悬浮提示列出规模与能力
+- **原生流式与思考**：正文逐块输出，思维链可选回显；思考强度按模型可调
+- **继承 Copilot 的整套能力**：Agent 模式、工具调用、Instructions 与 MCP、上下文窗口用量——接入的是原生 provider API
+- **状态栏**：显示连接状态与模型总数，悬停给出本次会话的用量
 
 ## 快速开始
 
@@ -56,9 +42,6 @@
    - 密钥由 VS Code 存进系统钥匙串，配置文件里只留占位符引用
 3. 确认后返回模型选择器，即可看到 New API 下的模型
 
-需要接入第二个站点时，在「管理模型」里再建一个配置组即可，两组互不影响
-状态栏显示模型总数与本会话用量，图标本身不带点击动作
-
 ## 模型与元数据
 
 模型清单完全来自你的站点，因此**没有固定的模型列表**，扩展为每个模型补齐信息，优先级如下：
@@ -69,14 +52,6 @@
 | 图片输入、工具调用 | 优先（只认肯定） | 其次 | `false` |
 | 思考能力与可选档位 | 只认肯定 | **优先** | 无（列表为空则不显示控件） |
 | 展示名 | 其次 | 优先 | 无展示名的模型不进选择器 |
-
-**网关最清楚自己那条链路**，所以窗口与能力以它为准；思考档位反过来以数据表为准——远端只可能说「支持」，说不清「支持哪些档位」
-
-随包的 `data/openrouter-models.json`（约 360 条）覆盖主流厂商，由 `npm run models:openrouter` 从公开的模型目录抓取生成，扩展在激活时读取，**不要手工编辑**（重跑脚本会重写整个文件）
-
-它是生成时的快照，厂商调整后可能滞后，数值不符时的处理顺序如下：数据表过时 → 重跑生成脚本；生成结果依然不对（上游数据失真或渠道差异）→ 改进脚本或向上游反馈
-
-GPT-6 Sol / Luna 在 Chat Completions 接口携带工具时只支持 `reasoning_effort: none`。扩展在这类请求中自动使用 `none`；没有工具时保留模型选择器中的思考强度。
 
 ## 设置项
 
@@ -131,12 +106,10 @@ GPT-6 Sol / Luna 在 Chat Completions 接口携带工具时只支持 `reasoning_
 
 ## 思考强度
 
-支持思考的模型会在模型选择器里出现**思考强度**控件，选择后扩展把对应的 `reasoning_effort`
-写进请求体，由站点转给上游；三个需要注意的点：
+支持思考的模型会在模型选择器里出现**思考强度**控件，选择后扩展把 `reasoning_effort` 写进请求体：
 
-- **预选不等于会发送**：控件预选数据表里的 `defaultReasoningEffort`，但这个值**不会被发出去**（它本来就是站点自己在用的），只有改成别的档位才往请求里加 `reasoning_effort`；数据表没给默认档位的模型是空选中，此时选什么都算明确意图、照发
-- **哪些模型有控件**：① 站点返回值里有 `reasoning` / `reasoning_effort` 等参数，或数据表里标了 `reasoning`；② 数据表给出了该模型的可选档位（`supportsReasoningEffort`）；只有①时说明「它会思考，但我们不知道它能调哪些档」，这时不显示控件
-- **档位逐模型、没有兜底、不经翻译**：可用范围就是数据表里的 `supportsReasoningEffort`，因此不同模型不一样，例如 `max / xhigh / high / medium / low` 或只有 `high / low`；选项文字直接用上游原值（`max` / `xhigh` / `minimal` / `none` …），不翻译也不缩写；字段名固定为 `reasoning_effort`，站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由适配器层改写——见 `src/adapter/`
+- **默认不发送**：控件预选数据表里的 `defaultReasoningEffort`，但这个值不会被发出去（站点本来就在用它），只有改成别的档位才加 `reasoning_effort`
+- 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由适配器层改写——见 `src/adapter/`
 
 ## 配置来源
 
@@ -172,12 +145,9 @@ npm run watch          # 或 npm run compile
 F5                     # 启动扩展开发宿主
 npm run check          # 类型 + 分层约束
 npm run lint
+npm test               # 单元测试（不需要扩展宿主）
 npm run package        # 产出 .vsix
 ```
-
-`npm run check` 里的分层约束会校验「哪些文件允许依赖 VS Code 运行时」——名单在
-`scripts/check-layering.js` 顶部，**往名单外的文件里加运行时 `import 'vscode'` 会让它失败**
-（`import type` 不算），这样纯逻辑模块不必为了跑起来而启动一个 VS Code
 
 ## 致谢
 
