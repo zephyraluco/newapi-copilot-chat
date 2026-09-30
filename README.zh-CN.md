@@ -12,7 +12,7 @@
   <b>简体中文</b> · <a href="README.md">English</a>
 </p>
 
-**用你自己 New API 站点上的模型驱动 Copilot Chat —— 不换界面，不放弃 Agent 模式**
+**用你自己 New API 站点上的模型驱动 Copilot Chat**
 
 把 [New API](https://github.com/QuantumNous/new-api) 这类 OpenAI 兼容网关接成 Copilot Chat 的自带密钥（BYOK）语言模型供应商
 

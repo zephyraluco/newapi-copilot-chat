@@ -12,7 +12,7 @@
   <a href="README.zh-CN.md">简体中文</a> · <b>English</b>
 </p>
 
-**Drive Copilot Chat with the models on your own New API site — same interface, Agent mode included**
+**Drive Copilot Chat with the models on your own New API site**
 
 Wire an OpenAI-compatible gateway such as [New API](https://github.com/QuantumNous/new-api) into Copilot Chat as a bring-your-own-key (BYOK) language model provider.
 
