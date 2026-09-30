@@ -462,9 +462,9 @@
       "reasoning": true
     },
     {
-      "id": "deepseek-flash-latest",
+      "id": "deepseek-flash",
       "vendor": "DeepSeek",
-      "displayName": "DeepSeek Flash Latest",
+      "displayName": "DeepSeek Flash",
       "contextWindow": 1040000,
       "maxOutputTokens": 384000,
       "imageInput": true,
