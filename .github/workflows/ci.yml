@@ -22,13 +22,18 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: npm ci
 
-      # 类型 + lint + 编译出产物。这里不打包 vsix：那件事在打 tag 时由 release.yml 做。
-      - name: 编译
+      # Types + lint + bundle. The vsix is packaged on tags, by release.yml.
+      - name: Compile
         run: npm run compile
 
-      # 分层约束：谁可以依赖 VS Code 运行时（compile 里不包含这一项）
-      - name: 分层约束
+      # Unit tests of the pure layers. They bundle the sources on the fly, so they need
+      # no build step of their own.
+      - name: Test
+        run: npm test
+
+      # Layering rules, which `compile` does not cover: who may import the VS Code runtime.
+      - name: Check layering
         run: npm run check-layering

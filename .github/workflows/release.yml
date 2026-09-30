@@ -1,14 +1,15 @@
 name: Release
 
-# 只在推送版本 tag 时触发（例如 `git tag v0.0.2 && git push origin v0.0.2`）。
-# 普通提交与 PR 不进这个工作流，它们只走 ci.yml 的编译检查。
+# Runs on version tags only (e.g. `git tag v0.0.2 && git push origin v0.0.2`). Builds the
+# vsix and attaches it to a GitHub Release of the same name; plain commits and PRs
+# are covered by ci.yml instead.
 on:
   push:
     tags: ['v*']
 
-# 发布只需要读取仓库内容，其余权限一律不给。
+# checkout reads the repository and the Release step writes to it; nothing else is needed.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
@@ -21,45 +22,51 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: npm ci
 
-      # vsix 的版本号取自 package.json，而 Marketplace 上同一版本只能发布一次
-      # （已存在的版本无法覆盖，只能下架后重发）。tag 与 package.json 不一致时
-      # 多半是想发新版本却忘了改 package.json —— 这里直接拦下，别把旧版本发上去。
-      - name: 校验 tag 与 package.json 版本一致
+      # The Release is named after the tag, but the vsix version comes from
+      # package.json. A mismatch would ship a mislabeled Release, so fail here.
+      - name: Verify tag matches package.json version
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
           if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag $GITHUB_REF_NAME 与 package.json 的版本号 $pkg 不一致；请先把 package.json 的 version 改成 $tag"
+            echo "::error::tag $GITHUB_REF_NAME does not match the package.json version $pkg; bump the version to $tag first"
             exit 1
           fi
-          echo "版本校验通过：$pkg"
+          echo "Version check passed: $pkg"
 
-      # 发布是单向操作，所以发布前把整套约束跑齐。
-      # 注意：`npm run package` 会触发 vscode:prepublish（类型 + lint + esbuild），
-      # 因此这里只需要补上它不含的分层约束，不必重复跑类型与 lint。
-      - name: 分层约束
+      # This artifact reaches users as-is, so run every constraint first.
+      # `npm run package` triggers vscode:prepublish (types + lint + esbuild),
+      # so only the layering rules are left to add here.
+      - name: Check layering
         run: npm run check-layering
 
-      - name: 打包 vsix
+      - name: Package vsix
         run: npm run package
 
-      # 先留下产物再发布：即使发布失败（例如 PAT 过期），这次构建的 vsix 仍然拿得到。
-      - name: 上传 vsix
+      # Keep both: the artifact belongs to this run, the Release is the long-lived
+      # download — artifacts expire after 14 days.
+      - name: Upload vsix artifact
         uses: actions/upload-artifact@v4
         with:
           name: newapi-copilot-chat-vsix
           path: '*.vsix'
           retention-days: 14
 
-      - name: 发布到 VS Code Marketplace
+      # Last step: everything above either produced the vsix or failed, so the
+      # artifact is final here.
+      - name: Publish to GitHub Releases
         run: |
-          npx vsce publish \
-            --packagePath ./*.vsix \
-            --allow-missing-repository
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # A re-run finds the Release already there; replace the asset.
+            gh release upload "$GITHUB_REF_NAME" ./*.vsix --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ./*.vsix \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
         env:
-          # 在仓库 Settings → Secrets and variables → Actions 里配置；
-          # 这是 Azure DevOps 的个人访问令牌（Marketplace 的发布凭据），不是 GitHub token。
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          # gh reads GH_TOKEN, injected by Actions and scoped to this repository.
+          GH_TOKEN: ${{ github.token }}
