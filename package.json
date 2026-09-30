@@ -225,7 +225,7 @@
     "check-types": "tsc --noEmit",
     "check-layering": "node scripts/check-layering.js",
     "check": "npm run check-types && npm run check-layering",
-    "test": "node scripts/test-gpt6-chat.js",
+    "test": "node --test \"src/test/*.test.js\"",
     "lint": "eslint src --max-warnings 0",
     "models:openrouter": "node scripts/fetch-openrouter-models.js"
   },
