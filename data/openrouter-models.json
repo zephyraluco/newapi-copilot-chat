@@ -1,8 +1,8 @@
 {
   "source": "https://openrouter.ai/api/v1/models",
-  "generatedAt": "2026-09-27T08:21:47.489Z",
-  "totalFetched": 458,
-  "count": 362,
+  "generatedAt": "2026-10-01T08:22:24.963Z",
+  "totalFetched": 459,
+  "count": 363,
   "dropped": {
     "invalidEntry": 0,
     "variant": 89,
@@ -2205,6 +2205,24 @@
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6.1 Sol",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
     },
     {
       "id": "gpt-sol-latest",

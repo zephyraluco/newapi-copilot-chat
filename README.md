@@ -59,6 +59,8 @@ The model list comes entirely from your site, so **there is no fixed list**; the
 | Reasoning support and efforts | positives only | **first** | none (no control when the list is empty) |
 | Display name | second | first | models without a display name are not registered |
 
+GPT-6.1 Sol is available for text and image chat. Its function calling requires the Responses API, while this extension currently uses Chat Completions, so the model is shown without tool calling in the picker. Agent mode with tools requires a Responses API transport.
+
 ## Settings
 
 Settings live under `newapi-copilot-chat.*`; search for `New API` in the Settings UI.

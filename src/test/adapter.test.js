@@ -175,10 +175,11 @@ test('AdapterRegistry：没有匹配项时兜底到默认适配器', () => {
 test('内置注册表：顺序为 [专门适配器…, 兜底] 且能按模型 ID 选中', () => {
 	const registry = createDefaultAdapterRegistry(silentLogger);
 
-	assert.deepEqual(registry.list().map(adapter => adapter.id), ['deepseek', 'gpt6-chat', 'default']);
+	assert.deepEqual(registry.list().map(adapter => adapter.id), ['deepseek', 'gpt6-chat', 'gpt61-chat', 'default']);
 
 	assert.equal(registry.resolve(model('deepseek-chat')).id, 'deepseek');
 	assert.equal(registry.resolve(model('gpt-6-sol')).id, 'gpt6-chat');
+	assert.equal(registry.resolve(model('gpt-6.1-sol')).id, 'gpt61-chat');
 	// 谁都不认的模型落到兜底
 	assert.equal(registry.resolve(model('gpt-4o')).id, 'default');
 });
