@@ -192,6 +192,13 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		toolCalling = remote.toolCalling;
 		provenance.toolCalling = 'remote';
 	}
+	// GPT-6.1 Sol 的函数调用只支持 Responses API；当前客户端仅发送 Chat Completions。
+	// 不能把模型本身的工具能力误报成此扩展可用的工具能力。
+	if (/(?:^|\/)gpt-6\.1-sol(?:$|[@:])/i.test(model.id)) {
+		toolCalling = false;
+		provenance.toolCalling = 'default';
+		adjustments.push('GPT-6.1 Sol 的工具调用需要 Responses API，当前 Chat Completions 客户端已禁用该能力。');
+	}
 
 	// ---- 思考能力 --------------------------------------------------------
 	// 网关只能给出「肯定」（见 `RemoteModelHints.reasoning`），因此数据表先落地、
