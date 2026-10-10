@@ -59,6 +59,11 @@
 | 思考能力与可选档位 | 只认肯定 | **优先** | 无（列表为空则不显示控件） |
 | 展示名 | 其次 | 优先 | 无展示名的模型不进选择器 |
 
+GPT-6.1 Sol 支持文字、图片和工具调用，本扩展通过 Chat Completions 传输。
+
+
+Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants) are adapted automatically: unsupported sampling fields are removed before Chat Completions requests. Image-generation model IDs are exposed without tool calling.
+
 ## 设置项
 
 本扩展的设置位于 `newapi-copilot-chat.*` 之下，可在设置界面搜索 `New API` 找到

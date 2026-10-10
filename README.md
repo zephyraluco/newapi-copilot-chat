@@ -59,6 +59,11 @@ The model list comes entirely from your site, so **there is no fixed list**; the
 | Reasoning support and efforts | positives only | **first** | none (no control when the list is empty) |
 | Display name | second | first | models without a display name are not registered |
 
+GPT-6.1 Sol supports text, image, and tool calling through the Chat Completions transport.
+
+
+Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants) are adapted automatically: unsupported sampling fields are removed before Chat Completions requests. Image-generation model IDs are exposed without tool calling.
+
 ## Settings
 
 Settings live under `newapi-copilot-chat.*`; search for `New API` in the Settings UI.
