@@ -120,6 +120,7 @@ Models that support reasoning get a **reasoning effort** control in the model pi
 
 - **Not sent by default**: the control pre-selects the dataset's `defaultReasoningEffort`, but that value is never sent (the site is already using it); only a different choice adds `reasoning_effort`
 - The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the adapter layer — see `src/adapter/`
+- **Some models do not show the control**: with tool calls present the upstream forces a fixed value (GPT-6 Sol/Luna only accept `none`), and agent-mode requests always carry tools — showing an option that can never take effect is worse than not showing it
 
 ## Where the configuration comes from
 

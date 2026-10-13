@@ -62,9 +62,9 @@ flowchart TD
 
 - **消息会一变多**：一条 VS Code 消息可能拆成 `assistant(tool_calls)` + 若干 `tool` 消息，顺序错了上游直接 400（见 §8 消息转换）。
 - **正文是边收边发的**：`progress.report()` 在收流的循环里调用，用户看到的逐字输出不是等流结束才出现。
-- **请求被强制带上 `stream: true` 与 `stream_options.include_usage`**：用量只在最后一个 chunk 里回来（见 §8 回传用量）。
+- **请求被强制带上 `stream: true`、`stream_options.include_usage` 与 `max_tokens`**：用量只在最后一个 chunk 里回来（见 §8 回传用量）；输出上限必须显式发出去，否则由各渠道的默认值决定（见 §12）。
 - **工具调用在收尾时才上报**：参数是分片到达的，中途无法解析，因此统一在 `StreamTranslator.flush()` 里上报（上游给出 `finish_reason` 时提前上报）——这就是工具部件在时序上晚于所有正文片段的原因。
-- **流被掐断时看「用户是否已看到内容」**：没看到且还有额度就重发整次请求（最多 2 次），否则保留已收到的内容只记警告。判定抽成纯函数 `decideStreamFailure`；「已上报部件数」只算真正 `progress.report` 出去的东西，不回显的思维链与未 flush 的工具调用都不算，因此重发不会造成重复。
+- **流被掐断时看「用户是否已看到内容」**：没看到且还有额度就重发整次请求（最多 2 次）；已经看到内容时**冲刷已有内容后报错**——半截回答不能当作成功，否则 Agent 循环会把这一轮当成已完成（见 §8 流式翻译）。判定抽成纯函数 `decideStreamFailure`；「已上报部件数」只算真正 `progress.report` 出去的东西，不回显的思维链与未 flush 的工具调用都不算，因此重发不会造成重复。
 
 关键判定点（细节见各层小节）：
 
@@ -81,17 +81,19 @@ flowchart TD
 | 静默超时（长时间没有新字节） | `client/sse.ts` | `SseIdleTimeoutError`，与用户取消区分 |
 | 流量正常结束但缺 `[DONE]` 与 `finish_reason` | `client/newApiClient.ts` | `SseTruncatedError`（半截回答不能当成功） |
 | 流被掐断、还没上报过任何部件 | `provider/streamFlow.ts` | 重发整次请求（最多 2 次），逐次重建 translator |
-| 流被掐断、但已上报过内容 | `provider/streamFlow.ts` | 保留已收到的内容，只记警告；参数不完整的工具调用在 flush 时丢弃 |
-| 站点以 400 拒绝并点名了一个可选字段 | `provider/requestRepair.ts` | 去掉那个字段重发（最多 2 轮），已试过的步骤不重复 |
-| 站点以 400 拒绝但没说清字段 | `provider/requestRepair.ts` | 不修，把上游原话交给用户 |
+| 流被掐断、但已上报过内容 | `provider/streamFlow.ts` | 冲刷已收到的内容后报错（参数不完整的工具调用在 flush 时丢弃）——半截回答不能当作成功 |
+| 站点以 400 拒绝并点名了白名单里的可选字段 | `provider/requestRepair.ts` | 去掉那个字段重发（最多 2 轮），已试过的步骤不重复；成功的结果按会话 + 模型记住 |
+| 站点以 400 拒绝但白名单里挑不出对应字段 | `provider/requestRepair.ts` | 不修，把上游原话交给用户（`tools` 与协议骨架永远不动） |
 | 自愈改过请求仍被 400 拒绝 | `provider/streamFlow.ts` | 记下「去掉过什么」后照常失败 |
+| 数据表能力位说「不接受采样参数」或「带工具时强度固定」 | `adapter/capabilityAdapter.ts` | 按能力位改写请求（数据驱动，不写模型名正则） |
 | 响应正常结束且带用量 | `provider/chatProvider.ts` | 回传 `usage` 数据部件（见 §8 回传用量） |
 | chunk 带 `error` 字段 | `provider/stream.ts` | 视为失败抛出（上游会把错误塞进 200 响应） |
 | 工具调用缺少函数名 | `provider/stream.ts` | 记警告并跳过 |
 | 工具分片不带 `index` | `provider/stream.ts` | 按有无 `id` 判断新调用，续传分片接在同一个槽位 |
 | 工具参数不是合法 JSON | `provider/stream.ts` | 先直解，再剥 Markdown 围栏；正常结束则退化为 `{}`，流被掐断则丢弃这次调用 |
 | `finish_reason === 'length'` | `provider/stream.ts` | 记警告（响应被截断） |
-| 取消（`isAbortError` 或 token 已取消） | `chatProvider.ts` | 静默返回，**不算失败** |
+| 用户取消（token 已取消，或 `isAbortError`） | `chatProvider.ts` | 静默返回，**不算失败** |
+| 客户端被退役/释放（配置变更、扩展停用） | `chatProvider.ts` | **照常报错**——`TransportError('disposed')` 不是用户取消，静默返回会留下一个没有报错的半截回答 |
 | 其它错误 | `chatProvider.ts` | `toLanguageModelError` 把面向用户的消息交给 VS Code（见 §8） |
 
 ## 3. 代码地图
@@ -102,7 +104,7 @@ flowchart TD
 | `commands.ts` | 命令实现（测试连接 / 刷新模型 / 打开设置 / 重置用量）与「刷新后通知宿主」 |
 | **基础层（各层都可依赖）** | |
 | `consts.ts` | 命令 ID、端点、默认值、思考强度键名、用量部件 MIME、运行时版本 |
-| `config.ts` | 共享调整项（缓存与兜底值、请求参数、状态栏、日志级别）的读取与校验 |
+| `config.ts` | 共享调整项（缓存与兜底值、请求参数、状态栏、日志级别）的读取与校验；**变更影响面分类**（哪些变化才需要重建连接） |
 | `types.ts` | New API / OpenAI 兼容（DeepSeek 风格）数据结构 |
 | `json.ts` | 安全解析、类型收窄、按键取候选值 |
 | `reasoning.ts` | 思维链字段的读取与回填键名：**通用层唯一**知道各家字段名的地方 |
@@ -112,34 +114,36 @@ flowchart TD
 | `logger.ts` | `LogOutputChannel` + 级别闸门 + 密钥脱敏 + 带上 `cause` 链的错误格式化 |
 | `cancellation.ts` | `CancellationToken` → `AbortSignal` 桥接 |
 | **`client/`** 与 New API 交互（只依赖基础层） | |
-| `http.ts` | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`） |
+| `http.ts` | 超时、重试退避、信号合并、错误分类（`HttpError` / `TransportError`）；**优雅退役**（在途请求跑完再中断） |
 | `sse.ts` | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
 | `newApiClient.ts` | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合（只依赖基础层） | |
-| `dataset.ts` | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
+| `dataset.ts` | 模型数据表（`data/openrouter-models.json`）+ 手工能力覆盖表（`data/model-overrides.json`）：校验、叠加、索引与查找 |
 | `remoteHints.ts` | 远端字段提取：**唯一**知道各家网关字段名的地方 |
 | `limits.ts` | 窗口/输出/输入的一致性校正、显著差异判定 |
 | `modelConfig.ts` | 按优先级合并三路来源，记录来源与校正说明 |
 | `tooltip.ts` | 悬浮窗 Markdown（身份行 + 规模与能力逐项一行、键值分列） |
-| `catalog.ts` | 拉取编排、缓存、并发合并、失败降级 |
+| `catalog.ts` | 拉取编排、缓存、并发合并、失败降级；**快照没变就不触发事件** |
 | **`runtime/`** 连接目标与会话 | |
 | `target.ts` | 解析 VS Code 下发的配置组 + 配置指纹 |
-| `session.ts` | 按配置组缓存 client + catalog |
+| `session.ts` | 按「会话签名」缓存 client + catalog；丢缓存与优雅退役是两条不同的路 |
 | **`provider/`** 与 Copilot 交互 | |
 | `chatProvider.ts` | 实现 `LanguageModelChatProvider`：编排与生命周期，外加三件只服务本文件的辅助（模型信息映射、请求体组装、错误交还） |
 | `modelConfiguration.ts` | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
 | `stream.ts` | 流式 chunk → **中立**响应部件的翻译；不依赖 `vscode` |
 | `streamFlow.ts` | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是**传输维度的锚点**；中立部件 → 宿主部件 |
-| `requestRepair.ts` | HTTP 400 的自愈阶梯，纯函数 |
+| `requestRepair.ts` | HTTP 400 的自愈阶梯与自愈记忆，纯函数 |
 | `tokenizer.ts` | token 估算（刻意高估，按真实用量校准比例） |
 | `thinking.ts` | 思考内容部件的探测、构造与读取（宿主提供时才存在） |
 | `replay.ts` | 思考内容的回放标记：随响应留下、下次请求读回 |
 | `toolFlow.ts` | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
 | `preflight.ts` | 工具组预激活的宿主侧；独立于 `toolFlow.ts` 是为了让后者不依赖 `vscode` |
 | **`adapter/`** 差异出口 | |
-| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 框架层：钩子接口与上下文、注册与解析、兜底与模板 |
+| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、兜底与模板 |
+| `capabilityAdapter.ts` / `samplingParams.ts` | 数据驱动：按 `ModelConfig` 的能力位改写请求；采样参数字段与删除逻辑的唯一实现 |
 | `deepseek/` | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
+| `openai/` | OpenAI 新一代推理模型：移除采样参数、把 `max_tokens` 改名为 `max_completion_tokens` |
 | **`status/`** UI | |
 | `statusService.ts` | 状态的唯一真相来源，按配置组聚合 |
 | `statusBar.ts` | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
@@ -300,7 +304,8 @@ flowchart TD
 配置完全由 VS Code 提供：`package.json` 的 `configuration` 贡献点是一份 JSON Schema，VS Code 据此生成表单并把解析好的值随调用传进来。`createTarget` 把它归一成 `ProviderTarget`（规范化 `baseUrl` + 明文 `apiKey` + 配置指纹 + 问题列表）。
 
 - **`key` 是配置指纹（FNV-1a），绝不包含明文密钥**——它会作为 Map 键并出现在日志里。
-- **会话槽位是组名**：不能全局共用（否则 A 站的模型列表会串到 B 站），也不该每次新建（VS Code 会反复轮询）。配置指纹变了就重建，旧 client 的 `dispose()` 会中断在途请求。
+- **会话槽位是组名**：不能全局共用（否则 A 站的模型列表会串到 B 站），也不该每次新建（VS Code 会反复轮询）。**复用判据是「会话签名」**（目标指纹 + client 的构造参数：超时、静默超时、是否要用量、重试次数）——因此改日志级别或采样参数完全不会碰会话。
+- **「丢模型缓存」与「重建会话」是两条不同的路**：模型设置变化只丢缓存（`invalidateCatalogs`，client 不动）；连接身份变化才重建，且旧会话走**优雅退役**（`retire()`：不再接新请求，等在途请求跑完再中断）。两条路都不中断在途请求——早先对任何设置变化都直接 `dispose()`，于是用户改一下日志级别就会看到一个没有报错的半截回答。
 - **响应阶段靠 `find(key)` 找回会话，找不到时不能退回默认目标**（那会把 A 站的模型拿去 B 站请求）。
 - 模型信息里只挂**指纹与标签**，不挂目标本体——那些字段会长期留在 VS Code 的模型缓存里，而 `ProviderTarget` 含有明文密钥。
 
@@ -312,16 +317,19 @@ flowchart TD
 
 `toLanguageModelError` 决定用户看到什么：**清掉 `stack`**（Copilot 会把堆栈一起渲染，而用户要的是原因；原始异常已在日志里）、**只在语义真正吻合时换用工厂方法**（401/403 → `NoPermissions`、404 → `NotFound`），唯一的加工是密钥脱敏。
 
+**「取消」与「客户端退役」必须分开**：`TransportError` 的 `kind` 为 `aborted` 才是用户取消（属于正常流程，静默返回）；`disposed` 是客户端被退役/释放（配置变更、扩展停用）——把它当成用户取消，用户就会看到一个没有报错的半截回答。因此 `isAbortError()` 只认 `aborted`。
+
 ### 站点不认某个可选字段时（400 自愈，`requestRepair.ts`）
 
-400 的常见成因不是「请求写错了」，而是**我们加了一个站点不认的可选字段**（`stream_options`、`temperature`、`reasoning_effort`、`tool_choice`、`extraBody`）。这些字段去掉后请求仍然成立，用户只是少一项增强。规则：
+400 的常见成因不是「请求写错了」，而是**我们加了一个站点不认的可选字段**（`stream_options`、`temperature`、`reasoning_effort`、`tool_choice`、`max_tokens`、DeepSeek 的 `thinking`、`extraBody`）。这些字段去掉后请求仍然成立，用户只是少一项增强。规则：
 
 - **只对 400 生效**：401/403/404/429 去掉字段也救不回来。
-- **不猜**：要么响应体里点了名，要么出现了我们确知自己加过的字段名；都没有就不修。
+- **只在白名单里挑，不从响应里「猜」**：能被去掉的字段永远是**我们自己加进去的可选项**（`REPAIRABLE_FIELDS` + 调用方传进来的 `extraBody` 键）。响应文本只用来决定「先去白名单里的哪一个」。这条边界是硬的——早先的实现把响应体里任何带引号、且请求里存在的字段名都当作「上游不认的字段」，于是 `{"param":"tools"}` 这种「工具 schema 不合法」的错误会把**整个 `tools` 删掉**：模型突然变笨，而用户看不到任何错误。
+- **骨架与 `tools` 不动**：`PROTECTED_REQUEST_FIELDS`（`model` / `messages` / `stream` / `tools`）在任何路径上都删不到——宁可失败，也不能把请求改成另一种意思。
 - **能精确就不连带**：上游说「不认 `temperature`」时只去掉它，`top_p` 留着。
-- **骨架不动**：`model` / `messages` / `stream` 永不被删——宁可失败，也不能把请求改成另一种意思。
 - **有界且不重复**：每个步骤一轮只用一次，总轮数由 `DEFAULTS.requestRepairRounds` 卡住；改不动时不返回计划。自愈**不占**截断重发的额度。
 - **改过什么必须留痕**：每轮写一条 warn，最终仍失败时再写一条 error 汇总。
+- **结果按会话 + 模型记住**（`RepairMemory`）：某个站点不认 `temperature` 是稳定事实，而 Agent 的每一步都是一次请求。记忆让整个会话只挨一次 400，而不是每一步都先失败一次。键里带 `targetKey`，因此站点地址、密钥或请求设置一变就自然失效。
 
 `stream_options` 是这里唯一不由请求体承载的字段（客户端按 `request.includeUsage` 加上去），因此去掉它走的是传输层的按次覆盖，而不是删请求体的键。
 
@@ -339,6 +347,7 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 - **属性必须带 `enum`** 才会被渲染成控件；`group: 'navigation'` 决定它落在模型卡片主控件区。
 - **`default` 只是让界面反映现状**，因此 `selectReasoningEffort` 把**等于默认档位**当作「未修改」、不发送该字段。默认值还必须落在 `enum` 里（这条不变量由 `resolveModelConfig` 守住）。
 - **档位逐模型且没有兜底**：列表为空时不声明 schema——凭空造一组值只会发出站点不认的请求。
+- **`toolCallingReasoningEffort` 存在时不声明 schema**：带工具时强度会被覆盖成固定值，而 Agent 模式的请求总是带工具——控件永远不生效，显示一个选得了却不起作用的选项比不显示更糟。
 - **选项不经翻译**：只声明 `enum`，控件里显示数据表原值；自己维护映射只会在出现新档位时显示一个猜出来的名字。
 - **取值按当前模型校验**，不在 `reasoningEfforts` 里的选择会被拒绝并记警告，而不是默默发出去。
 - **字段名是常量 `reasoning_effort`**，需要别的叫法或嵌套形态时交给适配器改写；`applyReasoningEffort` 会拒写受保护的请求键（`model` / `messages` / `stream` …）。`modelOptions` 与 `modelConfiguration` 都不是稳定 typings 的字段，因此做运行时探测；通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
@@ -360,6 +369,7 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 - **思维链字段名由 `reasoning.ts` 统一认**，流式与非流式降级走同一个读取器。原文无论是否回显都会累积——回填历史要用。
 - **usage 只在最后一个 chunk**；多 choice 时只取 `index === 0`（并警告）。
 - **`emittedParts` 是重发门的输入**，只统计真正上报出去的东西。
+- **半截回答不能当作成功**（`streamFlow.ts` 的收尾）：流在正常收尾信号之前断开、而内容已经流出一部分时，先冲刷已有内容并上报用量，**再抛出错误**。抛错让 VS Code 显示错误与重试入口；早先「保留半截并静默返回成功」会让 Agent 循环把这一轮当成已完成，而用户可能只看到一个思考块、正文全丢。只有「什么都还没上报」时才是安全的——那时才重发整次请求，否则会把两段回答拼在一起。
 
 ### 回传用量（会话信息里的上下文窗口）
 
@@ -388,7 +398,17 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 
 ### Token 估算（`tokenizer.ts`）
 
-拿不到真实分词器，只能估算：CJK 按 1 字符 ≈ 1 token、其余按 4 字符 ≈ 1 token，再加消息 / 工具 / 图片的固定开销。**偏差方向是有意选择的**：宁可高估——高估会让 VS Code 更早裁剪历史，代价只是少一点上下文；低估则会把超长请求发给上游而被拒绝。比例可由上游真实用量反推（`calibrateCharsPerToken`，指数移动平均，新观测占三成）：没人报用量或请求为空时不校准，单个离谱的观测值会被夹在合理区间内，不让它把估算带偏一个量级。比例由 provider 持有并传进纯函数——估算不偷偷改全局状态，否则并发请求会互相干扰。回放标记不计入 token。
+拿不到真实分词器，只能估算：CJK 按 1 字符 ≈ 1 token、其余按 4 字符 ≈ 1 token，再加消息 / 工具 / 图片的固定开销。**偏差方向是有意选择的**：宁可高估——高估会让 VS Code 更早裁剪历史，代价只是少一点上下文；低估则会把超长请求发给上游而被拒绝。
+
+比例由上游真实用量反推（`calibrateCharsPerToken`，指数移动平均，新观测占三成），三条口径必须与估算器一致，否则比例会被算歪：
+
+- **分子包含工具定义**（`measureRequestText` 收 `messages` 与 `tools`）：Agent 模式下工具 schema 常常占上万 token，它们算在 `prompt_tokens` 里；漏掉会把比例压到下限、估算高出数倍，Copilot 于是过早裁剪与总结。
+- **CJK 与非 CJK 分开数，并且是解方程而不是相除**：估算器认为 `promptTokens ≈ cjkChars + otherChars / r`，因此由观测反解 `r = otherChars / (promptTokens − cjkChars)`。旧实现把两者混在一起直接相除，中文一多比例就被压到下限。
+- **比例按模型分别维护**：DeepSeek 与 Claude 的分词器差别很大，交替使用时共用一个比例会让估算来回摆。
+
+没人报用量、请求为空、或 CJK 已经吃满用量时不校准；单个离谱的观测值会被夹在合理区间内。比例由 provider 持有并传进纯函数——估算不偷偷改全局状态，否则并发请求会互相干扰。
+
+**思考内容每条消息只算一次**：宿主提供的思考部件与回放标记常常同时存在（装的是同一段文本），优先用思考部件、没有才用标记。标记本身必须计入——开启 `echoReasoningContent` 的适配器会把它变成 `reasoning_content` 发给上游，不计就会在长会话里一路低估。
 
 ## 9. `adapter/` —— 协议差异的出口
 
@@ -401,9 +421,23 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 
 - **适配器覆盖的是「请求体侧」的差异**。响应侧的形状属于传输维度，由 `ChatStreamSource` + `stream.ts` 承接（见 §8）——两者刻意分开：改一个请求字段名与换一套流式协议是两类改动，混进同一个接口会让适配器被迫实现它并不关心的一半。
 - **只有实际存在的差异才会被写成钩子**；**通用容错不属于这里**（「思维链字段名各家不同」由 `reasoning.ts` 统一认）。
-- 注册表按 `priority` 从高到低取第一个命中项，`DefaultModelAdapter` 排最后兜底；`transformRequest` 刻意不实现——未定义时 provider 直接透传。
+- **注册表返回全部命中项，provider 依次串接**（`resolveAll`）。差异是按「一个协议特性」拆的，一个模型常常同时命中多条（例如 gpt-6 Sol 既属于推理模型家族，又有「带工具时强度只能是 `none`」的能力位）；只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。`DefaultModelAdapter` 排最后兜底，`transformRequest` 刻意不实现——未定义时跳过。
 - **适配器不区分站点**：New API 是网关，同一个模型后面接的是哪个上游无法从地址判断。
-- **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` / `defaultAdapter.ts` 是框架层。新增供应商时新建目录 + 在注册表登记，不需要改 provider。
+- **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` / `defaultAdapter.ts` / `capabilityAdapter.ts` / `samplingParams.ts` 是框架层。新增供应商时新建目录 + 在注册表登记，不需要改 provider。
+
+### 数据驱动的能力位（`capabilityAdapter.ts`）
+
+按**协议**判断的适配器（`deepseek/`、`openai/`）认的是模型名；另有一类差异其实是**模型元数据**，只针对某个模型名的特判写进代码就会散落成 `if (model.id.startsWith(...))`（见 §11）。它们走这条路：
+
+```
+模型数据表 / data/model-overrides.json ─▶ ModelDatasetEntry ─▶ ModelConfig 能力位 ─▶ capabilityAdapter
+```
+
+- **`samplingParams`**：`temperature` / `top_p` 这类采样参数在该模型上的接受情况。缺省表示「始终接受」（数据没表态就不动请求）；`never` 表示始终不接受；`when-thinking-off` 表示只在 `reasoning_effort` 为 `none` 时接受——关掉思考后不再是推理请求，采样参数重新合法。
+- **`toolCallingReasoningEffort`**：带工具调用时 `reasoning_effort` 的强制取值。设置后**不再显示思考强度控件**（Agent 模式的请求总是带工具，那个控件永远不生效）。
+- **`data/model-overrides.json` 是手工维护的数据**，在读取时叠加到生成的数据表之上：上游目录表达不了上面这类条件行为，而放进代码就是逐模型名正则。覆盖表只允许改能力位——窗口与输出上限有客观来源，要改就重新生成数据表。
+- 生成脚本从上游的 `supported_parameters` 推出 `samplingParams`，因此**重新生成数据表会把这条能力位补齐**；覆盖表负责的则是上游目录给不出的部分。
+- `capabilityAdapter` 的 `supports` 恒为 `true`（它没有自己的适用模型），优先级低于供应商适配器，因此它看到的是那些适配器改写之后的请求。
 
 ### DeepSeek（`adapter/deepseek/`）
 
@@ -443,8 +477,10 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 ## 11. 常见改动该动哪里
 
 - **补一个模型的元数据**：改数据而不是改代码——跑 `npm run models:openrouter` 重新生成 `data/openrouter-models.json`。上游目录里没有这个模型时改生成脚本（加别名或回退取值），不要手工往文件里加条目。
-- **让某个模型的行为不一样（新增适配器）**：在 `src/adapter/<supplier>/` 下实现 `ModelAdapter` → 在 `adapter/registry.ts` 的 `createDefaultAdapterRegistry()` 注册（`priority` 高者先匹配）。现成例子是 `src/adapter/deepseek/`，**不需要改 provider**。前提是差异确实属于「一个供应商的所有模型都这样」——只针对某个模型名的特判属于模型元数据，应该进数据表。
-- **新增设置项**：`package.json` 的 `contributes.configuration.properties` → `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退）→ 在对应 `Settings` 接口加字段 → 影响模型配置改 `models/modelConfig.ts`，影响请求体改 `provider/chatProvider.ts` 的 `buildRequest`，影响传输行为经 `runtime/session.ts` 传给 `NewApiClient`。改完同步 README 的设置表。
+- **让某个模型的行为不一样（新增适配器）**：先判断差异属于哪一类：
+  - **协议差异**（某家上游对 OpenAI 协议的实现不同）→ 在 `src/adapter/<supplier>/` 下实现 `ModelAdapter` → 在 `adapter/registry.ts` 的 `createDefaultAdapterRegistry()` 注册（`priority` 高者先执行）。现成例子是 `src/adapter/deepseek/`，**不需要改 provider**。
+  - **模型元数据**（只针对某个模型名的特判，例如「带工具时强度只能是 `none`」）→ **不要写正则**，改成能力位：`src/models/dataset.ts` 的 `ModelDatasetEntry` 加字段 → `data/model-overrides.json` 填值 → `models/modelConfig.ts` 并进 `ModelConfig` → `src/adapter/capabilityAdapter.ts` 消费它。能力位不依赖重新生成数据表，也不会随模型名变化失效。
+- **新增设置项**：`package.json` 的 `contributes.configuration.properties` → `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退）→ 在对应 `Settings` 接口加字段 → 影响模型配置改 `models/modelConfig.ts`，影响请求体改 `provider/chatProvider.ts` 的 `buildRequest`，影响传输行为经 `runtime/session.ts` 传给 `NewApiClient`（**同时记得在 `classifySettingsChange` 里说明它属于哪一类变化**：影响 client 构造参数的才需要重建连接，每次请求现读的不需要）。改完同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：`models/modelConfig.ts` 把能力纳入 `ModelConfig` → `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性（带 `enum` 才会渲染）、在取值侧加解析 → `provider/chatProvider.ts` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的 `default`（并保证它落在 `enum` 里）。注意「支持该能力」与「有可选项」是两件事。
 - **新增配置组字段（站点 / 密钥类）**：声明在 `contributes.languageModelChatProviders[].configuration` 里——`package.json` 加字段（密钥类 `secret: true`）→ `src/runtime/target.ts` 的 `createTarget()` 读取校验，写入 `ProviderTarget` 与 `issues` → 若影响连接身份还要纳入 `key` 指纹 → 需要时经 `session.ts` 传给 `NewApiClient`。
 - **新增命令**：`consts.ts` 的 `COMMANDS` 加键 → `package.json` 的 `contributes.commands` 加条目 → `src/commands.ts` 注册（依赖通过 `CommandDeps` 注入）。需要「刷新后让宿主重新发现模型」时用 `refreshAndNotify()`。
@@ -455,13 +491,13 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 
 | 取舍 | 原因 |
 | --- | --- |
-| 思考内容只能作为正文回显，包成 Markdown 引用块 | 稳定的 VS Code API 没有「思考内容」响应部件 |
-| 不声明 `enabledApiProposals`（因而用不了可折叠思考块） | 那个部件还没进稳定 API，而提案 API 不允许发布到 Marketplace；代价是 Copilot 自己的思考样式设置对它不生效 |
+| 思考内容默认回退成 Markdown 引用块，专用思考部件是**例外路径** | 该部件不在稳定 typings 里，扩展又不声明 `enabledApiProposals`（提案 API 不允许发布到 Marketplace），因此只能运行时探测；探到才用（见 §8）——代价是 Copilot 自己的思考样式设置只在那条路径上生效 |
+| 不声明 `enabledApiProposals` | 提案 API 不允许发布到 Marketplace；代价是「可折叠思考块」只在宿主恰好提供了那个部件时可用，其余情况退化成引用块 |
 | 思考内容靠 `stateful_marker` 数据部件回环 | 稳定 API 不把思考内容交还给 provider，这是唯一能按轮次把 `reasoning_content` 带回上游的通道；宿主不回传时退化成「不回填」，不会出错 |
 | 思考强度默认「不指定」，用户选过才发 | VS Code 会把 schema 的 `default` 带进每一次请求，不能替用户改请求 |
 | 思考档位逐模型且**不经翻译** | 上游词汇就是站点文档里的写法；编一套映射只会在出现新档位时显示一个猜出来的名字 |
 | 思考强度字段名固定 `reasoning_effort` | 数据表是生成产物，不适合承载逐模型的请求改写规则；且 VS Code 的模型配置只能从我们声明的枚举里选 |
-| 适配器对 DeepSeek 思考模型一律写入 `thinking`，辅助请求一律关闭思考 | 不写就等于把行为交给上游的默认值；New API 是网关，无法从地址判断上游是否认这个字段，因此不对站点做区分 |
+| 适配器对 DeepSeek 思考模型一律写入 `thinking`，辅助请求一律关闭思考 | 不写就等于把行为交给上游的默认值；New API 是网关，无法从地址判断上游是否认这个字段，因此不对站点做区分。第三方托管的 DeepSeek 可能不认它——那由 400 自愈兜住（`thinking` 在白名单里，且结果会被记住） |
 | 适配器接口只保留 `supports` + `transformRequest` | 没人实现的钩子（chunk 改写、流末尾冲刷）只会让流循环多出分支；真需要时再加回一个函数，比维护一条死路径便宜 |
 | 供应商差异进 `adapter/`，通用容错进基础层 | 「思维链字段名各家不同」每个上游都可能遇到，写进适配器要写很多遍且会随时间漂移；放进 `reasoning.ts` 则上游换名字只改一处 |
 | 远端字段提取只认通用的整字段名 | 叫别的名字（如 `model_info.context_length`）拿不到值。嵌在对象里的信息随上游实现变化，逐家穷举会迅速过期 |
@@ -469,7 +505,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | 展示只靠状态栏与命令消息，不做详情面板 | 站点与模型的细节多数时候用不上；「测试连接」「刷新模型列表」会把关键信息带在消息里，要细查就去看日志 |
 | 状态栏图标不带点击命令 | 点击得先替用户选定一个去处（设置？管理模型？刷新？），而这个猜测并不总对 |
 | 状态不绑定具体站点 | 站点挂在标签页上、状态栏是全局的，只能按目标聚合汇总 |
-| 状态刷新会同时打 `/v1/models` 与 `/api/status` | 前者与 provider 共享缓存（数量一致），后者给出这段往返耗时并确认端点可用；两个请求开销都很小 |
+| 周期性的状态刷新只探 `/api/status`，不强制刷新模型列表 | 模型列表与 provider 共享缓存，按自己的有效期刷新即可；每次强制重拉会让那份缓存形同虚设，还会连带让宿主重新发现一遍模型。「测试连接」与「刷新模型列表」命令仍然强制刷新 |
 | 会话用量统计全局累加 | 单一计数器足够回答「这次会话花了多少」；清零靠命令或重载窗口 |
 | 用量增量只认「带 usage 的响应」 | 上游没回传 `usage` 的请求不会出现在统计里，金额因此**可能偏低**，但不会凭空虚构 |
 | 缓存命中率按**输入**算 | 两个网关的字段说的都是 prompt 的命中量，共用一条口径 |
@@ -479,10 +515,17 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | token 用字符数启发式估算 | 拿不到真实分词器；刻意高估的代价只是少一点上下文，低估则会把超长请求发给上游 |
 | 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字上报 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
-| 流被掐断时已流出的内容会保留（而不是报错让人重发） | 抛错只会在一个已经能用的回答上弹「重试」，而用户需要的是完整的回答；代价是回答可能不完整且没有标记 |
+| 流被掐断时保留已流出的内容，但**同时报错** | 静默返回成功会让 Agent 循环把半轮回答当成已完成（用户可能只看到一个思考块）；报错让 VS Code 给出重试入口，代价是用户可能在一个本来还能用的回答上看到重试按钮 |
 | 自动重发时丢弃已收到的思考链 | 一次正常往来不该出现两段推理 |
 | 站点不认 `stream_options` 时自动去掉它再试一次 | 它是我们为拿用量主动加的字段，去掉的代价只是上下文窗口不显示 token 数 |
-| 400 自愈不去掉 `tools` | 去掉工具会让模型没法干活，用户看到的是「回答变笨了」而不是一条错误 |
+| 400 自愈只在白名单里挑字段，且硬性保护 `tools` 与协议骨架 | 去掉工具会让模型没法干活，用户看到的是「回答变笨了」而不是一条错误——早先从响应体里「猜」字段名就踩过这个坑（`{"param":"tools"}` 会把工具全删掉） |
+| 400 自愈的结果按会话 + 模型记住 | 不记就等于让 Agent 的每一步都先挨一次必然失败的请求；代价是记忆可能对一个刚换过上游的站点过时，而键里的 `targetKey` 会随配置变化自动失效 |
+| 请求体总是带 `max_tokens` | 不写就由各渠道的默认值决定（有的只有 4K～8K），而我们已按 `maxOutputTokens` 预留了输入预算；代价是少数不认这个字段的渠道要靠 400 自愈兜住（它在白名单里） |
+| token 校准比例按模型分别维护 | DeepSeek 与 Claude 的分词器差别很大，共用一个比例会让估算在模型间来回摆；代价是比例表需要淘汰策略（上限 32 个模型） |
+| 带 `toolCallingReasoningEffort` 的模型不显示思考强度控件 | Agent 模式的请求总是带工具，那个控件永远会被覆盖成固定值；显示一个选得了却不起作用的选项比不显示更糟，代价是 Ask 模式下也没法调档位 |
+| 模型列表快照没变时不触发 `onDidChange` | 状态栏每 60 秒探测一次，触发就意味着宿主重新拉一遍模型列表；代价是「模型元数据变了但 id 没变」这类变化依赖快照签名覆盖到那些字段 |
+| 状态刷新只探 `/api/status`，不再强制刷新模型列表 | 模型列表有自己的缓存有效期；每分钟强制重拉让那份缓存形同虚设，还会连带触发宿主的模型重新发现 |
+| 会话按「签名」复用，连接变更时**优雅退役**而不是立即释放 | 立即释放会中断在途请求，而 provider 会把它当成「用户取消」静默返回半截回答；代价是退役的 client 会多存活到在途请求结束 |
 | 400 自愈有轮数上限，且每轮必须真的改动请求体 | 站点一直不满意时继续试只会白花请求；「改不动却重发同一个请求」会把 400 变成看不见的循环 |
 | 连接失败给用户「分类 + 错误码 + 建议」，而不是原始错误链 | 链里的 `syscall` / `errno` 对用户没有意义；码留在方括号里（可搜索），明细进日志，两边都不丢 |
 | 错误码表不求穷尽，认不出的码落到通用解释 | 码家族会随 Node 与 undici 版本增加；漏掉的代价只是一句通用建议，丢掉码则等于丢掉唯一的线索 |
