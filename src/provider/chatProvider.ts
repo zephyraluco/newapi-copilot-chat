@@ -68,6 +68,17 @@ export interface NewApiModelInformation extends vscode.LanguageModelChatInformat
 	 * 并据此在模型选择器里渲染控件。
 	 */
 	readonly configurationSchema?: ModelConfigurationSchema;
+	/**
+	 * 模型真实的上下文窗口（输入 + 输出），与 `maxInputTokens` / `maxOutputTokens` 相互独立。
+	 *
+	 * 它同样不在 stable typings 里（属 `chatProvider` 提案），但是**被动元数据**：VS Code 只从
+	 * 返回值里把字段读走，更早的宿主在映射模型元数据时直接丢掉不认识的字段。因此可以无条件声明，
+	 * 不需要像 `LanguageModelThinkingPart` 那样先探测运行时（探测也探不到——这里没有可探测的对象）。
+	 *
+	 * 不声明时宿主按 `maxInputTokens + maxOutputTokens` 兜底：网关给出比「窗口 − 输出上限」
+	 * 更小的输入上限时，模型选择器里的「最大上下文」会显示成那个和，比真实窗口小。
+	 */
+	readonly maxContextWindowTokens?: number;
 	/** 该模型所属连接目标的指纹，用于在响应阶段找回同一个会话 */
 	readonly targetKey: string;
 	/** 目标标签，仅用于错误提示 */
@@ -363,6 +374,8 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 		tooltip: config.tooltip,
 		maxInputTokens: config.maxInputTokens,
 		maxOutputTokens: config.maxOutputTokens,
+		// 真实窗口单独声明，否则宿主只能按「输入上限 + 输出上限」兜底
+		maxContextWindowTokens: config.contextWindow,
 		capabilities: {
 			imageInput: config.imageInput,
 			// 上游对单次请求的工具数量通常没有硬上限，用布尔值表达「支持」

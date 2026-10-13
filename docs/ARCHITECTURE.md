@@ -254,6 +254,8 @@ flowchart TD
 
 三路来源合起来容易出现自相矛盾的数值。`reconcileLimits` 统一收敛：`maxInputTokens + maxOutputTokens <= contextWindow`、输出上限不挤占输入空间（至少给输入留 1/4 窗口）、各项不低于下限。每次修正都收集到 `adjustments` 里，最后由 `resolveModelConfig` 写成一条 debug 日志——**静默修正数值比不修正更糟**。
 
+校正后的窗口不只是内部数字：它还作为 `maxContextWindowTokens` 单独报给 VS Code（不在 stable typings 里，属 `chatProvider` 提案）。不报时宿主只能按 `maxInputTokens + maxOutputTokens` 兜底，而那个和只在「没有显式输入上限」时才等于窗口——网关给出更小的输入上限时，模型选择器会把窗口显示小。
+
 ### 远端字段提取（`remoteHints.ts`）
 
 覆盖实际观察到的几种风格：New API / one-api 的 `context_length`、OpenRouter 的 `top_provider.max_completion_tokens` 与 `architecture.input_modalities`、vLLM 的 `max_model_len`、通用的 `supports_vision` / `capabilities.*`。
@@ -473,6 +475,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | 缓存命中率按**输入**算 | 两个网关的字段说的都是 prompt 的命中量，共用一条口径 |
 | `usage` 里 total 与分项并存时优先信 total | 部分网关的 total 会漏掉缓存命中部分，但「总量大于分项之和」不报错——口径不一致时无法判断谁对 |
 | 明细占用的百分比可能与上游口径有出入 | 分母是上游的真实 `prompt_tokens`，分子是本地启发式估算 |
+| 把真实上下文窗口（`maxContextWindowTokens`）单独上报，而不是只报输入/输出上限 | 宿主的兜底值是「输入上限 + 输出上限」，网关给出更小的输入上限时窗口会被显示小；代价是宿主的上下文占用百分比以整个窗口为分母，而真正封顶的是 `maxInputTokens` |
 | token 用字符数启发式估算 | 拿不到真实分词器；刻意高估的代价只是少一点上下文，低估则会把超长请求发给上游 |
 | 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字上报 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
