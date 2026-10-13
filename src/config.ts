@@ -70,6 +70,48 @@ export interface NewApiSettings {
 }
 
 /**
+ * 一次设置变更的影响面。
+ *
+ * 为什么需要分类：`ConfigService` 对 `newapi-copilot-chat.*` 下**任何**设置变化都会广播，
+ * 而下游的反应不能一样。早先的实现对每次变化都重建全部会话（进而释放 client、中断在途请求），
+ * 于是「改一下日志级别」也会把正在生成的回答静默截断——用户看到一个没有报错的半截回答。
+ */
+export interface SettingsChangeScope {
+	/** client 的构造参数变了（超时、静默超时、是否要用量、重试次数）：需要按新设置重建 client */
+	readonly client: boolean;
+	/** 模型设置变了（缓存有效期、兜底窗口/输出）：模型缓存与解析结果要重算 */
+	readonly models: boolean;
+	/** 状态设置变了（显示开关、刷新间隔） */
+	readonly status: boolean;
+	/** 日志级别变了 */
+	readonly logLevel: boolean;
+}
+
+/**
+ * 判断一次设置变更影响了哪些部分。
+ *
+ * 只比较**需要动作**的字段：`request` 下的采样参数、思考回显、工具组预激活、`extraBody`
+ * 都是每次请求现读的，变了也不需要重建任何东西，因此不出现在这里。
+ */
+export function classifySettingsChange(
+	previous: NewApiSettings,
+	next: NewApiSettings,
+): SettingsChangeScope {
+	return {
+		client: previous.request.timeoutMs !== next.request.timeoutMs
+			|| previous.request.streamIdleTimeoutMs !== next.request.streamIdleTimeoutMs
+			|| previous.request.includeUsage !== next.request.includeUsage
+			|| previous.request.maxRetries !== next.request.maxRetries,
+		models: previous.models.cacheTtlMs !== next.models.cacheTtlMs
+			|| previous.models.defaultContextWindow !== next.models.defaultContextWindow
+			|| previous.models.defaultMaxOutputTokens !== next.models.defaultMaxOutputTokens,
+		status: previous.status.showStatusBar !== next.status.showStatusBar
+			|| previous.status.refreshIntervalMs !== next.status.refreshIntervalMs,
+		logLevel: previous.logLevel !== next.logLevel,
+	};
+}
+
+/**
  * 规范化 baseUrl。
  *
  * 使用者粘贴的地址形态五花八门（带尾斜杠、带 `/v1`、带 `/v1/chat/completions`），

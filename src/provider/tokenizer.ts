@@ -16,7 +16,7 @@
 import * as vscode from 'vscode';
 import { TOKEN_ESTIMATION } from '../consts';
 import { safeJsonStringify } from '../json';
-import { REPLAY_MARKER_MIME } from './replay';
+import { REPLAY_MARKER_MIME, isReplayMarkerPart, parseReplayMarker } from './replay';
 import { readThinkingText } from './thinking';
 
 /** 校准后的比例允许落在什么区间：上游给出离谱用量时不能让它把估算带偏一个量级。 */
@@ -27,6 +27,29 @@ const CALIBRATION_WEIGHT = 0.3;
 
 /** CJK 汉字、日文假名、韩文、全角标点与符号。 */
 const CJK_PATTERN = /[\u2e80-\u303f\u3040-\u30ff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/g;
+
+/**
+ * 请求文本的字符构成：CJK 与非 CJK **分开数**。
+ *
+ * 估算器对两者的换算方式本来就不同（CJK 按 1 字符 ≈ 1 token，其余按若干字符 ≈ 1 token），
+ * 因此校准必须用同一口径的分子，否则中文一多就会把比例算歪
+ * （旧实现把两者混在一起相除，中文比例被压到下限 1，估算因此高出数倍）。
+ */
+export interface RequestTextMeasure {
+	/** CJK 字符数（估算时 1 字符 ≈ 1 token） */
+	readonly cjkChars: number;
+	/** 其余字符数（估算时 `charsPerToken` 字符 ≈ 1 token） */
+	readonly otherChars: number;
+}
+
+/** 把文本拆成「CJK 字符数」与「其余字符数」。 */
+export function splitCjkChars(text: string): RequestTextMeasure {
+	if (text.length === 0) {
+		return { cjkChars: 0, otherChars: 0 };
+	}
+	const cjkChars = text.match(CJK_PATTERN)?.length ?? 0;
+	return { cjkChars, otherChars: text.length - cjkChars };
+}
 
 /** 估算纯文本的 token 数。 */
 export function estimateTextTokens(
@@ -44,21 +67,31 @@ export function estimateTextTokens(
 /**
  * 用上游返回的真实用量校准「多少字符约等于一个 token」。
  *
+ * 用**解方程**而不是直接相除：估算器认为 `promptTokens ≈ cjkChars + otherChars / r`，
+ * 因此由观测反解 `r = otherChars / (promptTokens - cjkChars)`。两者口径一致，
+ * CJK 不会再被当成「非 CJK 字符」混进分子。
+ *
  * 只有双方都为正数时才能算：没有用量（站点关掉了 `stream_options`）或空请求都不能校准。
  * 用指数移动平均而不是直接采用观测值——单次请求的比例会因内容构成（代码 / 中文 / 工具调用
  * 占比）跳动很大，直接跟进会让上下文预算忽大忽小。
  */
 export function calibrateCharsPerToken(
-	requestChars: number,
+	measure: RequestTextMeasure,
 	promptTokens: number | undefined,
 	current: number = TOKEN_ESTIMATION.charsPerToken,
 ): number {
-	if (promptTokens === undefined || promptTokens <= 0 || requestChars <= 0) {
+	if (promptTokens === undefined || promptTokens <= 0 || measure.otherChars <= 0) {
+		return current;
+	}
+	// CJK 字符本身已经吃满用量：说明该模型对中文的折算比 1 字符 1 token 更省，
+	// 此时反解出来的比例没有意义（分母 ≤ 0），保持原值——高估是安全的方向。
+	const nonCjkTokens = promptTokens - measure.cjkChars;
+	if (nonCjkTokens <= 0) {
 		return current;
 	}
 	const observed = Math.min(
 		CHARS_PER_TOKEN_RANGE.max,
-		Math.max(CHARS_PER_TOKEN_RANGE.min, requestChars / promptTokens),
+		Math.max(CHARS_PER_TOKEN_RANGE.min, measure.otherChars / nonCjkTokens),
 	);
 	const blended = current * (1 - CALIBRATION_WEIGHT) + observed * CALIBRATION_WEIGHT;
 	return Math.min(
@@ -71,12 +104,20 @@ export function calibrateCharsPerToken(
  * 估算一条 VS Code 消息的 token 数。
  *
  * 内部复用 `messages.ts` 的思路但不做转换——估算不需要构造完整请求体。
+ *
+ * **思考内容每条消息只算一次**：宿主提供的思考部件与我们的回放标记常常同时存在
+ * （两者装的是同一段文本），分别累加会把上下文算成两倍。优先用思考部件，
+ * 没有它时用回放标记——用户关掉 `request.includeReasoning` 时只有标记，
+ * 而开启 `echoReasoningContent` 的适配器会把标记变成 `reasoning_content` 发给上游，
+ * 因此它**必须**计入（否则长会话会一路低估，最终表现为上游返回超长 400）。
  */
 export function estimateMessageTokens(
 	message: vscode.LanguageModelChatRequestMessage,
 	charsPerToken: number = TOKEN_ESTIMATION.charsPerToken,
 ): number {
 	let total = TOKEN_ESTIMATION.messageOverhead;
+	let thinkingFromParts = '';
+	let replayedReasoning: string | undefined;
 	for (const part of message.content ?? []) {
 		if (part instanceof vscode.LanguageModelTextPart) {
 			total += estimateTextTokens(part.value, charsPerToken);
@@ -100,17 +141,26 @@ export function estimateMessageTokens(
 			continue;
 		}
 		if (part instanceof vscode.LanguageModelDataPart) {
+			if (isReplayMarkerPart(part)) {
+				// 回放标记的文本在循环外统一计入，这里只留下内容
+				replayedReasoning ??= parseReplayMarker(part.data);
+				continue;
+			}
 			total += estimateDataPartTokens(part, charsPerToken);
 			continue;
 		}
 		const thinking = readThinkingText(part);
 		if (thinking !== undefined) {
-			total += estimateTextTokens(thinking, charsPerToken);
+			thinkingFromParts += thinking;
 			continue;
 		}
 		if (typeof part === 'string') {
 			total += estimateTextTokens(part, charsPerToken);
 		}
+	}
+	const reasoning = thinkingFromParts.length > 0 ? thinkingFromParts : replayedReasoning;
+	if (reasoning !== undefined && reasoning.length > 0) {
+		total += estimateTextTokens(reasoning, charsPerToken);
 	}
 	return total;
 }
@@ -120,7 +170,8 @@ function estimateDataPartTokens(
 	part: vscode.LanguageModelDataPart,
 	charsPerToken: number,
 ): number {
-	// 回放标记（见 replay.ts）是我们自己写进历史的元数据，不会被发给上游，也不占上下文
+	// 回放标记（见 replay.ts）是我们自己写进历史的元数据，不会被当成二进制发给上游，
+	// 它的文本由 `estimateMessageTokens` 单独计入（每条消息只算一次）
 	if (part.mimeType === REPLAY_MARKER_MIME) {
 		return 0;
 	}

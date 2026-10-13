@@ -3,8 +3,18 @@
  *
  * 每个配置组可以指向不同的站点、用不同的密钥，因此 client 与模型缓存**不能全局共用**
  * （否则 A 站的模型列表会串到 B 站），也**不该每次新建**（VS Code 会反复轮询）。
- * 这里按目标维护一份会话：配置没变就复用，指纹变了就重建并释放旧的——旧 client 的
- * `dispose()` 会中断在途请求，避免拿到按过期配置发出的响应。
+ * 这里按目标维护一份会话：**会话签名**没变就复用，变了就重建。
+ *
+ * 签名包含目标指纹与 client 的构造参数（超时、重试、是否要用量）。这样「改日志级别」或
+ * 「改采样参数」这类变化完全不会碰会话，而真正换了连接身份时才重建。
+ *
+ * 重建与「模型设置变化」走**两条不同的路**，这是关键：
+ *
+ * - 只是模型设置变了 → {@link SessionRegistry.invalidateCatalogs}：丢缓存，**client 不动**；
+ * - 连接身份变了 → 旧会话**优雅退役**：不再接新请求，等在途请求跑完再释放。
+ *
+ * 两条路都不中断在途请求。早先的实现对任何设置变化都直接 `dispose()` 全部会话，
+ * 于是用户改一下日志级别就会看到一个没有报错的半截回答（见 `client/http.ts` 的 `retire`）。
  */
 
 import * as vscode from 'vscode';
@@ -21,7 +31,13 @@ export interface ProviderSession {
 	readonly client: NewApiClient;
 	/** 该目标的模型目录（带独立缓存） */
 	readonly catalog: ModelCatalog;
-	/** 释放该会话（中断在途请求、停止事件） */
+	/** 本会话的签名；不一致说明 client 的构造参数变了 */
+	readonly signature: string;
+	/** 丢弃模型缓存，保留 client（模型设置变化时用） */
+	invalidateCatalog(): void;
+	/** 优雅退役：不再接新请求，等在途请求结束后释放 */
+	retire(): void;
+	/** 立即释放（扩展停用时用） */
 	dispose(): void;
 }
 
@@ -53,23 +69,24 @@ export class SessionRegistry implements vscode.Disposable {
 	/**
 	 * 解析目标对应的会话，必要时创建。
 	 *
-	 * 配置指纹不同即视为「换了目标」，会重建会话。
+	 * 签名（目标指纹 + client 构造参数）不同才视为「换了目标」，会重建会话。
 	 */
 	resolve(target: ProviderTarget): ProviderSession {
 		if (this.disposed) {
 			throw new Error('SessionRegistry 已释放');
 		}
 		const slot = target.group ?? '';
+		const signature = sessionSignature(target, this.deps.getRequestSettings());
 		const existing = this.sessions.get(slot);
 		if (existing !== undefined) {
-			if (existing.target.key === target.key) {
+			if (existing.signature === signature) {
 				return existing;
 			}
-			this.deps.logger.info(`配置已变化，重建会话：${target.label}`);
-			this.release(existing);
+			this.deps.logger.info(`连接设置已变化，重建会话：${target.label}`);
+			this.retire(existing);
 		}
 
-		const session = this.create(target);
+		const session = this.create(target, signature);
 		this.sessions.set(slot, session);
 		this.deps.logger.debug(`创建会话：${target.label}（${target.baseUrl || '地址未配置'}）`);
 		// 新增会话意味着可用模型集合可能变化
@@ -99,19 +116,18 @@ export class SessionRegistry implements vscode.Disposable {
 	}
 
 	/**
-	 * 丢弃会话。
+	 * 让所有会话的模型缓存失效，但**保留 client**。
 	 *
-	 * 用于「模型设置变更」这类需要让缓存失效的场景：会话被释放后，
-	 * 下一次模型发现会按新设置重新创建。
+	 * 用于「模型设置变化」这类需要重算模型列表的场景。**不要**用重建会话来做这件事：
+	 * 那会释放 client，从而中断正在生成的回答。
 	 */
-	invalidate(): void {
+	invalidateCatalogs(): void {
 		if (this.sessions.size === 0) {
 			return;
 		}
 		for (const session of this.sessions.values()) {
-			this.release(session);
+			session.invalidateCatalog();
 		}
-		this.sessions.clear();
 		this.emitter.fire();
 	}
 
@@ -127,7 +143,7 @@ export class SessionRegistry implements vscode.Disposable {
 	/* ---------------------------------------------------------------------- */
 
 	/** 组装一个会话。 */
-	private create(target: ProviderTarget): ProviderSession {
+	private create(target: ProviderTarget, signature: string): ProviderSession {
 		const requests = this.deps.getRequestSettings();
 		const logger = this.deps.logger;
 		const client = new NewApiClient({
@@ -152,6 +168,14 @@ export class SessionRegistry implements vscode.Disposable {
 			target,
 			client,
 			catalog,
+			signature,
+			invalidateCatalog: () => catalog.invalidate(),
+			// 优雅退役：client 停止接新请求，等在途请求结束再中断
+			retire: () => {
+				catalogListener.dispose();
+				catalog.dispose();
+				client.retire();
+			},
 			dispose: () => {
 				catalogListener.dispose();
 				catalog.dispose();
@@ -168,4 +192,29 @@ export class SessionRegistry implements vscode.Disposable {
 			this.deps.logger.error(`释放会话失败：${session.target.label}`, error);
 		}
 	}
+
+	/** 优雅退役会话，单个失败不影响其它。 */
+	private retire(session: ProviderSession): void {
+		try {
+			session.retire();
+		} catch (error) {
+			this.deps.logger.error(`退役会话失败：${session.target.label}`, error);
+		}
+	}
+}
+
+/**
+ * 会话签名：决定「能不能复用这个 client」。
+ *
+ * 只包含 client 构造时用到的参数——`target.key`（站点地址 + 密钥的指纹）与请求侧的
+ * 超时/重试/用量开关。采样参数、思考回显、`extraBody` 都是每次请求现读的，改了不必重建。
+ */
+function sessionSignature(target: ProviderTarget, requests: RequestSettings): string {
+	return [
+		target.key,
+		requests.timeoutMs,
+		requests.streamIdleTimeoutMs,
+		requests.includeUsage ? 'usage' : 'no-usage',
+		requests.maxRetries,
+	].join('\u0000');
 }

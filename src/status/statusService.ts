@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 import { createAbortHandle, type AbortSignalHandle } from '../cancellation';
 import { describeError } from '../client/newApiClient';
+import { classifySettingsChange } from '../config';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelCatalogSnapshot } from '../models/catalog';
@@ -110,8 +111,8 @@ export interface StatusSessionView {
 export interface StatusSessionSource {
 	list(): readonly StatusSessionView[];
 	readonly onDidChange: vscode.Event<void>;
-	/** 让各会话丢弃缓存（模型设置变化时用） */
-	invalidate(): void;
+	/** 让各会话丢弃模型缓存（**保留 client**，因此不会中断在途请求） */
+	invalidateCatalogs(): void;
 }
 
 /** 配置来源（`ConfigService` 天然满足它）。 */
@@ -156,13 +157,21 @@ export class StatusService implements vscode.Disposable {
 	readonly onDidChange = this.emitter.event;
 
 	constructor(private readonly deps: StatusServiceDeps) {
+		let previous = this.deps.config.settings;
 		this.disposables.push(
 			this.deps.sessions.onDidChange(() => this.emit()),
-			this.deps.config.onDidChange(() => {
-				// 模型设置变了，各会话的缓存需要失效——直接丢弃会话，
-				// 下一次模型发现会按新设置重建。
-				this.deps.sessions.invalidate();
-				this.restartTimer();
+			this.deps.config.onDidChange(settings => {
+				const scope = classifySettingsChange(previous, settings);
+				previous = settings;
+				// 只有模型设置变化才需要丢掉模型缓存。**绝不在这里重建会话**：那会释放 client
+				// 并中断正在生成的回答，用户看到的是一个没有报错的半截回答（见 runtime/session.ts）。
+				if (scope.models) {
+					this.deps.sessions.invalidateCatalogs();
+				}
+				// 只有状态设置变化才需要重启定时器
+				if (scope.status) {
+					this.restartTimer();
+				}
 				this.emit();
 			}),
 		);
@@ -342,7 +351,10 @@ export class StatusService implements vscode.Disposable {
 		}
 		const interval = this.deps.config.settings.status.refreshIntervalMs;
 		this.timer = setInterval(() => {
-			void this.refresh({ forceModels: true });
+			// 只探测状态：模型列表按自己的缓存有效期（`models.cacheTtl`）自然刷新。
+			// 早先这里传 `forceModels: true`，于是每 60 秒都会强制重拉一次模型列表，
+			// 5 分钟的缓存形同虚设，而且每次都会让宿主重新发现一遍模型。
+			void this.refresh({ forceModels: false });
 		}, interval);
 		this.deps.logger.debug(`状态刷新间隔：${Math.round(interval / 1000)}s`);
 	}

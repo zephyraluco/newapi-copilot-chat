@@ -413,8 +413,8 @@ test('decideStreamFailure：只有「还没给用户看过内容」的截断才�
 
 	// 什么都没发出：重发
 	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'retry');
-	// 已经流出一部分：保留半截，不能把两段回答拼在一起
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 1, attempt: 0, maxRetries: 2, cancelled: false }), 'keep-partial');
+	// 已经流出一部分：冲刷已有内容后报错——半截回答不能当作成功
+	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 1, attempt: 0, maxRetries: 2, cancelled: false }), 'fail-truncated');
 	// 重试次数用尽
 	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 2, maxRetries: 2, cancelled: false }), 'fail');
 });

@@ -18,7 +18,7 @@ const { modules, vscode } = load({
 	thinking: './src/provider/thinking',
 });
 
-const { convertMessages, countRequestChars } = modules.messages;
+const { convertMessages, measureRequestText } = modules.messages;
 const { createReplayMarkerPart, REPLAY_MARKER_MIME } = modules.replay;
 
 /** 不提供思考部件的宿主（默认情形）。 */
@@ -263,7 +263,7 @@ test('关掉回填时思考内容既不当正文也不写进请求', () => {
 /* 字符统计                                                                    */
 /* -------------------------------------------------------------------------- */
 
-test('countRequestChars：只数文本、工具调用与回填的思考', () => {
+test('measureRequestText：只数文本、工具调用、工具定义与回填的思考，且 CJK 分开数', () => {
 	const messages = [
 		{
 			role: 'assistant',
@@ -280,7 +280,20 @@ test('countRequestChars：只数文本、工具调用与回填的思考', () => 
 			],
 		},
 	];
+	const tools = [
+		{ type: 'function', function: { name: 'lookup', description: 'abcd', parameters: { a: 1 } } },
+	];
 
-	// 9 + 12 + 2 + 3
-	assert.equal(countRequestChars(messages), 26);
+	// CJK：想想(2) + 看这个(3)
+	// 非 CJK：read_file(9) + {"path":"a"}(12) + lookup(6) + abcd(4) + {"a":1}(7)
+	assert.deepEqual(measureRequestText(messages, tools), { cjkChars: 5, otherChars: 38 });
+});
+
+test('measureRequestText：工具定义要计入（漏掉会把校准比例压到下限）', () => {
+	const messages = [{ role: 'user', content: 'abcd' }];
+	const tools = [{ type: 'function', function: { name: 'lookup' } }];
+
+	assert.equal(measureRequestText(messages, undefined).otherChars, 4);
+	assert.equal(measureRequestText(messages, tools).otherChars, 4 + 6);
+	assert.equal(measureRequestText(messages, []).otherChars, 4);
 });

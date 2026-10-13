@@ -29,6 +29,8 @@ import type {
 } from '../types';
 import { isReplayMarkerPart, readReplayedReasoning } from './replay';
 import { readThinkingText } from './thinking';
+import { splitCjkChars } from './tokenizer';
+import type { RequestTextMeasure } from './tokenizer';
 
 /** 转换结果。 */
 export interface ConvertedMessages {
@@ -225,39 +227,51 @@ function convertAssistantMessage(
 }
 
 /**
- * 统计请求体里的**文本**字符数，用于按上游返回的真实用量校准 token 估算比例。
+ * 统计请求体里的**文本**字符构成，用于按上游返回的真实用量校准 token 估算比例。
  *
- * 图片以 `data:` URL 传输，字符数没有意义（还会把比例彻底带偏），因此只数文本、
- * 工具调用与回填的思考内容。调用方拿到的是「与 `prompt_tokens` 对应的字符量」。
+ * 三件事决定了这里的口径必须和估算器一致：
+ * - **工具定义要算进去**：Agent 模式下工具 schema 常常占上万 token，它们算在 `prompt_tokens` 里，
+ *   漏掉会把比例压到下限、估算因此高出数倍（Copilot 会更早裁剪与总结上下文）。
+ * - **CJK 与非 CJK 分开数**：估算器对两者的换算方式不同，混在一起相除会把比例算歪。
+ * - **图片不计**：它以 `data:` URL 传输，字符数没有意义（还会把比例彻底带偏）。
  */
-export function countRequestChars(messages: readonly ChatRequestMessage[]): number {
-	let total = 0;
-	for (const message of messages) {
-		total += contentChars(message.content);
-		total += message.reasoning_content?.length ?? 0;
-		for (const call of message.tool_calls ?? []) {
-			total += call.function.name.length;
-			total += call.function.arguments.length;
+export function measureRequestText(
+	messages: readonly ChatRequestMessage[],
+	tools: readonly ChatToolDefinition[] | undefined,
+): RequestTextMeasure {
+	const measure = { cjkChars: 0, otherChars: 0 };
+	const add = (text: string | undefined): void => {
+		if (text === undefined || text.length === 0) {
+			return;
 		}
-	}
-	return total;
-}
+		const part = splitCjkChars(text);
+		measure.cjkChars += part.cjkChars;
+		measure.otherChars += part.otherChars;
+	};
 
-/** 内容里可计入字符数的部分。 */
-function contentChars(content: ChatRequestMessage['content']): number {
-	if (typeof content === 'string') {
-		return content.length;
-	}
-	if (content === null) {
-		return 0;
-	}
-	let total = 0;
-	for (const part of content) {
-		if (part.type === 'text') {
-			total += part.text?.length ?? 0;
+	for (const message of messages) {
+		const content = message.content;
+		if (typeof content === 'string') {
+			add(content);
+		} else if (content !== null) {
+			for (const part of content) {
+				if (part.type === 'text') {
+					add(part.text);
+				}
+			}
+		}
+		add(message.reasoning_content);
+		for (const call of message.tool_calls ?? []) {
+			add(call.function.name);
+			add(call.function.arguments);
 		}
 	}
-	return total;
+	for (const tool of tools ?? []) {
+		add(tool.function.name);
+		add(tool.function.description);
+		add(safeJsonStringify(tool.function.parameters) ?? undefined);
+	}
+	return measure;
 }
 
 /* -------------------------------------------------------------------------- */

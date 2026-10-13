@@ -17,14 +17,14 @@
  * 地址上判断。`reasoning_effort` 的取值也不做翻译，档位本来就来自数据表。
  */
 
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../../consts';
+import { DEFAULT_REASONING_EFFORT_FIELD, DEFAULT_THINKING_FIELD } from '../../consts';
 import type { ModelConfig } from '../../models/modelConfig';
 import type { ChatCompletionRequest } from '../../types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { classifyRequest, shouldDisableThinking } from './requestKind';
 
 /** 思考开关在请求体里的字段名（DeepSeek 官方）。 */
-export const THINKING_FIELD = 'thinking';
+export const THINKING_FIELD = DEFAULT_THINKING_FIELD;
 
 /** 模型 ID 里出现这个片段就按 DeepSeek 处理（`deepseek-chat` / `deepseek-ai/DeepSeek-V4` …）。 */
 const DEEPSEEK_ID_PATTERN = /deepseek/i;

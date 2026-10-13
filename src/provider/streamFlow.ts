@@ -26,12 +26,12 @@
 
 import * as vscode from 'vscode';
 import type { ChatCompletionChunk, ChatCompletionRequest } from '../types';
-import type { ModelAdapter } from '../adapter/adapter';
 import { DEFAULTS, USAGE_DATA_MIME_TYPE } from '../consts';
 import { HttpError } from '../client/http';
 import type { Logger } from '../logger';
 import { buildReportedUsage } from '../usage';
-import { planRequestRepair } from './requestRepair';
+import { applyRememberedRepair, planRequestRepair } from './requestRepair';
+import type { RepairMemory, RepairPlan } from './requestRepair';
 import { createReplayMarkerPart } from './replay';
 import { StreamTranslator, decideStreamFailure, extractStreamError } from './stream';
 import type { ResponsePart, ResponsePartSink, StreamSummary } from './stream';
@@ -70,6 +70,12 @@ export interface StreamResponseInput {
 	readonly logger: Logger;
 	/** 本次请求是否带着 `stream_options`（自愈时要去掉它） */
 	readonly sendsStreamOptions: boolean;
+	/** 该模型所属目标的指纹，用于按会话记住自愈结果 */
+	readonly targetKey: string;
+	/** 自愈结果记忆（跨请求共享） */
+	readonly repairMemory: RepairMemory;
+	/** 用户在 `extraBody` 里填的键；它们也是「去掉之后请求仍然成立」的可选字段 */
+	readonly optionalFields: readonly string[];
 }
 
 /**
@@ -119,12 +125,16 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 	const thinkingParts = supportsThinkingPart();
 	const sink: ResponsePartSink = part => reportResponsePart(progress, part, logger, modelId);
 
+	/** 该会话 + 模型已经确认过的不兼容字段：首次尝试之前就先去掉，省掉一次必然失败的请求 */
+	const remembered = input.repairMemory.get(input.targetKey, modelId);
 	/** 当前要发出去的请求体：自愈会把它换成「去掉了那个字段」的版本 */
-	let request = input.request;
+	let request = applyRememberedRepair(input.request, remembered);
 	/** 站点抱怨过 `stream_options` 之后，后续尝试都不能再带上它 */
-	let sendsStreamOptions = input.sendsStreamOptions;
+	let sendsStreamOptions = remembered?.includeUsage === false ? false : input.sendsStreamOptions;
 	/** 已经用过的自愈步骤与轮数 */
 	const repairs: string[] = [];
+	/** 本次请求里真正生效过的自愈步骤；只有整次响应成功之后才写进记忆 */
+	const appliedRepairs: RepairPlan[] = [];
 	/** 已经用掉几次重发额度（自愈不占额度，因此单独计数） */
 	let attempts = 0;
 
@@ -154,6 +164,10 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 
 			const summary = translator.flush();
 			reportUsagePart(progress, summary, logger);
+			// 自愈确实救回来了才记住：这样后续请求（Agent 的每一步都是一次）不必再挨一次 400
+			for (const repair of appliedRepairs) {
+				input.repairMemory.remember(input.targetKey, modelId, repair);
+			}
 			logger.debug(
 				`响应结束：${chunkCount} 个数据块，正文 ${summary.textLength} 字，` +
 				`思考 ${summary.reasoningLength} 字，工具调用 ${summary.toolCallCount} 次，` +
@@ -173,10 +187,12 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 					request,
 					sendsStreamOptions,
 					tried: repairs,
+					optionalFields: input.optionalFields,
 				})
 				: undefined;
 			if (repair !== undefined) {
 				repairs.push(repair.id);
+				appliedRepairs.push(repair);
 				request = repair.request;
 				if (repair.includeUsage === false) {
 					sendsStreamOptions = false;
@@ -214,15 +230,15 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 				attempts++;
 				continue;
 			}
-			if (action === 'keep-partial') {
-				// 内容已经流给用户了，此时抛错只会让 VS Code 在一个已经能用的回答上弹出重试按钮。
-				// 保留已有内容，但把参数不完整的工具调用丢掉：半截 JSON 拿去执行工具只会更糟。
-				logger.warn(
-					`上游连接在回答完成前断开，已保留已收到的 ${translator.emittedParts} 个部件：${modelId}`,
-				);
+			if (action === 'fail-truncated') {
+				// 内容已经流给用户了，但流没正常收尾。先冲刷已有内容、上报用量，再报错：
+				// 半截回答不能当作成功——用户可能只看到思考块、正文全丢，而 Agent 循环会把
+				// 它当成「本轮已完成」。（VS Code 会先冲刷已上报的部件，再显示错误。）
 				const summary = translator.flush({ dropIncompleteToolCalls: true });
 				reportUsagePart(progress, summary, logger);
-				return summary;
+				logger.warn(
+					`上游连接在回答完成前断开，已冲刷 ${translator.emittedParts} 个部件后报错：${modelId}`,
+				);
 			}
 			throw error;
 		}
@@ -254,17 +270,18 @@ export function reportUsagePart(
 /**
  * 把本次的思考内容随响应一起留下（回放标记）。
  *
- * 只有声明了 `echoReasoningContent` 的适配器才需要它：标记的唯一用途就是在下一次请求里
+ * 只有需要回填思考内容的上游才需要它：标记的唯一用途就是在下一次请求里
  * 变回 `reasoning_content`（DeepSeek 的思考态工具调用历史要求这个字段）。
+ * 是否需要由**适配器链**决定（任一适配器声明 `echoReasoningContent` 即为真）。
  */
 export function reportReplayMarker(
 	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 	summary: StreamSummary,
-	adapter: ModelAdapter,
+	echoReasoningContent: boolean,
 	modelId: string,
 	logger: Logger,
 ): void {
-	if (adapter.echoReasoningContent !== true || summary.reasoningText.length === 0) {
+	if (!echoReasoningContent || summary.reasoningText.length === 0) {
 		return;
 	}
 	try {

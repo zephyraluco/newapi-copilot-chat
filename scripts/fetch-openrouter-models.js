@@ -101,9 +101,12 @@ function printHelp() {
 			'',
 			'输出字段：id / vendor / displayName / contextWindow / maxOutputTokens /',
 			'          imageInput / toolCalling / reasoning / supportsReasoningEffort /',
-			'          defaultReasoningEffort',
+			'          defaultReasoningEffort / samplingParams',
 			'（id 已剥掉厂商前缀与变体后缀；丢弃变体与路由型伪模型、非对话模型、',
-			'  缺少上下文窗口与输出上限的模型；后两个字段仅在上游给出时才会出现）',
+			'  缺少上下文窗口与输出上限的模型；后四个字段仅在上游给出时才会出现）',
+			'',
+			'注意：`data/model-overrides.json` 是手工维护的能力覆盖表，在**读取时**叠加到本文件的',
+			'      产物之上，因此重新生成不会丢掉那些「上游目录表达不了」的能力位。',
 		].join('\n'),
 	);
 }
@@ -378,6 +381,15 @@ function convert(model, options, now) {
 		? undefined
 		: asNonEmptyString(reasoningInfo.default_effort);
 
+	// 采样参数：只有上游**明确列出**它接受哪些参数时才下结论——列出 `supported_parameters`
+	// 却唯独没有 temperature/top_p，说明这个模型会直接拒绝它们（而不是忽略）。
+	// 字段整个缺失时不下结论：那是「网关不暴露这个信息」，与「不支持」是两回事。
+	const samplingParams = Array.isArray(model.supported_parameters)
+		&& !supportedParameters.includes('temperature')
+		&& !supportedParameters.includes('top_p')
+		? 'never'
+		: undefined;
+
 	const record = {
 		id,
 		vendor: vendor ?? '未知',
@@ -392,6 +404,7 @@ function convert(model, options, now) {
 			|| supportedParameters.includes('include_reasoning'),
 		...(supportsReasoningEffort === undefined ? {} : { supportsReasoningEffort }),
 		...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
+		...(samplingParams === undefined ? {} : { samplingParams }),
 	};
 
 	return { ok: true, model: record, canonical: !rawId.startsWith('~') };

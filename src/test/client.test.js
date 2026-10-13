@@ -515,7 +515,7 @@ test('HttpClient：流式响应正常返回未读完的 body', async () => {
 	assert.equal(response.body, bodyStream);
 });
 
-test('HttpClient：dispose 之后所有请求立刻失败', async () => {
+test('HttpClient：dispose 之后所有请求立刻失败（且不算用户取消）', async () => {
 	const client = makeClient();
 	assert.equal(client.isDisposed, false);
 
@@ -526,8 +526,70 @@ test('HttpClient：dispose 之后所有请求立刻失败', async () => {
 		client.requestText({ url: 'https://api.example.com/v1/models' }),
 		error => {
 			assert.ok(error instanceof TransportError);
-			assert.equal(error.kind, 'aborted');
+			// `disposed` 而不是 `aborted`：它不是用户取消，必须如实报错
+			assert.equal(error.kind, 'disposed');
+			assert.equal(isAbortError(error), false);
 			return true;
+		},
+	);
+});
+
+test('HttpClient：retire 让在途请求跑完，只挡住新请求', async () => {
+	const client = makeClient();
+	let releaseRequest;
+	const gate = new Promise(resolve => { releaseRequest = resolve; });
+
+	const pending = withFetch(
+		async () => {
+			await gate;
+			return fakeResponse({ text: '{"data":[]}' });
+		},
+		() => client.requestText({ url: 'https://api.example.com/v1/models' }),
+	);
+
+	// 在途请求还没结束：退役不能把它掐断
+	client.retire();
+	releaseRequest();
+	const response = await pending;
+	assert.equal(response.status, 200);
+
+	// 但新请求立刻失败
+	await assert.rejects(
+		client.requestText({ url: 'https://api.example.com/v1/models' }),
+		error => {
+			assert.ok(error instanceof TransportError);
+			assert.equal(error.kind, 'disposed');
+			return true;
+		},
+	);
+});
+
+test('NewApiClient：retire 不会掐断正在消费的流式响应', async () => {
+	const logger = createLogger();
+	logger.child = () => logger;
+	const client = new modules.newApiClient.NewApiClient({
+		baseUrl: 'https://api.example.com',
+		apiKey: 'test-key',
+		timeoutMs: 5_000,
+		maxRetries: 0,
+		logger,
+	});
+	const bodyStream = streamOf([
+		'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n',
+		'data: [DONE]\n\n',
+	]);
+
+	await withFetch(
+		async () => fakeResponse({ headers: { 'content-type': 'text/event-stream' }, bodyStream }),
+		async () => {
+			const chunks = [];
+			for await (const chunk of client.streamChatCompletion({ model: 'm', messages: [] })) {
+				chunks.push(chunk);
+				// 数据块刚到就退役：在途登记必须覆盖到响应体读完，否则这里会被掐成半截
+				client.retire();
+			}
+			assert.equal(chunks.length, 1);
+			assert.equal(chunks[0].choices[0].delta.content, 'hi');
 		},
 	);
 });

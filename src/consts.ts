@@ -91,6 +91,14 @@ export const REASONING_EFFORT_KEY = 'reasoningEffort';
 export const DEFAULT_REASONING_EFFORT_FIELD = 'reasoning_effort';
 
 /**
+ * 思考开关在请求体中的默认字段名（DeepSeek 官方）。
+ *
+ * 放在这里而不是适配器里：它既是适配器要写入的字段，也是 400 自愈白名单里的一项
+ * （上游不认时要能去掉），两处必须同名。
+ */
+export const DEFAULT_THINKING_FIELD = 'thinking';
+
+/**
  * 不允许被外部配置覆盖的请求体字段：`model` / `messages` / `tools` 是协议骨架，
  * 被 JSON 设置项盖住只会制造无从排查的故障。
  *

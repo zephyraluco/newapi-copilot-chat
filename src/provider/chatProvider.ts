@@ -16,7 +16,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { AdapterContext } from '../adapter/adapter';
+import type { AdapterContext, ModelAdapter } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
@@ -26,7 +26,7 @@ import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
-import { convertMessages, convertToolChoice, convertTools, countRequestChars } from './messages';
+import { convertMessages, convertToolChoice, convertTools, measureRequestText } from './messages';
 import {
 	applyReasoningEffort,
 	buildModelConfigurationSchema,
@@ -34,6 +34,7 @@ import {
 } from './modelConfiguration';
 import type { ModelConfigurationSchema } from './modelConfiguration';
 import { runToolGroupPreflight } from './preflight';
+import { RepairMemory } from './requestRepair';
 import type { ProviderSession, SessionRegistry } from '../runtime/session';
 import { reportReplayMarker, streamResponse } from './streamFlow';
 import type { StreamSummary } from './stream';
@@ -98,15 +99,29 @@ export interface ChatProviderDeps {
 }
 
 /**
+ * 最多为多少个模型保留校准后的估算比例。
+ *
+ * 用户可能在一次会话里切换不少模型；比例是「每模型一个」的，但不能无限增长。
+ */
+const MAX_CALIBRATED_MODELS = 32;
+
+/**
  * New API 聊天模型供应商。 */
 export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewApiModelInformation>, vscode.Disposable {
 	private readonly infoChanged = new vscode.EventEmitter<void>();
 	private readonly disposables: vscode.Disposable[] = [];
 	/**
-	 * 非 CJK 文本「多少字符约等于一个 token」，随上游返回的真实用量缓慢校准
+	 * **按模型**维护「非 CJK 文本多少字符约等于一个 token」，随上游返回的真实用量缓慢校准
 	 * （见 `tokenizer.calibrateCharsPerToken`）。
+	 *
+	 * 不能全局共用一个比例：DeepSeek 与 Claude 的分词器差别很大，用户交替使用两个模型时
+	 * 比例会来回摆，估算随之忽高忽低。
 	 */
-	private charsPerToken: number = TOKEN_ESTIMATION.charsPerToken;
+	private readonly charsPerToken = new Map<string, number>();
+	/**
+	 * 自愈结果记忆：某个站点不认 `temperature` 是稳定事实，不该让 Agent 的每一步都先挨一次 400。
+	 */
+	private readonly repairMemory = new RepairMemory();
 
 	/**
 	 * 模型集合发生变化时通知 VS Code 重新拉取。
@@ -240,7 +255,10 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		}
 
 		const abort = fromCancellationToken(token, `chat:${config.id}`);
-		const adapter = this.deps.adapters.resolve(config);
+		// 一个模型可能同时命中多个适配器（协议差异 + 数据能力位），因此取全部并依次串接
+		const adapters = this.deps.adapters.resolveAll(config);
+		// 任一适配器要求回填思考内容就得回填：DeepSeek 在思考态的工具调用历史里要求这个字段
+		const echoReasoningContent = adapters.some(adapter => adapter.echoReasoningContent === true);
 		// 模型选择器里的「思考强度」（未选择时为空，此时不往请求体里写任何额外字段）
 		const effort = selectReasoningEffort(options, config);
 		if (effort.ignored !== undefined) {
@@ -252,9 +270,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		};
 
 		try {
-			const converted = convertMessages(flowMessages, logger, {
-				echoReasoningContent: adapter.echoReasoningContent === true,
-			});
+			const converted = convertMessages(flowMessages, logger, { echoReasoningContent });
 			for (const warning of converted.warnings) {
 				logger.warn(warning);
 			}
@@ -275,15 +291,15 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			// debug 级：每轮对话都会打一条，属于诊断细节。日志里不写密钥，
 			// 但要能看出「用没用上模型配置」。
 			const effortNote = effort.effort === undefined ? '思考强度未指定' : `思考强度 ${effort.effort}`;
+			// 只列真正会改写的适配器：兜底适配器恒为命中，写进日志没有信息量
+			const applied = adapters.filter(item => item.transformRequest !== undefined);
 			logger.debug(
 				`→ ${config.id}：${converted.messages.length} 条消息，` +
-				`${tools?.length ?? 0} 个工具，适配器 ${adapter.id}，${effortNote}，` +
+				`${tools?.length ?? 0} 个工具，适配器 ${applied.map(item => item.id).join('+') || '无'}，${effortNote}，` +
 				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
 			);
 
-			const transformed = adapter.transformRequest
-				? await adapter.transformRequest(request, adapterContext)
-				: request;
+			const transformed = await applyAdapters(request, adapters, adapterContext);
 
 			const summary = await streamResponse({
 				source: this.resolveSession(model).client,
@@ -295,14 +311,13 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				signal: abort.signal,
 				cancelled: () => token.isCancellationRequested,
 				logger,
+				targetKey: model.targetKey,
+				repairMemory: this.repairMemory,
+				optionalFields: Object.keys(settings.request.extraBody),
 			});
 			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
-			reportReplayMarker(progress, summary, adapter, config.id, logger);
-			this.charsPerToken = calibrateCharsPerToken(
-				countRequestChars(transformed.messages),
-				summary.usage?.prompt_tokens,
-				this.charsPerToken,
-			);
+			reportReplayMarker(progress, summary, echoReasoningContent, config.id, logger);
+			this.calibrateCharsPerTokenFor(config.id, transformed, summary.usage?.prompt_tokens);
 		} catch (error) {
 			// 取消是正常流程，不是失败：VS Code 会在用户点「停止」时取消 token
 			if (isAbortError(error) || token.isCancellationRequested) {
@@ -326,11 +341,43 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 	 * VS Code 用它决定何时裁剪历史，因此宁可高估（见 tokenizer.ts 的说明）。
 	 */
 	async provideTokenCount(
-		_model: NewApiModelInformation,
+		model: NewApiModelInformation,
 		text: string | vscode.LanguageModelChatRequestMessage,
 		_token: vscode.CancellationToken,
 	): Promise<number> {
-		return Math.max(1, estimateTokens(text, this.charsPerToken));
+		return Math.max(1, estimateTokens(text, this.charsPerTokenFor(model.config.id)));
+	}
+
+	/* ---------------------------------------------------------------------- */
+
+	/** 取某个模型当前的估算比例（没校准过就用默认值）。 */
+	private charsPerTokenFor(modelId: string): number {
+		return this.charsPerToken.get(modelId) ?? TOKEN_ESTIMATION.charsPerToken;
+	}
+
+	/**
+	 * 用上游返回的真实用量校准该模型的估算比例。
+	 *
+	 * 分子必须与估算器同口径：包含工具定义，且 CJK 与非 CJK 分开数（见 `measureRequestText`）。
+	 * 用 `transformed` 而不是原始请求——适配器可能改写或去掉字段，校准要对着真正发出去的那份。
+	 */
+	private calibrateCharsPerTokenFor(
+		modelId: string,
+		request: ChatCompletionRequest,
+		promptTokens: number | undefined,
+	): void {
+		const measure = measureRequestText(request.messages, request.tools);
+		const next = calibrateCharsPerToken(measure, promptTokens, this.charsPerTokenFor(modelId));
+		// 先删再插：Map 的迭代顺序即「最近使用」顺序，淘汰时从最旧的开始
+		this.charsPerToken.delete(modelId);
+		this.charsPerToken.set(modelId, next);
+		while (this.charsPerToken.size > MAX_CALIBRATED_MODELS) {
+			const oldest = this.charsPerToken.keys().next();
+			if (oldest.done === true) {
+				break;
+			}
+			this.charsPerToken.delete(oldest.value);
+		}
 	}
 
 	dispose(): void {
@@ -391,6 +438,29 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 }
 
 /**
+ * 依次执行所有命中适配器的请求改写。
+ *
+ * **串接而不是「只跑第一个」**：差异是按「一个协议特性」拆的，一个模型常常同时命中多条
+ * （例如 gpt-6 Sol 既属于推理模型家族，又有「带工具时强度只能是 none」的能力位）。
+ * 只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。
+ *
+ * 每个适配器都必须返回请求对象（接口约定），因此这里只做顺序传递，不做空值兜底。
+ */
+async function applyAdapters(
+	request: ChatCompletionRequest,
+	adapters: readonly ModelAdapter[],
+	context: AdapterContext,
+): Promise<ChatCompletionRequest> {
+	let current = request;
+	for (const adapter of adapters) {
+		if (adapter.transformRequest !== undefined) {
+			current = await adapter.transformRequest(current, context);
+		}
+	}
+	return current;
+}
+
+/**
  * 组装请求体。
  *
  * 写入顺序是语义的一部分（后面的可以盖过前面的）：
@@ -413,7 +483,13 @@ function buildRequest(input: {
 	reasoningEffort: string | undefined;
 }): ChatCompletionRequest {
 	const { config, settings, messages, tools, toolMode, reasoningEffort } = input;
-	const request: ChatCompletionRequest = { model: config.id, messages };
+	const request: ChatCompletionRequest = {
+		model: config.id,
+		messages,
+		// 输出上限必须显式发给上游：不写就由各渠道的默认值决定（有的只有 4K～8K），
+		// 而我们在 `limits.ts` 里已经按这个数预留了输入预算。字段名由适配器按上游要求改写。
+		max_tokens: config.maxOutputTokens,
+	};
 
 	const { temperature, topP } = settings.request;
 	if (temperature !== undefined) {

@@ -148,6 +148,7 @@ export class ModelCatalog implements vscode.Disposable {
 				rawCount: raw.length,
 				invalidCount: built.invalidCount,
 			};
+			const previous = this.snapshot;
 			this.snapshot = snapshot;
 			this.lastSettingsFingerprint = fingerprint;
 			this.lastFailure = undefined;
@@ -156,7 +157,7 @@ export class ModelCatalog implements vscode.Disposable {
 				`模型列表已刷新：${built.configs.length}/${raw.length} 可用，` +
 				`耗时 ${Date.now() - startedAt}ms`,
 			);
-			this.emitter.fire(snapshot);
+			this.emitIfChanged(previous, snapshot);
 			return snapshot;
 		} catch (error) {
 			const message = describeError(error);
@@ -167,8 +168,8 @@ export class ModelCatalog implements vscode.Disposable {
 				// 曾经成功过：保留旧数据（stale-while-error），只把错误标出来。
 				// 用户已经看到过的模型不应该因为网关抖动而突然消失。
 				const stale: ModelCatalogSnapshot = { ...this.snapshot, source: 'cache', error: message, hint };
+				this.emitIfChanged(this.snapshot, stale);
 				this.snapshot = stale;
-				this.emitter.fire(stale);
 				return stale;
 			}
 
@@ -184,11 +185,47 @@ export class ModelCatalog implements vscode.Disposable {
 				error: message,
 				hint,
 			};
+			const previousFailure = this.lastFailure?.snapshot;
 			this.lastFailure = { at: Date.now(), snapshot: failure };
-			this.emitter.fire(failure);
+			this.emitIfChanged(previousFailure, failure);
 			return failure;
 		}
 	}
+
+	/**
+	 * 只在快照**真的变了**时触发事件。
+	 *
+	 * 事件链的终点是 `onDidChangeLanguageModelChatInformation`：VS Code 收到它就会重新拉一遍
+	 * 模型列表。周期性状态刷新会走到这里，因此「没变就不触发」是必须的——否则宿主每分钟都会
+	 * 重新发现一次模型，模型列表缓存等于没有。
+	 */
+	private emitIfChanged(previous: ModelCatalogSnapshot | undefined, next: ModelCatalogSnapshot): void {
+		if (previous !== undefined && snapshotSignature(previous) === snapshotSignature(next)) {
+			return;
+		}
+		this.emitter.fire(next);
+	}
+}
+
+/**
+ * 快照里会影响「模型选择器」的那部分。
+ *
+ * 刻意不含 `fetchedAt`：它每次都会变，把它算进去等于永远「变了」。
+ */
+function snapshotSignature(snapshot: ModelCatalogSnapshot): string {
+	const models = snapshot.models
+		.map(model => [
+			model.id,
+			model.contextWindow,
+			model.maxInputTokens,
+			model.maxOutputTokens,
+			model.imageInput ? 1 : 0,
+			model.toolCalling ? 1 : 0,
+			model.reasoning ? 1 : 0,
+			model.reasoningEfforts.join('|'),
+		].join(':'))
+		.join(',');
+	return `${snapshot.source}\u0000${snapshot.error ?? ''}\u0000${snapshot.hint ?? ''}\u0000${models}`;
 }
 
 /**

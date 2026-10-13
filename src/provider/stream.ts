@@ -420,10 +420,11 @@ export function parseToolArguments(raw: string, logger: Logger, toolName: string
  * 一次流式请求失败后的处置。
  *
  * - `retry`：重发整次请求。只有「还来得及」时才可以——用户什么都还没看到。
- * - `keep-partial`：保留已经流出的内容，当作成功返回。
+ * - `fail-truncated`：内容已经流出一部分，但流在正常收尾前断了。调用方要先把已有内容
+ *   冲刷出去，再**抛出错误**——半截回答不能当作成功。
  * - `fail`：抛给 VS Code。
  */
-export type StreamFailureAction = 'retry' | 'keep-partial' | 'fail';
+export type StreamFailureAction = 'retry' | 'fail-truncated' | 'fail';
 
 /**
  * 决定一次流式失败该怎么处置。
@@ -431,6 +432,10 @@ export type StreamFailureAction = 'retry' | 'keep-partial' | 'fail';
  * 只有「流在正常收尾前结束」才值得重发；其它错误（4xx、取消、上游明确报错）重发也好不了。
  * 而重发的先决条件是 `emittedParts === 0`：provider 抛错时 VS Code 会先冲刷已经流出的部件，
  * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
+ *
+ * 内容已经流出一部分时不再返回「成功」：那会让 Agent 循环把半截回答当作本轮已完成
+ * （用户可能只看到一个思考块、正文全丢）。此时返回 `fail-truncated`，由调用方冲刷已有内容后报错——
+ * 用户既看得到已经拿到的部分，也知道它不完整。
  */
 export function decideStreamFailure(input: {
 	error: unknown;
@@ -448,7 +453,7 @@ export function decideStreamFailure(input: {
 		return 'fail';
 	}
 	if (input.emittedParts > 0) {
-		return 'keep-partial';
+		return 'fail-truncated';
 	}
 	return input.attempt < input.maxRetries ? 'retry' : 'fail';
 }

@@ -59,7 +59,10 @@ export class SseTruncatedError extends Error {
 		/** 断流前成功解析出的数据块数，仅用于诊断 */
 		readonly blocks: number,
 	) {
-		super(`上游连接在回答完成前断开（已收到 ${blocks} 个数据块，没有 [DONE] 也没有 finish_reason）`);
+		super(
+			`上游连接在回答完成前断开（已收到 ${blocks} 个数据块，没有 [DONE] 也没有 finish_reason），` +
+			'已经显示的内容可能不完整，请重试。',
+		);
 		this.name = 'SseTruncatedError';
 	}
 }

@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "手工维护的模型能力覆盖表，叠加在 openrouter-models.json 之上（读取时合并，不需要重新生成数据表）。",
+    "只允许写 samplingParams 与 toolCallingReasoningEffort 两个字段：窗口 / 输出上限这类数值有客观来源，",
+    "要改就重新生成数据表（npm run models:openrouter），不要在这里手改。",
+    "samplingParams 取值：never（始终不接受采样参数）/ when-thinking-off（只在 reasoning_effort=none 时接受）。",
+    "toolCallingReasoningEffort：带工具调用时 reasoning_effort 的强制取值；设置后不再显示「思考强度」控件。"
+  ],
+  "models": {
+    "gpt-6-sol": {
+      "toolCallingReasoningEffort": "none",
+      "samplingParams": "when-thinking-off"
+    },
+    "gpt-6-sol-pro": {
+      "toolCallingReasoningEffort": "none",
+      "samplingParams": "when-thinking-off"
+    },
+    "gpt-6-luna": {
+      "toolCallingReasoningEffort": "none",
+      "samplingParams": "when-thinking-off"
+    },
+    "gpt-6-luna-pro": {
+      "toolCallingReasoningEffort": "none",
+      "samplingParams": "when-thinking-off"
+    }
+  }
+}

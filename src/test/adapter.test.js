@@ -15,14 +15,16 @@ const { modules } = load({
 	registry: './src/adapter/registry',
 	deepseek: './src/adapter/deepseek/deepseekAdapter',
 	requestKind: './src/adapter/deepseek/requestKind',
-	gpt6: './src/adapter/openai/gpt6ChatAdapter',
+	capability: './src/adapter/capabilityAdapter',
+	openaiReasoning: './src/adapter/openai/openaiReasoningAdapter',
 });
 
 const { DefaultModelAdapter } = modules.defaultAdapter;
 const { AdapterRegistry, createDefaultAdapterRegistry } = modules.registry;
 const { DeepSeekAdapter, isDeepSeekModel, THINKING_FIELD } = modules.deepseek;
 const { classifyRequest, shouldDisableThinking } = modules.requestKind;
-const { Gpt6ChatAdapter } = modules.gpt6;
+const { ModelCapabilityAdapter } = modules.capability;
+const { OpenAIReasoningAdapter } = modules.openaiReasoning;
 
 /** 造一个够用的模型配置：只有 `id` 与 `meta.vendor` 会被适配器读。 */
 function model(id, vendor) {
@@ -150,7 +152,7 @@ test('AdapterRegistry：重复 id 被忽略并留下警告', () => {
 	assert.match(logger.messages('warn')[0], /deepseek/);
 });
 
-test('AdapterRegistry：resolve 取第一个匹配项，高优先级排在前面', () => {
+test('AdapterRegistry：resolveAll 返回全部命中项，高优先级排在前面', () => {
 	const registry = new AdapterRegistry();
 	const low = { id: 'low', priority: 1, supports: () => true, transformRequest: request => request };
 	const high = { id: 'high', priority: 10, supports: () => true, transformRequest: request => request };
@@ -161,7 +163,8 @@ test('AdapterRegistry：resolve 取第一个匹配项，高优先级排在前面
 	registry.register(never, silentLogger);
 	registry.register(high, silentLogger);
 
-	assert.equal(registry.resolve(model('anything')).id, 'high');
+	// 全部命中项都要返回：差异是按「一个协议特性」拆的，一个模型常常同时命中多条
+	assert.deepEqual(registry.resolveAll(model('anything')).map(adapter => adapter.id), ['high', 'low']);
 	assert.deepEqual(registry.list().map(adapter => adapter.id), ['never', 'high', 'low']);
 });
 
@@ -169,22 +172,25 @@ test('AdapterRegistry：没有匹配项时兜底到默认适配器', () => {
 	const registry = new AdapterRegistry();
 	registry.register({ id: 'picky', priority: 1, supports: () => false, transformRequest: request => request }, silentLogger);
 
-	assert.equal(registry.resolve(model('anything')).id, 'default');
+	assert.deepEqual(registry.resolveAll(model('anything')).map(adapter => adapter.id), ['default']);
 });
 
-test('内置注册表：顺序为 [专门适配器…, 兜底] 且能按模型 ID 选中', () => {
+test('内置注册表：顺序为 [专门适配器…, 能力位, 兜底]，且能按模型 ID 选中', () => {
 	const registry = createDefaultAdapterRegistry(silentLogger);
+	const ids = selected => registry.resolveAll(model(selected)).map(adapter => adapter.id);
 
-	assert.deepEqual(registry.list().map(adapter => adapter.id), ['deepseek', 'gpt6-chat', 'gpt61-chat', 'openai-reasoning', 'default']);
+	assert.deepEqual(
+		registry.list().map(adapter => adapter.id),
+		['deepseek', 'openai-reasoning', 'model-capabilities', 'default'],
+	);
 
-	assert.equal(registry.resolve(model('deepseek-chat')).id, 'deepseek');
-	assert.equal(registry.resolve(model('gpt-6-sol')).id, 'gpt6-chat');
-	assert.equal(registry.resolve(model('gpt-6.1-sol')).id, 'gpt61-chat');
-	assert.equal(registry.resolve(model('gpt-5.4')).id, 'openai-reasoning');
-	assert.equal(registry.resolve(model('gpt-5-code')).id, 'openai-reasoning');
-	assert.equal(registry.resolve(model('gpt-6-astra')).id, 'openai-reasoning');
-	// 谁都不认的模型落到兜底
-	assert.equal(registry.resolve(model('gpt-4o')).id, 'default');
+	assert.deepEqual(ids('deepseek-chat'), ['deepseek', 'model-capabilities', 'default']);
+	assert.deepEqual(ids('gpt-6-sol'), ['openai-reasoning', 'model-capabilities', 'default']);
+	assert.deepEqual(ids('gpt-6.1-sol'), ['openai-reasoning', 'model-capabilities', 'default']);
+	assert.deepEqual(ids('gpt-5.4'), ['openai-reasoning', 'model-capabilities', 'default']);
+	assert.deepEqual(ids('gpt-5-code'), ['openai-reasoning', 'model-capabilities', 'default']);
+	// 谁都不认的模型只有「能力位 + 兜底」——能力位适配器对所有模型生效，改不改由数据决定
+	assert.deepEqual(ids('gpt-4o'), ['model-capabilities', 'default']);
 });
 
 test('DefaultModelAdapter：承接所有模型，且刻意不实现 transformRequest', () => {
@@ -279,32 +285,33 @@ test('DeepSeek：只改自己的字段，不动消息与工具', () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* GPT-6 适配器                                                                */
+/* 能力位适配器（数据驱动）                                                    */
 /* -------------------------------------------------------------------------- */
 
-test('Gpt6ChatAdapter：只认 gpt-6 的 sol / luna 两个型号', () => {
-	const adapter = new Gpt6ChatAdapter();
-	const supported = ['gpt-6-sol', 'gpt-6-luna', 'openai/gpt-6-sol', 'gpt-6-luna@official'];
+/** 用能力位适配器改写一个请求；`config` 就是数据表给这个模型的能力位。 */
+function capabilityTransform(requestBody, config = {}) {
+	const adapter = new ModelCapabilityAdapter();
+	const context = {
+		model: { id: config.id ?? 'gpt-6-sol', ...config },
+		logger: createLogger(),
+	};
+	return adapter.transformRequest(requestBody, context);
+}
 
-	for (const id of supported) {
-		assert.equal(adapter.supports(model(id)), true, id);
-	}
-	// astra 走别的路径；sol-pro 这种带后缀的新型号没有被这个补丁覆盖
-	for (const id of ['gpt-6-astra', 'gpt-6-sol-pro', 'gpt-5-sol', 'gpt-4o']) {
-		assert.equal(adapter.supports(model(id)), false, id);
-	}
+test('ModelCapabilityAdapter：对所有模型生效，改不改由能力位决定', () => {
+	const adapter = new ModelCapabilityAdapter();
+
+	assert.equal(adapter.supports(model('任意模型')), true);
+	assert.equal(adapter.supports(model('gpt-6-sol')), true);
 });
 
-test('Gpt6ChatAdapter：用到工具时把强度压成 none', () => {
-	const adapter = new Gpt6ChatAdapter();
-	const context = { model: { id: 'gpt-6-sol', reasoning: true }, logger: createLogger() };
-
-	const request = adapter.transformRequest({
+test('ModelCapabilityAdapter：用到工具时把强度压成能力位指定的值', () => {
+	const request = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		tools: [{ type: 'function', function: { name: 'read_file' } }],
 		tool_choice: 'auto',
 		reasoning_effort: 'high',
-	}, context);
+	}, { toolCallingReasoningEffort: 'none' });
 
 	assert.equal(request.reasoning_effort, 'none');
 	// 工具本身必须原样保留，否则调用不了
@@ -312,64 +319,123 @@ test('Gpt6ChatAdapter：用到工具时把强度压成 none', () => {
 	assert.equal(request.tool_choice, 'auto');
 });
 
-test('Gpt6ChatAdapter：历史里出现过工具调用也算用到工具', () => {
-	const adapter = new Gpt6ChatAdapter();
-	const context = { model: { id: 'gpt-6-sol', reasoning: true }, logger: createLogger() };
+test('ModelCapabilityAdapter：历史里出现过工具调用也算用到工具', () => {
+	const config = { toolCallingReasoningEffort: 'none' };
 
-	const toolRole = adapter.transformRequest({
+	const toolRole = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }, { role: 'tool', content: 'ok', tool_call_id: 'call_1' }],
-	}, context);
+	}, config);
 	assert.equal(toolRole.reasoning_effort, 'none');
 
-	const withToolCalls = adapter.transformRequest({
+	const withToolCalls = capabilityTransform({
 		messages: [{ role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }],
-	}, context);
+	}, config);
 	assert.equal(withToolCalls.reasoning_effort, 'none');
 });
 
-test('Gpt6ChatAdapter：没用到工具且没指定强度时删掉采样参数', () => {
-	const adapter = new Gpt6ChatAdapter();
-	const context = { model: { id: 'gpt-6-luna', reasoning: true }, logger: createLogger() };
+test('ModelCapabilityAdapter：没用到工具时不动强度', () => {
+	const request = capabilityTransform({
+		messages: [{ role: 'user', content: 'hi' }],
+		reasoning_effort: 'high',
+	}, { toolCallingReasoningEffort: 'none' });
 
-	const request = adapter.transformRequest({
+	assert.equal(request.reasoning_effort, 'high');
+});
+
+test('ModelCapabilityAdapter：samplingParams=never 时总是删掉采样参数', () => {
+	const request = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		temperature: 0.2,
 		top_p: 0.9,
 		top_logprobs: 5,
 		logprobs: true,
-	}, context);
+	}, { samplingParams: 'never' });
 
-	assert.equal('temperature' in request, false);
-	assert.equal('top_p' in request, false);
-	assert.equal('top_logprobs' in request, false);
-	assert.equal('logprobs' in request, false);
+	for (const key of ['temperature', 'top_p', 'top_logprobs', 'logprobs']) {
+		assert.equal(key in request, false, key);
+	}
 });
 
-test('Gpt6ChatAdapter：压成 none 之后采样参数反而保留', () => {
-	// 采样参数只在「不是 none」时才被删：工具调用路径上它们是被允许的
-	const adapter = new Gpt6ChatAdapter();
-	const context = { model: { id: 'gpt-6-sol', reasoning: true }, logger: createLogger() };
+test('ModelCapabilityAdapter：when-thinking-off 只在强度为 none 时保留采样参数', () => {
+	const config = { toolCallingReasoningEffort: 'none', samplingParams: 'when-thinking-off' };
 
-	const request = adapter.transformRequest({
+	// 带工具 → 强度被压成 none → 不再是推理请求 → 采样参数合法（gpt-6 Sol/Luna 的实际行为）
+	const kept = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		tools: [{ type: 'function', function: { name: 'read_file' } }],
 		temperature: 0.2,
-	}, context);
+	}, config);
+	assert.equal(kept.reasoning_effort, 'none');
+	assert.equal(kept.temperature, 0.2);
 
-	assert.equal(request.reasoning_effort, 'none');
-	assert.equal(request.temperature, 0.2);
+	// 不带工具且用户选了非 none 强度 → 采样参数必须删掉
+	const removed = capabilityTransform({
+		messages: [{ role: 'user', content: 'hi' }],
+		reasoning_effort: 'high',
+		temperature: 0.2,
+	}, config);
+	assert.equal(removed.reasoning_effort, 'high');
+	assert.equal('temperature' in removed, false);
 });
 
-test('Gpt6ChatAdapter：明确指定了非 none 强度时也删采样参数', () => {
-	const adapter = new Gpt6ChatAdapter();
-	const context = { model: { id: 'gpt-6-sol', reasoning: true }, logger: createLogger() };
+test('ModelCapabilityAdapter：数据表没表态时不动请求', () => {
+	const request = capabilityTransform({
+		messages: [{ role: 'user', content: 'hi' }],
+		tools: [{ type: 'function', function: { name: 'read_file' } }],
+		temperature: 0.2,
+		reasoning_effort: 'high',
+	});
+
+	assert.equal(request.temperature, 0.2);
+	assert.equal(request.reasoning_effort, 'high');
+});
+
+/* -------------------------------------------------------------------------- */
+/* OpenAI 推理模型适配器                                                       */
+/* -------------------------------------------------------------------------- */
+
+test('OpenAIReasoningAdapter：只认新一代推理模型', () => {
+	const adapter = new OpenAIReasoningAdapter();
+
+	for (const id of ['gpt-5.4', 'gpt-5-code', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol']) {
+		assert.equal(adapter.supports(model(id)), true, id);
+	}
+	for (const id of ['gpt-4.1', 'gpt-4o']) {
+		assert.equal(adapter.supports(model(id)), false, id);
+	}
+});
+
+test('OpenAIReasoningAdapter：把 max_tokens 改名为 max_completion_tokens', () => {
+	const adapter = new OpenAIReasoningAdapter();
+	const context = { model: { id: 'gpt-5.4' }, logger: createLogger() };
 
 	const request = adapter.transformRequest({
+		model: 'gpt-5.4',
 		messages: [{ role: 'user', content: 'hi' }],
-		reasoning_effort: 'medium',
-		temperature: 0.2,
+		max_tokens: 4_096,
 	}, context);
 
-	assert.equal(request.reasoning_effort, 'medium');
-	assert.equal('temperature' in request, false);
+	assert.equal(request.max_completion_tokens, 4_096);
+	assert.equal('max_tokens' in request, false);
+});
+
+test('OpenAIReasoningAdapter：数据表已表态的模型让位给能力位适配器', () => {
+	// 数据表知道得更细（例如「关掉思考时才接受采样参数」），因此不在这里一刀切
+	const adapter = new OpenAIReasoningAdapter();
+	const context = {
+		model: { id: 'gpt-6-sol', samplingParams: 'when-thinking-off' },
+		logger: createLogger(),
+	};
+
+	const request = adapter.transformRequest({
+		model: 'gpt-6-sol',
+		messages: [{ role: 'user', content: 'hi' }],
+		temperature: 0.2,
+		max_tokens: 100,
+	}, context);
+
+	assert.equal(request.temperature, 0.2);
+	// 输出上限的字段名仍然由这里改写
+	assert.equal(request.max_completion_tokens, 100);
+	assert.equal('max_tokens' in request, false);
 });

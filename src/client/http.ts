@@ -37,8 +37,17 @@ export function joinUrl(baseUrl: string, path: string): string {
 /* 错误                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/** 传输层失败的种类，便于调用方决定是否重试、如何提示。 */
-export type TransportErrorKind = 'network' | 'timeout' | 'aborted';
+/**
+ * 传输层失败的种类，便于调用方决定是否重试、如何提示。
+ *
+ * `aborted` 与 `disposed` 必须分开：前者是**用户取消**（属于正常流程，不该报错），
+ * 后者是「客户端被退役/释放」（配置变更、扩展停用）——把它当成用户取消，
+ * 用户就会看到一个没有报错的半截回答。
+ */
+export type TransportErrorKind = 'network' | 'timeout' | 'aborted' | 'disposed';
+
+/** 客户端退役/释放后请求被中断时给用户看的话。 */
+const DISPOSED_MESSAGE = '连接配置已变更，本次请求已中断（请重试）';
 
 /** 网络/超时/取消类错误。 */
 export class TransportError extends Error {
@@ -111,7 +120,12 @@ function buildHttpErrorMessage(
  */
 const CANCELLATION_ERROR_NAME = 'Canceled';
 
-/** 判断错误是否为「调用方主动取消」。取消不应被当成失败上报，也不该触发重试。 */
+/**
+ * 判断错误是否为「调用方主动取消」。取消不应被当成失败上报，也不该触发重试。
+ *
+ * `TransportError` 只有 `kind === 'aborted'` 才算取消：`'disposed'`（客户端被退役/释放，
+ * 例如配置变更）**不是**用户取消——把它当成取消，用户就会看到一个没有报错的半截回答。
+ */
 export function isAbortError(error: unknown): boolean {
 	if (error instanceof TransportError) {
 		return error.kind === 'aborted';
@@ -222,6 +236,8 @@ export interface HttpClientOptions {
 export class HttpClient {
 	private readonly rootController = new AbortController();
 	private disposed = false;
+	/** 当前在途请求数（含正在被调用方消费的流式响应体） */
+	private inFlight = 0;
 
 	constructor(private readonly options: HttpClientOptions) { }
 
@@ -231,15 +247,20 @@ export class HttpClient {
 	 * 非 2xx 会抛出 {@link HttpError}；网络/超时/取消抛 {@link TransportError}。
 	 */
 	async requestText(options: RequestOptions): Promise<TextResponse> {
-		const response = await this.fetchWithRetry(options, false);
-		const text = await response.text();
-		return {
-			status: response.status,
-			statusText: response.statusText,
-			url: response.url,
-			headers: response.headers,
-			text,
-		};
+		const release = this.beginInFlight();
+		try {
+			const response = await this.fetchWithRetry(options, false);
+			const text = await response.text();
+			return {
+				status: response.status,
+				statusText: response.statusText,
+				url: response.url,
+				headers: response.headers,
+				text,
+			};
+		} finally {
+			release();
+		}
 	}
 
 	/**
@@ -247,6 +268,10 @@ export class HttpClient {
 	 *
 	 * 重试只覆盖「拿到响应头」这一步；一旦开始消费 body 就不再重试，
 	 * 因为服务端可能已经开始计费。
+	 *
+	 * **在途登记由调用方负责**：响应体由调用方消费，只有它知道这次请求什么时候真正结束。
+	 * 调用方必须用 {@link beginInFlight} 覆盖「取响应头 + 读响应体」的整个过程，
+	 * 否则 `retire()` 会在响应体读到一半时中断连接。
 	 */
 	async requestStream(options: RequestOptions): Promise<StreamResponse> {
 		const response = await this.fetchWithRetry(options, true);
@@ -267,23 +292,61 @@ export class HttpClient {
 		};
 	}
 
-	/** 中断所有在途请求。 */
-	dispose(): void {
-		this.disposed = true;
-		this.rootController.abort(new TransportError('aborted', '客户端已释放'));
+	/**
+	 * 登记一次在途请求，返回必须调用一次的释放函数。
+	 *
+	 * 存在的理由：`retire()` 要「等在途请求结束再中断」，就必须知道现在到底有没有在途请求。
+	 * 流式请求尤其需要调用方参与——响应体是在 `requestStream` 返回之后才被消费的。
+	 */
+	beginInFlight(): () => void {
+		this.inFlight++;
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			this.inFlight--;
+			if (this.disposed && this.inFlight === 0) {
+				this.abortRoot();
+			}
+		};
 	}
 
-	/** 是否已释放。释放后所有请求立即失败，便于在配置变更时重建客户端。 */
+	/**
+	 * 优雅退役：不再接受新请求，但**等在途请求跑完再中断**。
+	 *
+	 * 与 {@link dispose} 的区别正是「改设置会不会掐断正在生成的回答」：直接中断会让
+	 * provider 收到一个像「用户取消」的错误，于是静默返回半截回答。退役让在途请求自然结束。
+	 */
+	retire(): void {
+		this.disposed = true;
+		if (this.inFlight === 0) {
+			this.abortRoot();
+		}
+	}
+
+	/** 立即中断所有在途请求（扩展停用时用）。 */
+	dispose(): void {
+		this.disposed = true;
+		this.abortRoot();
+	}
+
+	/** 是否已退役/释放。退役后所有新请求立即失败，便于在配置变更时重建客户端。 */
 	get isDisposed(): boolean {
 		return this.disposed;
 	}
 
 	/* ---------------------------------------------------------------------- */
 
+	private abortRoot(): void {
+		this.rootController.abort(new TransportError('disposed', DISPOSED_MESSAGE));
+	}
+
 	/** 执行带重试的 fetch，直到拿到响应头。 */
 	private async fetchWithRetry(options: RequestOptions, streaming: boolean): Promise<Response> {
 		if (this.disposed) {
-			throw new TransportError('aborted', '客户端已释放');
+			throw new TransportError('disposed', DISPOSED_MESSAGE);
 		}
 
 		// 超时与重试都来自客户端级配置：调用方逐个请求地调它们只会让行为变得难以推理

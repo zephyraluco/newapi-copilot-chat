@@ -14,22 +14,56 @@
  */
 
 import * as vscode from 'vscode';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createDefaultAdapterRegistry } from './adapter/registry';
 import { refreshAndNotify, registerCommands, type CommandDeps } from './commands';
-import { ConfigService } from './config';
+import { ConfigService, classifySettingsChange } from './config';
 import { CONFIG_SECTION, VENDOR_ID, initRuntimeInfo, runtimeInfo } from './consts';
 import { safeJsonParse } from './json';
 import { Logger, LoggerService, parseLogLevelName } from './logger';
-import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, installModelDataset } from './models/dataset';
+import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, MODEL_OVERRIDES_FILE, installModelDataset } from './models/dataset';
 import { NewApiChatProvider } from './provider/chatProvider';
 import { SessionRegistry } from './runtime/session';
 import { NewApiStatusBar } from './status/statusBar';
 import { StatusService } from './status/statusService';
 
 /** 模型数据表文件的绝对路径。 */
-function datasetFile(context: vscode.ExtensionContext): string {
-	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE).fsPath;
+function datasetFile(context: vscode.ExtensionContext, file: string): string {
+	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, file).fsPath;
+}
+
+/**
+ * 读取数据表目录下的一个 JSON 文件。
+ *
+ * 读取与解析分开报错：文件不存在与文件坏了是两件事，排查方向完全不同。
+ */
+function readDatasetJson(context: vscode.ExtensionContext, file: string, logger: Logger): unknown {
+	const path = datasetFile(context, file);
+	let text: string;
+	try {
+		text = readFileSync(path, 'utf8');
+	} catch (error) {
+		logger.warn(`未能读取模型数据表文件 ${path}：${error instanceof Error ? error.message : String(error)}`);
+		return undefined;
+	}
+	const parsed = safeJsonParse(text);
+	if (parsed === undefined) {
+		logger.warn(`模型数据表文件不是合法 JSON，已忽略：${path}`);
+	}
+	return parsed;
+}
+
+/**
+ * 读取手工覆盖表。
+ *
+ * 文件不存在是**正常情况**（它是可选的），因此不记日志；只有存在但读不出来才值得说一句。
+ */
+function loadModelOverrides(context: vscode.ExtensionContext, logger: Logger): unknown {
+	const path = datasetFile(context, MODEL_OVERRIDES_FILE);
+	if (!existsSync(path)) {
+		return undefined;
+	}
+	return readDatasetJson(context, MODEL_OVERRIDES_FILE, logger);
 }
 
 /**
@@ -39,24 +73,18 @@ function datasetFile(context: vscode.ExtensionContext): string {
  * 就等于「数据表可用」，不必让 provider 等待一个异步初始化。
  * 文件缺失或损坏时只会让数据表为空（模型配置退回「网关返回值 + 默认值」），
  * 不影响扩展其余部分。数据表是生成产物，因此只在激活时读一次。
+ *
+ * 手工覆盖表（`data/model-overrides.json`）在解析前叠加到数据表上：上游目录表达不了
+ * 「带工具时强度只能是某个值」这类站点行为，而那些特判写成代码就是逐模型名正则。
  */
 function loadModelDataset(context: vscode.ExtensionContext, logger: Logger): void {
-	const file = datasetFile(context);
-	let raw: unknown;
-	try {
-		raw = safeJsonParse(readFileSync(file, 'utf8'));
-	} catch (error) {
-		logger.warn(`未能读取模型数据表 ${file}：${error instanceof Error ? error.message : String(error)}`);
-		installModelDataset(undefined);
-		return;
-	}
+	const raw = readDatasetJson(context, MODEL_DATASET_FILE, logger);
 	if (raw === undefined) {
-		logger.warn(`模型数据表不是合法 JSON，已忽略：${file}`);
 		installModelDataset(undefined);
 		return;
 	}
 
-	const dataset = installModelDataset(raw);
+	const dataset = installModelDataset(raw, loadModelOverrides(context, logger));
 	const skipped = dataset.skipped > 0 ? `，忽略 ${dataset.skipped} 条不完整记录` : '';
 	logger.info(`已加载模型数据表：${dataset.entries.length} 条记录${skipped}`);
 	if (dataset.generatedAt !== undefined) {
@@ -129,10 +157,18 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------------------------------------------------------------------
 	const statusListener = statusService.onDidChange(state => statusBar.render(state));
 
+	let previousSettings = config.settings;
 	const configListener = config.onDidChange(settings => {
-		loggerService.setLevel(settings.logLevel);
-		// 过滤设置变了，模型集合可能随之变化，因此要重新发现
-		void refreshAndNotify(commands, true);
+		const scope = classifySettingsChange(previousSettings, settings);
+		previousSettings = settings;
+		if (scope.logLevel) {
+			loggerService.setLevel(settings.logLevel);
+		}
+		// 只有会影响模型列表（或连接身份）的变化才值得让宿主重新发现模型。
+		// 早先无条件刷新：改日志级别、改状态栏都会触发一次强制重拉 + 一次模型重新发现。
+		if (scope.models || scope.client) {
+			void refreshAndNotify(commands, true);
+		}
 	});
 
 	context.subscriptions.push(

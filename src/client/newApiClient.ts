@@ -199,6 +199,9 @@ export class NewApiClient {
 		const idleTimeoutMs = this.options.streamIdleTimeoutMs ?? this.options.timeoutMs;
 		const controller = new AbortController();
 		const forward = attachAbort(signal, controller);
+		// 在途登记要覆盖「取响应头 + 读完响应体」：响应体由本生成器消费，
+		// 只有登记到这里，`retire()` 才不会在读到一半时把连接掐断。
+		const release = this.http.beginInFlight();
 		this.options.logger.trace(`→ POST ${url}`, redactText(truncate(body, 2000)));
 
 		try {
@@ -257,6 +260,7 @@ export class NewApiClient {
 			forward.dispose();
 			// 提前退出（例如调用方 break）时要主动断流，否则连接会挂到超时
 			controller.abort(new TransportError('aborted', '流式请求已结束'));
+			release();
 		}
 	}
 
@@ -290,7 +294,17 @@ export class NewApiClient {
 
 	/* ---------------------------------------------------------------------- */
 
-	/** 释放客户端，中断所有在途请求。 */
+	/**
+	 * 优雅退役：不再接受新请求，但**等在途请求结束后**才中断连接。
+	 *
+	 * 配置变更（站点、密钥、超时…）时用这个而不是 {@link dispose}：直接中断会把正在生成的
+	 * 回答掐成半截，而 provider 会把它当成「用户取消」静默返回。
+	 */
+	retire(): void {
+		this.http.retire();
+	}
+
+	/** 释放客户端，中断所有在途请求（扩展停用时用）。 */
 	dispose(): void {
 		this.http.dispose();
 	}
