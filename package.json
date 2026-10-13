@@ -5,6 +5,7 @@
   "version": "0.1.2",
   "publisher": "zephyraluco",
   "license": "MIT",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/zephyraluco/newapi-copilot-chat.git"
