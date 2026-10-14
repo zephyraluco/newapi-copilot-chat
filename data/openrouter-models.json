@@ -1,15 +1,15 @@
 {
   "source": "https://openrouter.ai/api/v1/models",
-  "generatedAt": "2026-10-01T08:22:24.963Z",
-  "totalFetched": 459,
+  "generatedAt": "2026-10-14T06:36:16.256Z",
+  "totalFetched": 462,
   "count": 363,
   "dropped": {
     "invalidEntry": 0,
-    "variant": 89,
+    "variant": 91,
     "noTextInput": 0,
     "noTextOutput": 0,
     "noContextWindow": 0,
-    "noMaxOutput": 7,
+    "noMaxOutput": 8,
     "expired": 0,
     "belowMinContext": 0,
     "duplicate": 0
@@ -103,7 +103,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-fable-5.1",
@@ -121,7 +122,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-fable-latest",
@@ -139,7 +141,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-haiku-4.5",
@@ -152,14 +155,42 @@
       "reasoning": true
     },
     {
+      "id": "claude-haiku-5.5",
+      "vendor": "Anthropic",
+      "displayName": "Claude Haiku 5.5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
+    },
+    {
       "id": "claude-haiku-latest",
       "vendor": "Anthropic",
       "displayName": "Claude Haiku Latest",
-      "contextWindow": 200000,
-      "maxOutputTokens": 64000,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "claude-opus-4.1",
@@ -214,7 +245,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-opus-4.8",
@@ -232,7 +264,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-opus-5",
@@ -250,7 +283,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-opus-5.5",
@@ -268,7 +302,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-opus-latest",
@@ -286,7 +321,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-sonnet-4",
@@ -341,7 +377,27 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
+    },
+    {
+      "id": "claude-sonnet-5.5",
+      "vendor": "Anthropic",
+      "displayName": "Claude Sonnet 5.5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "claude-sonnet-latest",
@@ -359,7 +415,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "codestral-2508",
@@ -445,8 +502,8 @@
       "id": "deepseek-chat-v3-0324",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V3 0324",
-      "contextWindow": 163840,
-      "maxOutputTokens": 147456,
+      "contextWindow": 128000,
+      "maxOutputTokens": 115200,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -514,21 +571,11 @@
       "reasoning": true
     },
     {
-      "id": "deepseek-r1-distill-llama-70b",
-      "vendor": "DeepSeek",
-      "displayName": "R1 Distill Llama 70B",
-      "contextWindow": 8192,
-      "maxOutputTokens": 7372,
-      "imageInput": false,
-      "toolCalling": false,
-      "reasoning": true
-    },
-    {
       "id": "deepseek-v3.1-terminus",
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V3.1 Terminus",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
+      "contextWindow": 163840,
+      "maxOutputTokens": 147456,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -538,7 +585,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V3.2",
       "contextWindow": 163840,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 147456,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -548,7 +595,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V3.2 Exp",
       "contextWindow": 163840,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 147456,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -636,7 +683,7 @@
       "vendor": "DeepSeek",
       "displayName": "DeepSeek V4 Pro 0813",
       "contextWindow": 1048576,
-      "maxOutputTokens": 943718,
+      "maxOutputTokens": 393216,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -700,14 +747,15 @@
       "defaultReasoningEffort": "max"
     },
     {
-      "id": "ernie-4.5-vl-424b-a47b",
-      "vendor": "Baidu",
-      "displayName": "ERNIE 4.5 VL 424B A47B",
-      "contextWindow": 123000,
-      "maxOutputTokens": 16000,
+      "id": "extract",
+      "vendor": "ScaleDown",
+      "displayName": "Extract",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 900000,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": false,
+      "samplingParams": "never"
     },
     {
       "id": "fugu-max",
@@ -723,7 +771,8 @@
         "xhigh",
         "high"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "fugu-ultra",
@@ -739,7 +788,8 @@
         "xhigh",
         "high"
       ],
-      "defaultReasoningEffort": "xhigh"
+      "defaultReasoningEffort": "xhigh",
+      "samplingParams": "never"
     },
     {
       "id": "fugu-ultra-v2",
@@ -755,7 +805,8 @@
         "xhigh",
         "high"
       ],
-      "defaultReasoningEffort": "xhigh"
+      "defaultReasoningEffort": "xhigh",
+      "samplingParams": "never"
     },
     {
       "id": "gemini-2.5-flash",
@@ -1039,6 +1090,22 @@
       "defaultReasoningEffort": "medium"
     },
     {
+      "id": "gemini-4-argon",
+      "vendor": "Google",
+      "displayName": "Gemini 4 Argon",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 65536,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
       "id": "gemini-flash-latest",
       "vendor": "Google",
       "displayName": "Gemini Flash Latest",
@@ -1053,6 +1120,21 @@
         "low"
       ],
       "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "gemini-nano-banana-2.1",
+      "vendor": "Google",
+      "displayName": "Nano Banana 2.1",
+      "contextWindow": 65536,
+      "maxOutputTokens": 58982,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "minimal"
     },
     {
       "id": "gemini-pro-latest",
@@ -1164,8 +1246,8 @@
       "id": "glm-4.6",
       "vendor": "Z.ai",
       "displayName": "GLM 4.6",
-      "contextWindow": 198000,
-      "maxOutputTokens": 16384,
+      "contextWindow": 202752,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -1224,7 +1306,7 @@
       "id": "glm-5.1",
       "vendor": "Z.ai",
       "displayName": "GLM 5.1",
-      "contextWindow": 202752,
+      "contextWindow": 202745,
       "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
@@ -1235,7 +1317,7 @@
       "vendor": "Z.ai",
       "displayName": "GLM 5.2",
       "contextWindow": 1048576,
-      "maxOutputTokens": 131072,
+      "maxOutputTokens": 943718,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -1265,8 +1347,8 @@
       "id": "glm-5.3-flash",
       "vendor": "Z.ai",
       "displayName": "GLM 5.3 Flash",
-      "contextWindow": 1048576,
-      "maxOutputTokens": 128000,
+      "contextWindow": 1048575,
+      "maxOutputTokens": 943717,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -1324,7 +1406,7 @@
       "vendor": "Z.ai",
       "displayName": "GLM Flash Latest",
       "contextWindow": 1048576,
-      "maxOutputTokens": 128000,
+      "maxOutputTokens": 943718,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -1340,7 +1422,7 @@
       "vendor": "Z.ai",
       "displayName": "GLM Latest",
       "contextWindow": 1048576,
-      "maxOutputTokens": 943718,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -1516,7 +1598,8 @@
         "low",
         "minimal"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5-image",
@@ -1553,7 +1636,8 @@
         "low",
         "minimal"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5-nano",
@@ -1570,7 +1654,8 @@
         "low",
         "minimal"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5-pro",
@@ -1584,7 +1669,8 @@
       "supportsReasoningEffort": [
         "high"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.1",
@@ -1601,7 +1687,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "none"
+      "defaultReasoningEffort": "none",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.1-codex",
@@ -1617,7 +1704,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.1-codex-max",
@@ -1634,7 +1722,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.1-codex-mini",
@@ -1650,7 +1739,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.2",
@@ -1668,7 +1758,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.2-chat",
@@ -1678,7 +1769,8 @@
       "maxOutputTokens": 32000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": false
+      "reasoning": false,
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.2-codex",
@@ -1695,7 +1787,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.2-pro",
@@ -1711,7 +1804,8 @@
         "high",
         "medium"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.3-codex",
@@ -1729,7 +1823,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.4",
@@ -1747,7 +1842,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.4-image-2",
@@ -1765,7 +1861,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.4-mini",
@@ -1783,7 +1880,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.4-nano",
@@ -1801,7 +1899,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.4-pro",
@@ -1817,7 +1916,8 @@
         "high",
         "medium"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.5",
@@ -1835,7 +1935,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.5-pro",
@@ -1851,7 +1952,8 @@
         "high",
         "medium"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-luna",
@@ -1870,7 +1972,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-luna-pro",
@@ -1889,7 +1992,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-sol",
@@ -1908,7 +2012,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-sol-pro",
@@ -1927,7 +2032,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-terra",
@@ -1946,7 +2052,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-5.6-terra-pro",
@@ -1965,7 +2072,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-astra",
@@ -1983,7 +2091,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-astra-pro",
@@ -2001,7 +2110,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-luna",
@@ -2020,7 +2130,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-luna-pro",
@@ -2039,7 +2150,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-sol",
@@ -2058,7 +2170,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-6-sol-pro",
@@ -2077,7 +2190,46 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6.1 Sol",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
+    },
+    {
+      "id": "gpt-6.1-sol-pro",
+      "vendor": "OpenAI",
+      "displayName": "GPT-6.1 Sol Pro",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-astra-latest",
@@ -2095,7 +2247,8 @@
         "medium",
         "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-audio",
@@ -2125,7 +2278,8 @@
       "maxOutputTokens": 128000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": false
+      "reasoning": false,
+      "samplingParams": "never"
     },
     {
       "id": "gpt-luna-latest",
@@ -2144,7 +2298,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-mini-latest",
@@ -2162,14 +2317,15 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-oss-120b",
       "vendor": "OpenAI",
       "displayName": "gpt-oss-120b",
       "contextWindow": 131072,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 117964,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true,
@@ -2207,24 +2363,6 @@
       "reasoning": true
     },
     {
-      "id": "gpt-6.1-sol",
-      "vendor": "OpenAI",
-      "displayName": "GPT-6.1 Sol",
-      "contextWindow": 1050000,
-      "maxOutputTokens": 128000,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true,
-      "supportsReasoningEffort": [
-        "max",
-        "xhigh",
-        "high",
-        "medium",
-        "low"
-      ],
-      "defaultReasoningEffort": "medium"
-    },
-    {
       "id": "gpt-sol-latest",
       "vendor": "OpenAI",
       "displayName": "GPT Sol Latest",
@@ -2238,10 +2376,10 @@
         "xhigh",
         "high",
         "medium",
-        "low",
-        "none"
+        "low"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "gpt-terra-latest",
@@ -2260,7 +2398,8 @@
         "low",
         "none"
       ],
-      "defaultReasoningEffort": "medium"
+      "defaultReasoningEffort": "medium",
+      "samplingParams": "never"
     },
     {
       "id": "granite-4.0-h-micro",
@@ -2566,16 +2705,6 @@
       "defaultReasoningEffort": "high"
     },
     {
-      "id": "kat-coder-pro-v2.5",
-      "vendor": "Kwaipilot",
-      "displayName": "KAT-Coder-Pro V2.5",
-      "contextWindow": 262144,
-      "maxOutputTokens": 235929,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": false
-    },
-    {
       "id": "kimi-k2",
       "vendor": "MoonshotAI",
       "displayName": "Kimi K2 0711",
@@ -2684,7 +2813,7 @@
       "contextWindow": 131072,
       "maxOutputTokens": 16384,
       "imageInput": false,
-      "toolCalling": true,
+      "toolCalling": false,
       "reasoning": false
     },
     {
@@ -2718,6 +2847,16 @@
       "reasoning": true
     },
     {
+      "id": "lfm-2.5-24b-a2b",
+      "vendor": "LiquidAI",
+      "displayName": "LFM2.5-24B-A2B",
+      "contextWindow": 128000,
+      "maxOutputTokens": 8192,
+      "imageInput": false,
+      "toolCalling": true,
+      "reasoning": true
+    },
+    {
       "id": "ling-3.0-flash",
       "vendor": "inclusionAI",
       "displayName": "Ling 3.0 Flash",
@@ -2728,22 +2867,22 @@
       "reasoning": true
     },
     {
-      "id": "ling-3.0-flash-fin",
+      "id": "ling-3.0-flash-vl",
       "vendor": "inclusionAI",
-      "displayName": "Ling 3.0 Flash Fin",
-      "contextWindow": 262144,
-      "maxOutputTokens": 235929,
-      "imageInput": false,
+      "displayName": "Ling 3.0 Flash VL",
+      "contextWindow": 131072,
+      "maxOutputTokens": 32768,
+      "imageInput": true,
       "toolCalling": true,
       "reasoning": true
     },
     {
-      "id": "ling-3.0-flash-vl",
+      "id": "ling-3.1-flash",
       "vendor": "inclusionAI",
-      "displayName": "Ling 3.0 Flash VL",
+      "displayName": "Ling 3.1 Flash",
       "contextWindow": 262144,
-      "maxOutputTokens": 32768,
-      "imageInput": true,
+      "maxOutputTokens": 235929,
+      "imageInput": false,
       "toolCalling": true,
       "reasoning": true
     },
@@ -2792,7 +2931,7 @@
       "vendor": "Meta",
       "displayName": "Llama 3.3 70B Instruct",
       "contextWindow": 131072,
-      "maxOutputTokens": 16384,
+      "maxOutputTokens": 32768,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -2811,8 +2950,8 @@
       "id": "llama-4-scout",
       "vendor": "Meta",
       "displayName": "Llama 4 Scout",
-      "contextWindow": 327680,
-      "maxOutputTokens": 16384,
+      "contextWindow": 131072,
+      "maxOutputTokens": 117964,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": false
@@ -3015,8 +3154,8 @@
       "id": "minimax-m2.7",
       "vendor": "MiniMax",
       "displayName": "MiniMax M2.7",
-      "contextWindow": 196608,
-      "maxOutputTokens": 176947,
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -3090,6 +3229,21 @@
       "imageInput": true,
       "toolCalling": true,
       "reasoning": false
+    },
+    {
+      "id": "mistral-large-4-0",
+      "vendor": "Mistral",
+      "displayName": "Mistral Large 4",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 262144,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "mistral-medium-3",
@@ -3331,6 +3485,25 @@
       "defaultReasoningEffort": "medium"
     },
     {
+      "id": "muse-wonder",
+      "vendor": "Meta",
+      "displayName": "Muse Wonder",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 943718,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
       "id": "mythomax-l2-13b",
       "vendor": "Gryphe",
       "displayName": "MythoMax 13B",
@@ -3395,10 +3568,42 @@
       "vendor": "NVIDIA",
       "displayName": "Nemotron 3.5 Lightning",
       "contextWindow": 262144,
-      "maxOutputTokens": 131072,
+      "maxOutputTokens": 235929,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
+    },
+    {
+      "id": "nex-n2.5-mini",
+      "vendor": "Nex AGI",
+      "displayName": "Nex-N2.5-Mini",
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
+      "imageInput": true,
+      "toolCalling": false,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "id": "nex-n2.5-pro",
+      "vendor": "Nex AGI",
+      "displayName": "Nex-N2.5-Pro",
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "none"
+      ],
+      "defaultReasoningEffort": "high"
     },
     {
       "id": "nova-2-lite-v1",
@@ -3458,7 +3663,8 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o1-pro",
@@ -3468,7 +3674,8 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": false,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o3",
@@ -3478,7 +3685,8 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o3-mini",
@@ -3488,7 +3696,8 @@
       "maxOutputTokens": 100000,
       "imageInput": false,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o3-mini-high",
@@ -3502,7 +3711,8 @@
       "supportsReasoningEffort": [
         "high"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "o3-pro",
@@ -3512,7 +3722,8 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o4-mini",
@@ -3522,7 +3733,8 @@
       "maxOutputTokens": 100000,
       "imageInput": true,
       "toolCalling": true,
-      "reasoning": true
+      "reasoning": true,
+      "samplingParams": "never"
     },
     {
       "id": "o4-mini-high",
@@ -3536,7 +3748,8 @@
       "supportsReasoningEffort": [
         "high"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "palmyra-x5",
@@ -3549,9 +3762,29 @@
       "reasoning": false
     },
     {
-      "id": "pareto",
+      "id": "pareto-26.10-preview",
       "vendor": "Unbiased",
-      "displayName": "Pareto",
+      "displayName": "Pareto 26.10 Preview",
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": false
+    },
+    {
+      "id": "pareto-26.9",
+      "vendor": "Unbiased",
+      "displayName": "Pareto 26.9",
+      "contextWindow": 262144,
+      "maxOutputTokens": 131072,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": false
+    },
+    {
+      "id": "pareto-latest",
+      "vendor": "Unbiased",
+      "displayName": "Pareto Latest",
       "contextWindow": 262144,
       "maxOutputTokens": 131072,
       "imageInput": true,
@@ -3637,16 +3870,6 @@
       "reasoning": false
     },
     {
-      "id": "qwen-plus-2025-07-28",
-      "vendor": "Qwen",
-      "displayName": "Qwen Plus 0728",
-      "contextWindow": 1000000,
-      "maxOutputTokens": 32768,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
       "id": "qwen2.5-vl-72b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen2.5 VL 72B Instruct",
@@ -3667,21 +3890,11 @@
       "reasoning": true
     },
     {
-      "id": "qwen3-235b-a22b",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 235B A22B",
-      "contextWindow": 131072,
-      "maxOutputTokens": 8192,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
       "id": "qwen3-235b-a22b-2507",
       "vendor": "Qwen",
       "displayName": "Qwen3 235B A22B Instruct 2507",
       "contextWindow": 262144,
-      "maxOutputTokens": 235929,
+      "maxOutputTokens": 16384,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": false
@@ -3690,8 +3903,8 @@
       "id": "qwen3-235b-a22b-thinking-2507",
       "vendor": "Qwen",
       "displayName": "Qwen3 235B A22B Thinking 2507",
-      "contextWindow": 131072,
-      "maxOutputTokens": 117964,
+      "contextWindow": 128000,
+      "maxOutputTokens": 16384,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -3717,31 +3930,11 @@
       "reasoning": false
     },
     {
-      "id": "qwen3-30b-a3b-thinking-2507",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 30B A3B Thinking 2507",
-      "contextWindow": 81920,
-      "maxOutputTokens": 32768,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
       "id": "qwen3-32b",
       "vendor": "Qwen",
       "displayName": "Qwen3 32B",
       "contextWindow": 40960,
       "maxOutputTokens": 16384,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
-      "id": "qwen3-8b",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 8B",
-      "contextWindow": 131072,
-      "maxOutputTokens": 8192,
       "imageInput": false,
       "toolCalling": true,
       "reasoning": true
@@ -3787,36 +3980,6 @@
       "reasoning": false
     },
     {
-      "id": "qwen3-coder-plus",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 Coder Plus",
-      "contextWindow": 1000000,
-      "maxOutputTokens": 65536,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": false
-    },
-    {
-      "id": "qwen3-max",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 Max",
-      "contextWindow": 262144,
-      "maxOutputTokens": 65536,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
-      "id": "qwen3-max-thinking",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 Max Thinking",
-      "contextWindow": 262144,
-      "maxOutputTokens": 65536,
-      "imageInput": false,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
       "id": "qwen3-next-80b-a3b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen3 Next 80B A3B Instruct",
@@ -3847,16 +4010,6 @@
       "reasoning": false
     },
     {
-      "id": "qwen3-vl-235b-a22b-thinking",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 VL 235B A22B Thinking",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
       "id": "qwen3-vl-30b-a3b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen3 VL 30B A3B Instruct",
@@ -3870,48 +4023,28 @@
       "id": "qwen3-vl-30b-a3b-thinking",
       "vendor": "Qwen",
       "displayName": "Qwen3 VL 30B A3B Thinking",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
-    },
-    {
-      "id": "qwen3-vl-32b-instruct",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 VL 32B Instruct",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": false
     },
     {
       "id": "qwen3-vl-8b-instruct",
       "vendor": "Qwen",
       "displayName": "Qwen3 VL 8B Instruct",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": false
-    },
-    {
-      "id": "qwen3-vl-8b-thinking",
-      "vendor": "Qwen",
-      "displayName": "Qwen3 VL 8B Thinking",
-      "contextWindow": 131072,
-      "maxOutputTokens": 32768,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true
     },
     {
       "id": "qwen3.5-122b-a10b",
       "vendor": "Qwen",
       "displayName": "Qwen3.5-122B-A10B",
       "contextWindow": 262144,
-      "maxOutputTokens": 235929,
+      "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -3921,7 +4054,7 @@
       "vendor": "Qwen",
       "displayName": "Qwen3.5-27B",
       "contextWindow": 262144,
-      "maxOutputTokens": 65536,
+      "maxOutputTokens": 81920,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -4001,7 +4134,7 @@
       "vendor": "Qwen",
       "displayName": "Qwen3.6 35B A3B",
       "contextWindow": 262144,
-      "maxOutputTokens": 235929,
+      "maxOutputTokens": 65536,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true
@@ -4013,16 +4146,6 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 65536,
       "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true
-    },
-    {
-      "id": "qwen3.6-max-preview",
-      "vendor": "Qwen",
-      "displayName": "Qwen3.6 Max Preview",
-      "contextWindow": 262144,
-      "maxOutputTokens": 65536,
-      "imageInput": false,
       "toolCalling": true,
       "reasoning": true
     },
@@ -4086,8 +4209,8 @@
       "id": "qwen3.8-27b",
       "vendor": "Qwen",
       "displayName": "Qwen3.8 27B",
-      "contextWindow": 1000000,
-      "maxOutputTokens": 131072,
+      "contextWindow": 262144,
+      "maxOutputTokens": 235929,
       "imageInput": true,
       "toolCalling": true,
       "reasoning": true,
@@ -4182,7 +4305,8 @@
       "maxOutputTokens": 128000,
       "imageInput": false,
       "toolCalling": false,
-      "reasoning": false
+      "reasoning": false,
+      "samplingParams": "never"
     },
     {
       "id": "relace-search",
@@ -4217,7 +4341,8 @@
         "high",
         "none"
       ],
-      "defaultReasoningEffort": "high"
+      "defaultReasoningEffort": "high",
+      "samplingParams": "never"
     },
     {
       "id": "schematron-v2-small",
@@ -4438,24 +4563,6 @@
       "reasoning": true
     },
     {
-      "id": "space-bunny-alpha",
-      "vendor": "Stealth",
-      "displayName": "Space Bunny Alpha",
-      "contextWindow": 1000000,
-      "maxOutputTokens": 524288,
-      "imageInput": true,
-      "toolCalling": true,
-      "reasoning": true,
-      "supportsReasoningEffort": [
-        "max",
-        "xhigh",
-        "high",
-        "medium",
-        "low"
-      ],
-      "defaultReasoningEffort": "max"
-    },
-    {
       "id": "step-3.5-flash",
       "vendor": "StepFun",
       "displayName": "Step 3.5 Flash",
@@ -4480,6 +4587,33 @@
         "low"
       ],
       "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "step-5-preview",
+      "vendor": "StepFun",
+      "displayName": "Step 5 Preview",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "imageInput": true,
+      "toolCalling": true,
+      "reasoning": true,
+      "supportsReasoningEffort": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "id": "summarize",
+      "vendor": "ScaleDown",
+      "displayName": "Summarize",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 4000,
+      "imageInput": true,
+      "toolCalling": false,
+      "reasoning": false,
+      "samplingParams": "never"
     },
     {
       "id": "ternary-bonsai-2-27b",
