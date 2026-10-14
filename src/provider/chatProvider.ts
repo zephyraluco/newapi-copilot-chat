@@ -16,19 +16,18 @@
  */
 
 import * as vscode from 'vscode';
-import type { AdapterContext, ModelAdapter } from '../adapter/adapter';
+import type { AdapterContext } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
-import { MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION } from '../consts';
+import { DEFAULT_REASONING_EFFORT_FIELD, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
 import { convertMessages, convertToolChoice, convertTools, measureRequestText } from './messages';
 import {
-	applyReasoningEffort,
 	buildModelConfigurationSchema,
 	selectReasoningEffort,
 } from './modelConfiguration';
@@ -267,6 +266,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		const adapterContext: AdapterContext = {
 			model: config,
 			logger,
+			reasoningEffort: effort.effort ?? config.defaultReasoningEffort,
 		};
 
 		try {
@@ -299,7 +299,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
 			);
 
-			const transformed = await applyAdapters(request, adapters, adapterContext);
+			const transformed = await this.deps.adapters.transformRequest(request, adapterContext, adapters);
 
 			const summary = await streamResponse({
 				source: this.resolveSession(model).client,
@@ -438,29 +438,6 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 }
 
 /**
- * 依次执行所有命中适配器的请求改写。
- *
- * **串接而不是「只跑第一个」**：差异是按「一个协议特性」拆的，一个模型常常同时命中多条
- * （例如 gpt-6 Sol 既属于推理模型家族，又有「带工具时强度只能是 none」的能力位）。
- * 只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。
- *
- * 每个适配器都必须返回请求对象（接口约定），因此这里只做顺序传递，不做空值兜底。
- */
-async function applyAdapters(
-	request: ChatCompletionRequest,
-	adapters: readonly ModelAdapter[],
-	context: AdapterContext,
-): Promise<ChatCompletionRequest> {
-	let current = request;
-	for (const adapter of adapters) {
-		if (adapter.transformRequest !== undefined) {
-			current = await adapter.transformRequest(current, context);
-		}
-	}
-	return current;
-}
-
-/**
  * 组装请求体。
  *
  * 写入顺序是语义的一部分（后面的可以盖过前面的）：
@@ -515,7 +492,7 @@ function buildRequest(input: {
 
 	// 模型选择器里的选择比静态设置更具体，因此在额外字段之后写入，可以盖过它们。
 	if (reasoningEffort !== undefined) {
-		applyReasoningEffort(request, reasoningEffort);
+		request[DEFAULT_REASONING_EFFORT_FIELD] = reasoningEffort;
 	}
 
 	return request;

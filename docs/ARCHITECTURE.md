@@ -140,10 +140,12 @@ flowchart TD
 | `toolFlow.ts` | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
 | `preflight.ts` | 工具组预激活的宿主侧；独立于 `toolFlow.ts` 是为了让后者不依赖 `vscode` |
 | **`adapter/`** 差异出口 | |
-| `adapter.ts` / `registry.ts` / `defaultAdapter.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、兜底与模板 |
+| `adapter.ts` / `registry.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、适配链执行 |
 | `capabilityAdapter.ts` / `samplingParams.ts` | 数据驱动：按 `ModelConfig` 的能力位改写请求；采样参数字段与删除逻辑的唯一实现 |
 | `deepseek/` | DeepSeek：请求种类识别、思考开关与辅助请求改写 |
 | `openai/` | OpenAI 新一代推理模型：移除采样参数、把 `max_tokens` 改名为 `max_completion_tokens` |
+| `qwen/` / `glm/` / `kimi/` | 厂商原生思考开关与强度字段适配；Kimi 使用共享思考回放 |
+| `thinkingMode.ts` | 思考选择读取与关闭语义，供厂商与能力位适配器共享 |
 | **`status/`** UI | |
 | `statusService.ts` | 状态的唯一真相来源，按配置组聚合 |
 | `statusBar.ts` | 状态栏渲染（悬浮提示 = 本次会话消耗 + 待处理的问题） |
@@ -341,7 +343,7 @@ provider 可以随模型信息下发 `configurationSchema`，VS Code 据此渲�
 数据表 supportsReasoningEffort ─▶ ModelConfig.reasoningEfforts
 数据表 defaultReasoningEffort  ─▶ ModelConfig.defaultReasoningEffort ─▶ schema 的 default
 ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configurationSchema
-用户选择 ─▶ selectReasoningEffort() ─▶ applyReasoningEffort() ─▶ 请求体
+用户选择 ─▶ selectReasoningEffort() ─▶ buildRequest() ─▶ 请求体
 ```
 
 - **属性必须带 `enum`** 才会被渲染成控件；`group: 'navigation'` 决定它落在模型卡片主控件区。
@@ -349,7 +351,7 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 - **档位逐模型且没有兜底**：列表为空时不声明 schema——凭空造一组值只会发出站点不认的请求。
 - **选项不经翻译**：只声明 `enum`，控件里显示数据表原值；自己维护映射只会在出现新档位时显示一个猜出来的名字。
 - **取值按当前模型校验**，不在 `reasoningEfforts` 里的选择会被拒绝并记警告，而不是默默发出去。
-- **字段名是常量 `reasoning_effort`**，需要别的叫法或嵌套形态时交给适配器改写；`applyReasoningEffort` 会拒写受保护的请求键（`model` / `messages` / `stream` …）。`modelOptions` 与 `modelConfiguration` 都不是稳定 typings 的字段，因此做运行时探测；通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
+- **字段名是常量 `reasoning_effort`**，由 `buildRequest` 在额外字段之后写入，需要别的叫法或嵌套形态时交给适配器改写。`modelOptions` 与 `modelConfiguration` 都不是稳定 typings 的字段，因此做运行时探测；通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
 
 ### 消息转换（`messages.ts`）
 
@@ -420,9 +422,9 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 
 - **适配器覆盖的是「请求体侧」的差异**。响应侧的形状属于传输维度，由 `ChatStreamSource` + `stream.ts` 承接（见 §8）——两者刻意分开：改一个请求字段名与换一套流式协议是两类改动，混进同一个接口会让适配器被迫实现它并不关心的一半。
 - **只有实际存在的差异才会被写成钩子**；**通用容错不属于这里**（「思维链字段名各家不同」由 `reasoning.ts` 统一认）。
-- **注册表返回全部命中项，provider 依次串接**（`resolveAll`）。差异是按「一个协议特性」拆的，一个模型常常同时命中多条（例如 gpt-6 Sol 既属于推理模型家族，又有「不接受采样参数」的能力位）；只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。`DefaultModelAdapter` 排最后兜底，`transformRequest` 刻意不实现——未定义时跳过。
+- **注册表返回全部命中项，在请求副本上依次串接**（`resolveAll` / `transformRequest`）。差异是按「一个协议特性」拆的，一个模型常常同时命中多条；只取第一条会逼着每个适配器重复别人的逻辑。注册表兼容同步和异步改写，并隔离原地修改，避免污染调用方历史。无匹配项时直接透传。
 - **适配器不区分站点**：New API 是网关，同一个模型后面接的是哪个上游无法从地址判断。
-- **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` / `defaultAdapter.ts` / `capabilityAdapter.ts` / `samplingParams.ts` 是框架层。新增供应商时新建目录 + 在注册表登记，不需要改 provider。
+- **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` / `capabilityAdapter.ts` / `samplingParams.ts` / `thinkingMode.ts` 是框架层。新增供应商时新建目录 + 在注册表登记，不需要改 provider。
 
 ### 数据驱动的能力位（`capabilityAdapter.ts`）
 
@@ -443,7 +445,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | 写入 / 删除 | 条件 | 理由 |
 | --- | --- | --- |
 | `thinking: { type: 'enabled' }` | 模型具备思考能力 | 一律显式写入，不依赖上游对「没给这个字段」的默认理解 |
-| `thinking: { type: 'disabled' }` | 思考模型 **且** 是辅助请求 | 辅助请求的产出只有一行短文本，思考会让它慢几倍、结果还会被丢掉 |
+| `thinking: { type: 'disabled' }` | 思考模型 **且** 是辅助请求或有效选择为 `none` / `off` | 尊重关闭思考的选择；辅助请求只需短文本 |
 | 删除 `reasoning_effort` | 关掉思考时，或模型不具备思考能力时 | 强度只在「开启思考」时才成立 |
 | 写入 `reasoning_content: ' '`（占位） | 开启思考 **且** 历史里的助手消息缺这个字段 | 思考态下上游要求每条助手消息都带回思考内容，缺了整次请求被拒；provider 填得了「已知的原文」，宿主插入的消息、重启后不带思考的历史只能这样满足它 |
 

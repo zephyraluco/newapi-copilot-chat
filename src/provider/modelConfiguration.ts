@@ -21,10 +21,8 @@ import type { ModelConfig } from '../models/modelConfig';
 import { asNonEmptyString, isRecord } from '../json';
 import {
 	DEFAULT_REASONING_EFFORT_FIELD,
-	PROTECTED_REQUEST_KEYS,
 	REASONING_EFFORT_KEY,
 } from '../consts';
-import type { ChatCompletionRequest } from '../types';
 
 /**
  * 模型配置中的一项。
@@ -145,18 +143,4 @@ export function selectReasoningEffort(options: unknown, config: ModelConfig): Re
 		return { ignored: `思考强度 ${raw} 不是该模型的可选取值（${config.reasoningEfforts.join(' / ')}），已忽略` };
 	}
 	return { effort: raw };
-}
-
-/**
- * 把思考强度写进请求体。
- *
- * 字段名是常量，因此不存在「路径写坏协议骨架」的风险；但额外字段（`request.extraBody`）
- * 可能已经写了同名字段，而模型选择器里的选择比静态设置更具体，所以这里直接盖过它。
- */
-export function applyReasoningEffort(request: ChatCompletionRequest, effort: string): void {
-	if (PROTECTED_REQUEST_KEYS.has(DEFAULT_REASONING_EFFORT_FIELD)) {
-		// 协议字段不可被覆盖；常量本身落在这里只说明有人改错了常量
-		return;
-	}
-	request[DEFAULT_REASONING_EFFORT_FIELD] = effort;
 }

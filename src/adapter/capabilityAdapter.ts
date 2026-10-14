@@ -18,10 +18,11 @@ import type { ModelConfig } from '../models/modelConfig';
 import type { ChatCompletionRequest } from '../types';
 import type { AdapterContext, ModelAdapter } from './adapter';
 import { stripSamplingParams } from './samplingParams';
+import { isRecord } from '../json';
+import { isThinkingDisabled } from './thinkingMode';
 
 export class ModelCapabilityAdapter implements ModelAdapter {
 	readonly id = 'model-capabilities';
-	readonly description = '按数据表的能力位改写请求（采样参数）';
 	readonly priority = 50;
 
 	supports(): boolean {
@@ -52,7 +53,9 @@ function acceptsSamplingParams(model: ModelConfig, request: ChatCompletionReques
 		return false;
 	}
 	if (model.samplingParams === 'when-thinking-off') {
-		return request[DEFAULT_REASONING_EFFORT_FIELD] === 'none';
+		return isThinkingDisabled(request[DEFAULT_REASONING_EFFORT_FIELD])
+			|| request.enable_thinking === false
+			|| (isRecord(request.thinking) && request.thinking.type === 'disabled');
 	}
 	return true;
 }

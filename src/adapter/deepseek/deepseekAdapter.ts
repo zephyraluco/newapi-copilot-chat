@@ -26,25 +26,16 @@ import { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } from '../../reasoning';
 import type { ChatCompletionRequest } from '../../types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { classifyRequest, shouldDisableThinking } from './requestKind';
-
-/** 思考开关在请求体里的字段名（DeepSeek 官方）。 */
-export const THINKING_FIELD = DEFAULT_THINKING_FIELD;
-
-/** 模型 ID 里出现这个片段就按 DeepSeek 处理（`deepseek-chat` / `deepseek-ai/DeepSeek-V4` …）。 */
-const DEEPSEEK_ID_PATTERN = /deepseek/i;
+import { isThinkingDisabled, readThinkingEffort } from '../thinkingMode';
 
 /** 这个模型是不是 DeepSeek。 */
 export function isDeepSeekModel(model: ModelConfig): boolean {
-	if (model.meta.vendor?.toLowerCase() === 'deepseek') {
-		return true;
-	}
-	return DEEPSEEK_ID_PATTERN.test(model.id);
+	return model.meta.vendor?.toLowerCase() === 'deepseek' || /deepseek/i.test(model.id);
 }
 
 /** DeepSeek 适配器。 */
 export class DeepSeekAdapter implements ModelAdapter {
 	readonly id = 'deepseek';
-	readonly description = 'DeepSeek：显式写入思考开关，辅助请求关闭思考，思考态补齐历史里的思考内容';
 	readonly priority = 100;
 	readonly echoReasoningContent = true;
 
@@ -53,12 +44,13 @@ export class DeepSeekAdapter implements ModelAdapter {
 	}
 
 	transformRequest(request: ChatCompletionRequest, context: AdapterContext): ChatCompletionRequest {
-		const kind = classifyRequest({ messages: request.messages, tools: request.tools });
+		const kind = classifyRequest(request);
 		const note = `[${kind}] ${context.model.id}`;
 
 		if (!context.model.reasoning) {
 			// 没有思考可开关：留着强度字段只会撞上不认它的实现
-			if (removeField(request, DEFAULT_REASONING_EFFORT_FIELD)) {
+			if (DEFAULT_REASONING_EFFORT_FIELD in request) {
+				delete request[DEFAULT_REASONING_EFFORT_FIELD];
 				context.logger.debug(
 					`${note}：该模型不具备思考能力，已去掉 ${DEFAULT_REASONING_EFFORT_FIELD}`,
 				);
@@ -66,11 +58,12 @@ export class DeepSeekAdapter implements ModelAdapter {
 			return request;
 		}
 
-		const disable = shouldDisableThinking(kind);
-		request[THINKING_FIELD] = { type: disable ? 'disabled' : 'enabled' };
+		const helperRequest = shouldDisableThinking(kind);
+		const disable = helperRequest || isThinkingDisabled(readThinkingEffort(request, context));
+		request[DEFAULT_THINKING_FIELD] = { type: disable ? 'disabled' : 'enabled' };
 		if (disable) {
 			// 关闭思考时强度没有意义：它只与「开启思考」同时成立
-			removeField(request, DEFAULT_REASONING_EFFORT_FIELD);
+			delete request[DEFAULT_REASONING_EFFORT_FIELD];
 		} else {
 			const padded = padMissingReasoningContent(request);
 			if (padded > 0) {
@@ -80,7 +73,7 @@ export class DeepSeekAdapter implements ModelAdapter {
 			}
 		}
 
-		const reason = disable ? '（辅助请求强制关闭）' : '';
+		const reason = helperRequest ? '（辅助请求强制关闭）' : '';
 		context.logger.debug(`${note}：thinking=${disable ? 'disabled' : 'enabled'}${reason}`);
 		return request;
 	}
@@ -102,7 +95,7 @@ export class DeepSeekAdapter implements ModelAdapter {
  */
 function padMissingReasoningContent(request: ChatCompletionRequest): number {
 	let padded = 0;
-	for (const message of request.messages ?? []) {
+	for (const message of request.messages) {
 		if (message.role !== 'assistant') {
 			continue;
 		}
@@ -114,14 +107,4 @@ function padMissingReasoningContent(request: ChatCompletionRequest): number {
 		padded++;
 	}
 	return padded;
-}
-
-/** 删除请求体里的一个字段；返回它是否存在。 */
-function removeField(request: ChatCompletionRequest, key: string): boolean {
-	const fields = request as Record<string, unknown>;
-	if (!(key in fields)) {
-		return false;
-	}
-	delete fields[key];
-	return true;
 }

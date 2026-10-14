@@ -25,16 +25,6 @@ const LEVEL_ORDER: Record<LogLevelName, number> = {
 	trace: 5,
 };
 
-/** 我们的级别 → VS Code 通道级别。用于判断通道是否会把日志吞掉。 */
-const CHANNEL_LEVEL: Record<LogLevelName, vscode.LogLevel> = {
-	off: vscode.LogLevel.Off,
-	error: vscode.LogLevel.Error,
-	warn: vscode.LogLevel.Warning,
-	info: vscode.LogLevel.Info,
-	debug: vscode.LogLevel.Debug,
-	trace: vscode.LogLevel.Trace,
-};
-
 /** 把设置里的字符串收敛成合法级别，非法值回退到 `info`。 */
 export function parseLogLevelName(value: unknown): LogLevelName {
 	if (typeof value === 'string' && value in LEVEL_ORDER) {

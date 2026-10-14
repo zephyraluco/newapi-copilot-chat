@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
-	defaultAdapter: './src/adapter/defaultAdapter',
+	consts: './src/consts',
 	registry: './src/adapter/registry',
 	deepseek: './src/adapter/deepseek/deepseekAdapter',
 	requestKind: './src/adapter/deepseek/requestKind',
@@ -20,9 +20,9 @@ const { modules } = load({
 	reasoning: './src/reasoning',
 });
 
-const { DefaultModelAdapter } = modules.defaultAdapter;
 const { AdapterRegistry, createDefaultAdapterRegistry } = modules.registry;
-const { DeepSeekAdapter, isDeepSeekModel, THINKING_FIELD } = modules.deepseek;
+const { DeepSeekAdapter, isDeepSeekModel } = modules.deepseek;
+const { DEFAULT_THINKING_FIELD: THINKING_FIELD } = modules.consts;
 const { classifyRequest, shouldDisableThinking } = modules.requestKind;
 const { ModelCapabilityAdapter } = modules.capability;
 const { OpenAIReasoningAdapter } = modules.openaiReasoning;
@@ -149,7 +149,7 @@ test('AdapterRegistry：重复 id 被忽略并留下警告', () => {
 	registry.register(new DeepSeekAdapter(), logger);
 	registry.register(new DeepSeekAdapter(), logger);
 
-	assert.equal(registry.list().length, 1);
+	assert.equal(registry.resolveAll(model('deepseek-chat')).length, 1);
 	assert.equal(logger.messages('warn').length, 1);
 	assert.match(logger.messages('warn')[0], /deepseek/);
 });
@@ -167,41 +167,30 @@ test('AdapterRegistry：resolveAll 返回全部命中项，高优先级排在前
 
 	// 全部命中项都要返回：差异是按「一个协议特性」拆的，一个模型常常同时命中多条
 	assert.deepEqual(registry.resolveAll(model('anything')).map(adapter => adapter.id), ['high', 'low']);
-	assert.deepEqual(registry.list().map(adapter => adapter.id), ['never', 'high', 'low']);
 });
 
-test('AdapterRegistry：没有匹配项时兜底到默认适配器', () => {
+test('AdapterRegistry：没有匹配项时返回空适配链并原样透传请求', async () => {
 	const registry = new AdapterRegistry();
 	registry.register({ id: 'picky', priority: 1, supports: () => false, transformRequest: request => request }, silentLogger);
 
-	assert.deepEqual(registry.resolveAll(model('anything')).map(adapter => adapter.id), ['default']);
+	assert.deepEqual(registry.resolveAll(model('anything')), []);
+	const request = { model: 'anything', messages: [{ role: 'user', content: 'hi' }] };
+	assert.deepEqual(await registry.transformRequest(request, { model: model('anything'), logger: silentLogger }), request);
 });
 
-test('内置注册表：顺序为 [专门适配器…, 能力位, 兜底]，且能按模型 ID 选中', () => {
+test('内置注册表：按模型 ID 选中厂商适配器，再执行能力位适配器', () => {
 	const registry = createDefaultAdapterRegistry(silentLogger);
 	const ids = selected => registry.resolveAll(model(selected)).map(adapter => adapter.id);
 
-	assert.deepEqual(
-		registry.list().map(adapter => adapter.id),
-		['deepseek', 'openai-reasoning', 'model-capabilities', 'default'],
-	);
-
-	assert.deepEqual(ids('deepseek-chat'), ['deepseek', 'model-capabilities', 'default']);
-	assert.deepEqual(ids('gpt-6-sol'), ['openai-reasoning', 'model-capabilities', 'default']);
-	assert.deepEqual(ids('gpt-6.1-sol'), ['openai-reasoning', 'model-capabilities', 'default']);
-	assert.deepEqual(ids('gpt-5.4'), ['openai-reasoning', 'model-capabilities', 'default']);
-	assert.deepEqual(ids('gpt-5-code'), ['openai-reasoning', 'model-capabilities', 'default']);
-	// 谁都不认的模型只有「能力位 + 兜底」——能力位适配器对所有模型生效，改不改由数据决定
-	assert.deepEqual(ids('gpt-4o'), ['model-capabilities', 'default']);
-});
-
-test('DefaultModelAdapter：承接所有模型，且刻意不实现 transformRequest', () => {
-	const adapter = new DefaultModelAdapter();
-
-	assert.equal(adapter.supports(model('任意模型')), true);
-	assert.equal(adapter.priority, -100);
-	// provider 靠「有没有这个方法」决定是否改写，空实现反而会多一次调用
-	assert.equal('transformRequest' in adapter, false);
+	assert.deepEqual(ids('deepseek-chat'), ['deepseek', 'model-capabilities']);
+	assert.deepEqual(ids('qwen3.5-plus'), ['qwen', 'model-capabilities']);
+	assert.deepEqual(ids('glm-5'), ['glm', 'model-capabilities']);
+	assert.deepEqual(ids('kimi-k2.5'), ['kimi', 'model-capabilities']);
+	for (const id of ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-5.4', 'gpt-5-code']) {
+		assert.deepEqual(ids(id), ['openai-reasoning', 'model-capabilities']);
+	}
+	// 未知厂商只走能力位适配器，改不改由数据决定。
+	assert.deepEqual(ids('gpt-4o'), ['model-capabilities']);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -490,4 +479,90 @@ test('OpenAIReasoningAdapter：数据表已表态的模型让位给能力位适�
 	// 输出上限的字段名仍然由这里改写
 	assert.equal(request.max_completion_tokens, 100);
 	assert.equal('max_tokens' in request, false);
+});
+
+test('适配链：厂商改写后能力位仍能识别关闭思考，原始历史不被污染', async () => {
+	const registry = createDefaultAdapterRegistry();
+	for (const id of ['deepseek-v4-pro', 'Qwen/Qwen3.5-plus', 'z-ai/glm-5', 'moonshotai/kimi-k2.5']) {
+		const input = {
+			model: id,
+			messages: [{ role: 'assistant', content: '先前答案' }, { role: 'user', content: '继续' }],
+			tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+			reasoning_effort: 'none',
+			temperature: 0.3,
+		};
+		const original = structuredClone(input);
+		const result = await registry.transformRequest(input, {
+			model: { ...model(id), reasoning: true, samplingParams: 'when-thinking-off' },
+			logger: createLogger(),
+		});
+		assert.equal(result.temperature, 0.3, id);
+		assert.equal(result.reasoning_effort, undefined, id);
+		assert.deepEqual(result.tools, input.tools, id);
+		assert.deepEqual(input, original, id);
+		if (id.includes('Qwen')) {
+			assert.equal(result.enable_thinking, false);
+		} else {
+			assert.deepEqual(result.thinking, { type: 'disabled' });
+		}
+	}
+});
+
+test('适配链：DeepSeek 默认关闭与显式关闭均不补思考占位', async () => {
+	const registry = createDefaultAdapterRegistry();
+	for (const effort of ['none', 'off']) {
+		const result = await registry.transformRequest({
+			model: 'deepseek-v4-pro',
+			messages: [{ role: 'assistant', content: '答案' }],
+		}, {
+			model: { ...model('deepseek-v4-pro'), reasoning: true },
+			reasoningEffort: effort,
+			logger: createLogger(),
+		});
+		assert.deepEqual(result.thinking, { type: 'disabled' });
+		assert.equal('reasoning_content' in result.messages[0], false);
+	}
+});
+
+test('适配链：Qwen 自动模式保留预算，Kimi 保留真实思考历史，GLM 保留具体强度', async () => {
+	const registry = createDefaultAdapterRegistry();
+	async function transform(id, extra, effort) {
+		return registry.transformRequest({
+			model: id,
+			messages: [{ role: 'assistant', content: '答案', reasoning_content: '真实原文' }],
+			...extra,
+		}, { model: { ...model(id), reasoning: true }, reasoningEffort: effort, logger: createLogger() });
+	}
+	const qwen = await transform('qwen3.5-plus', { reasoning_effort: 'auto', thinking_budget: 4096 });
+	assert.equal('reasoning_effort' in qwen, false);
+	assert.equal('enable_thinking' in qwen, false);
+	assert.equal(qwen.thinking_budget, 4096);
+	const kimi = await transform('kimi-k2.5', {}, 'on');
+	assert.deepEqual(kimi.thinking, { type: 'enabled' });
+	assert.equal(kimi.messages[0].reasoning_content, '真实原文');
+	assert.equal(registry.resolveAll(model('kimi-k2.5')).some(item => item.echoReasoningContent), true);
+	const glm = await transform('glm-5', { reasoning_effort: 'max' });
+	assert.equal(glm.reasoning_effort, 'max');
+	assert.equal('thinking' in glm, false);
+});
+
+test('适配链：未知与非思考模型不猜测原生开关，厂商匹配有名称边界', async () => {
+	const registry = createDefaultAdapterRegistry();
+	for (const id of ['custom-model', 'notqwen3', 'my-glm-5', 'notkimi-k2', 'qwen3.5-plus']) {
+		const input = { model: id, messages: [], reasoning_effort: 'off' };
+		const result = await registry.transformRequest(input, { model: model(id), logger: createLogger() });
+		assert.deepEqual(result, input, id);
+	}
+});
+
+test('适配链：异步改写结果继续传给下一个适配器', async () => {
+	const registry = new AdapterRegistry();
+	registry.register({ id: 'first', priority: 100, supports: () => true,
+		transformRequest: async request => ({ ...request, reasoning_effort: 'none' }) });
+	registry.register(new ModelCapabilityAdapter());
+	const result = await registry.transformRequest({ model: 'custom', messages: [], temperature: 0.2 }, {
+		model: { ...model('custom'), samplingParams: 'when-thinking-off' }, logger: createLogger(),
+	});
+	assert.equal(result.temperature, 0.2);
+	assert.equal(result.reasoning_effort, 'none');
 });

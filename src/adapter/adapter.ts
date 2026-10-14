@@ -6,7 +6,7 @@
  * 且只认 `max_completion_tokens`、有的网关不支持 `tool_choice: required`。
  * 这些差异如果全写进 provider，会散落大量 `if (model.id.startsWith('xxx'))`。
  *
- * `DefaultModelAdapter` 的全部钩子都是恒等变换。新增适配器只需三步，**不需要改动 provider**：
+ * 新增适配器只需三步，**不需要改动 provider**：
  * 1. 在 `adapter/<supplier>/`（以供应商命名，例如 `deepseek/`）下实现 `ModelAdapter`，
  *    目录内的文件只服务该供应商；
  * 2. 在 `registry.ts` 的 `createDefaultAdapterRegistry()` 里注册；
@@ -25,14 +25,14 @@ export interface AdapterContext {
 	/** 本次请求使用的模型配置（含已解析的能力与窗口） */
 	readonly model: ModelConfig;
 	readonly logger: Logger;
+	/** 已校验的模型选择（含 schema 默认值），用于原生思考开关；不强制发送强度字段。 */
+	readonly reasoningEffort?: string;
 }
 
 /** 模型适配器。全部钩子都是可选的。 */
 export interface ModelAdapter {
 	/** 唯一标识，用于日志与调试 */
 	readonly id: string;
-	/** 人类可读说明（未直接展示，供日志与调试使用） */
-	readonly description: string;
 	/** 优先级，数值大的先被选中；缺省为 0 */
 	readonly priority?: number;
 	/** 判断是否由本适配器处理该模型 */

@@ -13,7 +13,6 @@ const OPENAI_REASONING_MODEL = /(?:^|\/)(?:gpt-(?:5(?:\.[1-9]\d*)?|6)(?:-(?:code
 
 export class OpenAIReasoningAdapter implements ModelAdapter {
 	readonly id = 'openai-reasoning';
-	readonly description = 'OpenAI 新一代推理模型：移除采样参数、改写输出上限字段名';
 	readonly priority = 80;
 
 	supports(model: ModelConfig): boolean {

@@ -20,7 +20,6 @@ const {
 	buildModelConfigurationSchema,
 	readModelConfiguration,
 	selectReasoningEffort,
-	applyReasoningEffort,
 } = modules.modelConfiguration;
 const { REASONING_EFFORT_KEY, DEFAULT_REASONING_EFFORT_FIELD } = modules.consts;
 
@@ -124,24 +123,4 @@ test('selectReasoningEffort：非法取值被忽略并说明原因', () => {
 
 test('selectReasoningEffort：没有默认档位时，选中任一台档位都会发出去', () => {
 	assert.deepEqual(selectReasoningEffort({ modelConfiguration: { [REASONING_EFFORT_KEY]: 'low' } }, model()), { effort: 'low' });
-});
-
-/* -------------------------------------------------------------------------- */
-
-test('applyReasoningEffort：写进请求体的字段名与线上协议一致', () => {
-	const request = { model: 'm', messages: [] };
-
-	applyReasoningEffort(request, 'high');
-
-	assert.equal(request[DEFAULT_REASONING_EFFORT_FIELD], 'high');
-	// 协议骨架不受影响
-	assert.equal(request.model, 'm');
-});
-
-test('applyReasoningEffort：模型选择器的选择盖过 extraBody 里的同名字段', () => {
-	const request = { messages: [], [DEFAULT_REASONING_EFFORT_FIELD]: 'low' };
-
-	applyReasoningEffort(request, 'high');
-
-	assert.equal(request[DEFAULT_REASONING_EFFORT_FIELD], 'high');
 });
