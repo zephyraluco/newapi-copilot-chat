@@ -85,7 +85,7 @@ flowchart TD
 | 站点以 400 拒绝并点名了白名单里的可选字段 | `provider/requestRepair.ts` | 去掉那个字段重发（最多 2 轮），已试过的步骤不重复；成功的结果按会话 + 模型记住 |
 | 站点以 400 拒绝但白名单里挑不出对应字段 | `provider/requestRepair.ts` | 不修，把上游原话交给用户（`tools` 与协议骨架永远不动） |
 | 自愈改过请求仍被 400 拒绝 | `provider/streamFlow.ts` | 记下「去掉过什么」后照常失败 |
-| 数据表能力位说「不接受采样参数」或「带工具时强度固定」 | `adapter/capabilityAdapter.ts` | 按能力位改写请求（数据驱动，不写模型名正则） |
+| 数据表能力位说「不接受采样参数」 | `adapter/capabilityAdapter.ts` | 按能力位改写请求（数据驱动，不写模型名正则） |
 | 响应正常结束且带用量 | `provider/chatProvider.ts` | 回传 `usage` 数据部件（见 §8 回传用量） |
 | chunk 带 `error` 字段 | `provider/stream.ts` | 视为失败抛出（上游会把错误塞进 200 响应） |
 | 工具调用缺少函数名 | `provider/stream.ts` | 记警告并跳过 |
@@ -118,7 +118,7 @@ flowchart TD
 | `sse.ts` | SSE 解析与收尾信息、静默超时、非 SSE 降级读取、截断判定 |
 | `newApiClient.ts` | 端点封装、模型列表解析、错误描述与失败建议 |
 | **`models/`** 模型信息整合（只依赖基础层） | |
-| `dataset.ts` | 模型数据表（`data/openrouter-models.json`）+ 手工能力覆盖表（`data/model-overrides.json`）：校验、叠加、索引与查找 |
+| `dataset.ts` | 模型数据表（`data/openrouter-models.json`）：校验、索引与查找 |
 | `remoteHints.ts` | 远端字段提取：**唯一**知道各家网关字段名的地方 |
 | `limits.ts` | 窗口/输出/输入的一致性校正、显著差异判定 |
 | `modelConfig.ts` | 按优先级合并三路来源，记录来源与校正说明 |
@@ -347,7 +347,6 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 - **属性必须带 `enum`** 才会被渲染成控件；`group: 'navigation'` 决定它落在模型卡片主控件区。
 - **`default` 只是让界面反映现状**，因此 `selectReasoningEffort` 把**等于默认档位**当作「未修改」、不发送该字段。默认值还必须落在 `enum` 里（这条不变量由 `resolveModelConfig` 守住）。
 - **档位逐模型且没有兜底**：列表为空时不声明 schema——凭空造一组值只会发出站点不认的请求。
-- **`toolCallingReasoningEffort` 存在时不声明 schema**：带工具时强度会被覆盖成固定值，而 Agent 模式的请求总是带工具——控件永远不生效，显示一个选得了却不起作用的选项比不显示更糟。
 - **选项不经翻译**：只声明 `enum`，控件里显示数据表原值；自己维护映射只会在出现新档位时显示一个猜出来的名字。
 - **取值按当前模型校验**，不在 `reasoningEfforts` 里的选择会被拒绝并记警告，而不是默默发出去。
 - **字段名是常量 `reasoning_effort`**，需要别的叫法或嵌套形态时交给适配器改写；`applyReasoningEffort` 会拒写受保护的请求键（`model` / `messages` / `stream` …）。`modelOptions` 与 `modelConfiguration` 都不是稳定 typings 的字段，因此做运行时探测；通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
@@ -421,7 +420,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 
 - **适配器覆盖的是「请求体侧」的差异**。响应侧的形状属于传输维度，由 `ChatStreamSource` + `stream.ts` 承接（见 §8）——两者刻意分开：改一个请求字段名与换一套流式协议是两类改动，混进同一个接口会让适配器被迫实现它并不关心的一半。
 - **只有实际存在的差异才会被写成钩子**；**通用容错不属于这里**（「思维链字段名各家不同」由 `reasoning.ts` 统一认）。
-- **注册表返回全部命中项，provider 依次串接**（`resolveAll`）。差异是按「一个协议特性」拆的，一个模型常常同时命中多条（例如 gpt-6 Sol 既属于推理模型家族，又有「带工具时强度只能是 `none`」的能力位）；只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。`DefaultModelAdapter` 排最后兜底，`transformRequest` 刻意不实现——未定义时跳过。
+- **注册表返回全部命中项，provider 依次串接**（`resolveAll`）。差异是按「一个协议特性」拆的，一个模型常常同时命中多条（例如 gpt-6 Sol 既属于推理模型家族，又有「不接受采样参数」的能力位）；只取第一条会逼着每个适配器把别的适配器已经写过的逻辑再抄一遍。`DefaultModelAdapter` 排最后兜底，`transformRequest` 刻意不实现——未定义时跳过。
 - **适配器不区分站点**：New API 是网关，同一个模型后面接的是哪个上游无法从地址判断。
 - **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` / `defaultAdapter.ts` / `capabilityAdapter.ts` / `samplingParams.ts` 是框架层。新增供应商时新建目录 + 在注册表登记，不需要改 provider。
 
@@ -430,13 +429,11 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 按**协议**判断的适配器（`deepseek/`、`openai/`）认的是模型名；另有一类差异其实是**模型元数据**，只针对某个模型名的特判写进代码就会散落成 `if (model.id.startsWith(...))`（见 §11）。它们走这条路：
 
 ```
-模型数据表 / data/model-overrides.json ─▶ ModelDatasetEntry ─▶ ModelConfig 能力位 ─▶ capabilityAdapter
+模型数据表（data/openrouter-models.json）─▶ ModelDatasetEntry ─▶ ModelConfig 能力位 ─▶ capabilityAdapter
 ```
 
 - **`samplingParams`**：`temperature` / `top_p` 这类采样参数在该模型上的接受情况。缺省表示「始终接受」（数据没表态就不动请求）；`never` 表示始终不接受；`when-thinking-off` 表示只在 `reasoning_effort` 为 `none` 时接受——关掉思考后不再是推理请求，采样参数重新合法。
-- **`toolCallingReasoningEffort`**：带工具调用时 `reasoning_effort` 的强制取值。设置后**不再显示思考强度控件**（Agent 模式的请求总是带工具，那个控件永远不生效）。
-- **`data/model-overrides.json` 是手工维护的数据**，在读取时叠加到生成的数据表之上：上游目录表达不了上面这类条件行为，而放进代码就是逐模型名正则。覆盖表只允许改能力位——窗口与输出上限有客观来源，要改就重新生成数据表。
-- 生成脚本从上游的 `supported_parameters` 推出 `samplingParams`，因此**重新生成数据表会把这条能力位补齐**；覆盖表负责的则是上游目录给不出的部分。
+- 生成脚本从上游的 `supported_parameters` 推出 `samplingParams`，因此**重新生成数据表会把这条能力位补齐**；上游目录给不出的能力位就只能是「没有」——它们没有别的来源。
 - `capabilityAdapter` 的 `supports` 恒为 `true`（它没有自己的适用模型），优先级低于供应商适配器，因此它看到的是那些适配器改写之后的请求。
 
 ### DeepSeek（`adapter/deepseek/`）
@@ -480,7 +477,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 - **补一个模型的元数据**：改数据而不是改代码——跑 `npm run models:openrouter` 重新生成 `data/openrouter-models.json`。上游目录里没有这个模型时改生成脚本（加别名或回退取值），不要手工往文件里加条目。
 - **让某个模型的行为不一样（新增适配器）**：先判断差异属于哪一类：
   - **协议差异**（某家上游对 OpenAI 协议的实现不同）→ 在 `src/adapter/<supplier>/` 下实现 `ModelAdapter` → 在 `adapter/registry.ts` 的 `createDefaultAdapterRegistry()` 注册（`priority` 高者先执行）。现成例子是 `src/adapter/deepseek/`，**不需要改 provider**。
-  - **模型元数据**（只针对某个模型名的特判，例如「带工具时强度只能是 `none`」）→ **不要写正则**，改成能力位：`src/models/dataset.ts` 的 `ModelDatasetEntry` 加字段 → `data/model-overrides.json` 填值 → `models/modelConfig.ts` 并进 `ModelConfig` → `src/adapter/capabilityAdapter.ts` 消费它。能力位不依赖重新生成数据表，也不会随模型名变化失效。
+  - **模型元数据**（只针对某个模型名的特判）→ **不要写正则**，改成能力位：`src/models/dataset.ts` 的 `ModelDatasetEntry` 加字段 → 改生成脚本 `scripts/fetch-openrouter-models.js` 从上游目录推出它 → `models/modelConfig.ts` 并进 `ModelConfig` → `src/adapter/capabilityAdapter.ts` 消费它。能力位来自生成的数据表，不随模型名变化失效。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties` → `src/config.ts` 的 `readSettings()` 读取并收敛（非法值记录并回退）→ 在对应 `Settings` 接口加字段 → 影响模型配置改 `models/modelConfig.ts`，影响请求体改 `provider/chatProvider.ts` 的 `buildRequest`，影响传输行为经 `runtime/session.ts` 传给 `NewApiClient`（**同时记得在 `classifySettingsChange` 里说明它属于哪一类变化**：影响 client 构造参数的才需要重建连接，每次请求现读的不需要）。改完同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：`models/modelConfig.ts` 把能力纳入 `ModelConfig` → `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 加属性（带 `enum` 才会渲染）、在取值侧加解析 → `provider/chatProvider.ts` 的 `buildRequest` 写进请求体 → 有默认项就写进 schema 的 `default`（并保证它落在 `enum` 里）。注意「支持该能力」与「有可选项」是两件事。
 - **新增配置组字段（站点 / 密钥类）**：声明在 `contributes.languageModelChatProviders[].configuration` 里——`package.json` 加字段（密钥类 `secret: true`）→ `src/runtime/target.ts` 的 `createTarget()` 读取校验，写入 `ProviderTarget` 与 `issues` → 若影响连接身份还要纳入 `key` 指纹 → 需要时经 `session.ts` 传给 `NewApiClient`。
@@ -523,7 +520,6 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | 400 自愈的结果按会话 + 模型记住 | 不记就等于让 Agent 的每一步都先挨一次必然失败的请求；代价是记忆可能对一个刚换过上游的站点过时，而键里的 `targetKey` 会随配置变化自动失效 |
 | 请求体总是带 `max_tokens` | 不写就由各渠道的默认值决定（有的只有 4K～8K），而我们已按 `maxOutputTokens` 预留了输入预算；代价是少数不认这个字段的渠道要靠 400 自愈兜住（它在白名单里） |
 | token 校准比例按模型分别维护 | DeepSeek 与 Claude 的分词器差别很大，共用一个比例会让估算在模型间来回摆；代价是比例表需要淘汰策略（上限 32 个模型） |
-| 带 `toolCallingReasoningEffort` 的模型不显示思考强度控件 | Agent 模式的请求总是带工具，那个控件永远会被覆盖成固定值；显示一个选得了却不起作用的选项比不显示更糟，代价是 Ask 模式下也没法调档位 |
 | 模型列表快照没变时不触发 `onDidChange` | 状态栏每 60 秒探测一次，触发就意味着宿主重新拉一遍模型列表；代价是「模型元数据变了但 id 没变」这类变化依赖快照签名覆盖到那些字段 |
 | 状态刷新只探 `/api/status`，不再强制刷新模型列表 | 模型列表有自己的缓存有效期；每分钟强制重拉让那份缓存形同虚设，还会连带触发宿主的模型重新发现 |
 | 会话按「签名」复用，连接变更时**优雅退役**而不是立即释放 | 立即释放会中断在途请求，而 provider 会把它当成「用户取消」静默返回半截回答；代价是退役的 client 会多存活到在途请求结束 |

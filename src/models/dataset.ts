@@ -27,15 +27,6 @@ export const MODEL_DATASET_DIR = 'data';
 export const MODEL_DATASET_FILE = 'openrouter-models.json';
 
 /**
- * 手工维护的覆盖表文件名（与数据表同目录）。
- *
- * 上游目录表达不了「带工具时 `reasoning_effort` 只能是 `none`」这类站点行为，
- * 而把它写成代码里的模型名特判会散落成 `if (model.id.startsWith(...))`。
- * 覆盖表是**数据**，因此放在这里：它不随数据表重新生成而丢失，也不需要联网。
- */
-export const MODEL_OVERRIDES_FILE = 'model-overrides.json';
-
-/**
  * 采样参数（`temperature` / `top_p` / …）在 Chat Completions 里的接受情况。
  *
  * 缺省（字段不存在）等价于「始终接受」，因此这里只表达两个**非默认**取值：
@@ -70,21 +61,11 @@ export interface ModelDatasetEntry {
 	readonly defaultReasoningEffort?: string;
 	/** 采样参数在 Chat Completions 里的接受情况；缺省表示始终接受 */
 	readonly samplingParams?: ModelSamplingParams;
-	/**
-	 * 带工具调用时 `reasoning_effort` 的**强制取值**（例如 `none`）。
-	 *
-	 * 只可能来自覆盖表——上游目录不会表达这种条件行为。设置后模型选择器里不再显示
-	 * 「思考强度」控件（见 `provider/modelConfiguration.ts`）。
-	 */
-	readonly toolCallingReasoningEffort?: string;
 	/** 厂商显示名 */
 	readonly vendor?: string;
 	/** 规范展示名 */
 	readonly displayName?: string;
 }
-
-/** 覆盖表允许改的字段：只有「上游目录给不出」的能力位。 */
-const OVERRIDABLE_FIELDS = ['samplingParams', 'toolCallingReasoningEffort'] as const;
 
 /** 采样参数接受情况的合法取值。 */
 const SAMPLING_PARAMS_VALUES: readonly ModelSamplingParams[] = ['never', 'when-thinking-off'];
@@ -155,37 +136,9 @@ function parseEntry(raw: unknown): ModelDatasetEntry | undefined {
 		supportsReasoningEffort: normalizeEfforts(raw.supportsReasoningEffort),
 		defaultReasoningEffort: asNonEmptyString(raw.defaultReasoningEffort),
 		samplingParams: asSamplingParams(raw.samplingParams),
-		toolCallingReasoningEffort: asNonEmptyString(raw.toolCallingReasoningEffort),
 		vendor: asNonEmptyString(raw.vendor),
 		displayName: asNonEmptyString(raw.displayName),
 	};
-}
-
-/**
- * 把一条覆盖记录合并进原始记录。
- *
- * 只允许改 `OVERRIDABLE_FIELDS`：窗口、输出上限这类数值有客观来源（网关 > 数据表 > 默认值），
- * 让一个手工文件去改它们只会制造无从排查的数值冲突。
- */
-function applyOverride(
-	item: Record<string, unknown>,
-	overrides: Record<string, unknown>,
-): Record<string, unknown> {
-	const id = asNonEmptyString(item.id);
-	if (id === undefined) {
-		return item;
-	}
-	const override = overrides[id.trim().toLowerCase()];
-	if (!isRecord(override)) {
-		return item;
-	}
-	const merged: Record<string, unknown> = { ...item };
-	for (const field of OVERRIDABLE_FIELDS) {
-		if (override[field] !== undefined) {
-			merged[field] = override[field];
-		}
-	}
-	return merged;
 }
 
 /**
@@ -193,20 +146,16 @@ function applyOverride(
  *
  * 接受生成脚本的完整输出（`{ models: [...] }`）与裸数组两种形态：
  * 前者是数据文件，后者便于手工准备的小表。
- *
- * `overrides` 是可选的手工覆盖表（`data/model-overrides.json`，形态 `{ models: { <id>: {...} } }`）：
- * 它在解析前叠加到原始记录上，因此**不需要重新生成数据表**就能生效。
  */
-export function parseModelDataset(raw: unknown, overrides?: unknown): ModelDataset {
+export function parseModelDataset(raw: unknown): ModelDataset {
 	const list = Array.isArray(raw)
 		? raw
 		: (isRecord(raw) && Array.isArray(raw.models) ? raw.models : []);
-	const overrideMap = isRecord(overrides) && isRecord(overrides.models) ? overrides.models : {};
 
 	let skipped = 0;
 	const entries: ModelDatasetEntry[] = [];
 	for (const item of list) {
-		const entry = parseEntry(isRecord(item) ? applyOverride(item, overrideMap) : item);
+		const entry = parseEntry(item);
 		if (entry === undefined) {
 			skipped++;
 			continue;
@@ -231,12 +180,10 @@ let index = new Map<string, ModelDatasetEntry>();
  * 传入 `undefined` 或非法数据会**清空**当前数据表——这正是想要的行为：
  * 文件缺失或损坏时宁可退回「网关返回值 + 默认值」，也不要继续沿用一份来路不明的旧数据。
  *
- * `overrides` 是可选的手工覆盖表，见 `parseModelDataset`。
- *
  * 返回解析结果（含被丢弃的条目数），便于调用方写日志。
  */
-export function installModelDataset(raw: unknown, overrides?: unknown): ModelDataset {
-	const dataset = parseModelDataset(raw, overrides);
+export function installModelDataset(raw: unknown): ModelDataset {
+	const dataset = parseModelDataset(raw);
 	index = new Map();
 	for (const entry of dataset.entries) {
 		const key = entry.id.trim().toLowerCase();

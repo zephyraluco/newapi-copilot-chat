@@ -384,43 +384,6 @@ test('ModelCapabilityAdapter：对所有模型生效，改不改由能力位决�
 	assert.equal(adapter.supports(model('gpt-6-sol')), true);
 });
 
-test('ModelCapabilityAdapter：用到工具时把强度压成能力位指定的值', () => {
-	const request = capabilityTransform({
-		messages: [{ role: 'user', content: 'hi' }],
-		tools: [{ type: 'function', function: { name: 'read_file' } }],
-		tool_choice: 'auto',
-		reasoning_effort: 'high',
-	}, { toolCallingReasoningEffort: 'none' });
-
-	assert.equal(request.reasoning_effort, 'none');
-	// 工具本身必须原样保留，否则调用不了
-	assert.equal(request.tools.length, 1);
-	assert.equal(request.tool_choice, 'auto');
-});
-
-test('ModelCapabilityAdapter：历史里出现过工具调用也算用到工具', () => {
-	const config = { toolCallingReasoningEffort: 'none' };
-
-	const toolRole = capabilityTransform({
-		messages: [{ role: 'user', content: 'hi' }, { role: 'tool', content: 'ok', tool_call_id: 'call_1' }],
-	}, config);
-	assert.equal(toolRole.reasoning_effort, 'none');
-
-	const withToolCalls = capabilityTransform({
-		messages: [{ role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }],
-	}, config);
-	assert.equal(withToolCalls.reasoning_effort, 'none');
-});
-
-test('ModelCapabilityAdapter：没用到工具时不动强度', () => {
-	const request = capabilityTransform({
-		messages: [{ role: 'user', content: 'hi' }],
-		reasoning_effort: 'high',
-	}, { toolCallingReasoningEffort: 'none' });
-
-	assert.equal(request.reasoning_effort, 'high');
-});
-
 test('ModelCapabilityAdapter：samplingParams=never 时总是删掉采样参数', () => {
 	const request = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
@@ -436,24 +399,34 @@ test('ModelCapabilityAdapter：samplingParams=never 时总是删掉采样参数'
 });
 
 test('ModelCapabilityAdapter：when-thinking-off 只在强度为 none 时保留采样参数', () => {
-	const config = { toolCallingReasoningEffort: 'none', samplingParams: 'when-thinking-off' };
+	const config = { samplingParams: 'when-thinking-off' };
 
-	// 带工具 → 强度被压成 none → 不再是推理请求 → 采样参数合法（gpt-6 Sol/Luna 的实际行为）
+	// 思考已关（reasoning_effort=none）→ 不再是推理请求 → 采样参数合法
 	const kept = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
-		tools: [{ type: 'function', function: { name: 'read_file' } }],
+		reasoning_effort: 'none',
 		temperature: 0.2,
 	}, config);
-	assert.equal(kept.reasoning_effort, 'none');
 	assert.equal(kept.temperature, 0.2);
 
-	// 不带工具且用户选了非 none 强度 → 采样参数必须删掉
+	// 强度是别的值 → 采样参数必须删掉
 	const removed = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		reasoning_effort: 'high',
 		temperature: 0.2,
 	}, config);
 	assert.equal(removed.reasoning_effort, 'high');
+	assert.equal('temperature' in removed, false);
+});
+
+test('ModelCapabilityAdapter：没表态强度时采样参数按推理请求处理', () => {
+	// `when-thinking-off` 只看 `reasoning_effort` 的值，不看请求是否带工具：
+	// 没写强度就不等于 none，因此采样参数被删掉
+	const removed = capabilityTransform({
+		messages: [{ role: 'user', content: 'hi' }],
+		temperature: 0.2,
+	}, { samplingParams: 'when-thinking-off' });
+
 	assert.equal('temperature' in removed, false);
 });
 

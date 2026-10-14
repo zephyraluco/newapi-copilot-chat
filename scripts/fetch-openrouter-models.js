@@ -104,9 +104,6 @@ function printHelp() {
 			'          defaultReasoningEffort / samplingParams',
 			'（id 已剥掉厂商前缀与变体后缀；丢弃变体与路由型伪模型、非对话模型、',
 			'  缺少上下文窗口与输出上限的模型；后四个字段仅在上游给出时才会出现）',
-			'',
-			'注意：`data/model-overrides.json` 是手工维护的能力覆盖表，在**读取时**叠加到本文件的',
-			'      产物之上，因此重新生成不会丢掉那些「上游目录表达不了」的能力位。',
 		].join('\n'),
 	);
 }

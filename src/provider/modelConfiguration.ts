@@ -53,9 +53,8 @@ export interface ModelConfigurationSchema {
 /**
  * 构造模型配置 schema。
  *
- * 三种情况返回 `undefined`（不声明 schema 时 VS Code 不会展示任何控件，也不会向请求里
- * 塞入模型配置）：模型不支持思考、数据表没给出可选档位、以及该模型**带工具时强度会被强制改写**
- * （`toolCallingReasoningEffort`——Agent 模式总是带工具，控件不可能生效）。
+ * 两种情况返回 `undefined`（不声明 schema 时 VS Code 不会展示任何控件，也不会向请求里
+ * 塞入模型配置）：模型不支持思考、数据表没给出可选档位。
  *
  * 第二种是「会思考但不能调强度」的模型（上游只给 `mandatory` / `default_enabled`），对它们没有可选项可言。
  *
@@ -64,11 +63,6 @@ export interface ModelConfigurationSchema {
  */
 export function buildModelConfigurationSchema(config: ModelConfig): ModelConfigurationSchema | undefined {
 	if (!config.reasoning || config.reasoningEfforts.length === 0) {
-		return undefined;
-	}
-	// 带工具调用时强度会被强制成某个值，而 Agent 模式的请求**总是**带工具——控件永远不生效。
-	// 显示一个选得了、却不起作用的值比不显示更糟（见 ARCHITECTURE.md §12）。
-	if (config.toolCallingReasoningEffort !== undefined) {
 		return undefined;
 	}
 	return {

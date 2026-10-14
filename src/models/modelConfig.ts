@@ -97,17 +97,9 @@ export interface ModelConfig {
 	 * 采样参数（`temperature` / `top_p` / `logprobs`…）在 Chat Completions 里的接受情况。
 	 *
 	 * `undefined` 表示「始终接受」：数据表没表态时**不动请求**。取值只来自模型数据表
-	 * （生成脚本按上游的 `supported_parameters` 判定）与 `data/model-overrides.json`——
-	 * 网关的 `/v1/models` 不返回这类信息。
+	 * （生成脚本按上游的 `supported_parameters` 判定）——网关的 `/v1/models` 不返回这类信息。
 	 */
 	readonly samplingParams?: ModelSamplingParams;
-	/**
-	 * 带工具调用时 `reasoning_effort` 的**强制取值**（例如 `none`）。
-	 *
-	 * 存在时模型选择器里**不再显示**「思考强度」控件：Agent 模式的请求总是带工具，
-	 * 那个控件永远不生效，显示一个选不了的值比不显示更糟（见 `provider/modelConfiguration.ts`）。
-	 */
-	readonly toolCallingReasoningEffort?: string;
 	readonly meta: ModelConfigMeta;
 }
 
@@ -239,15 +231,11 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	const defaultReasoningEffort = fallback !== undefined && reasoningEfforts.includes(fallback)
 		? fallback
 		: undefined;
-	// 采样参数与「带工具时的思考强度」只有数据表会表态：网关的 /v1/models 不返回它们，
+	// 采样参数只有数据表会表态：网关的 /v1/models 不返回它，
 	// 因此不存在「远端覆盖」这一路（与窗口/输出不同）。
 	const samplingParams = dataset?.entry.samplingParams;
-	const toolCallingReasoningEffort = dataset?.entry.toolCallingReasoningEffort;
 	if (samplingParams !== undefined) {
 		provenance.samplingParams = 'dataset';
-	}
-	if (toolCallingReasoningEffort !== undefined) {
-		provenance.toolCallingReasoningEffort = 'dataset';
 	}
 
 	// ---- 一致性校正 ------------------------------------------------------
@@ -307,7 +295,6 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 		reasoningEfforts,
 		defaultReasoningEffort,
 		samplingParams,
-		toolCallingReasoningEffort,
 		meta,
 	};
 }

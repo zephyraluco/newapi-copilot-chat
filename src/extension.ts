@@ -14,31 +14,30 @@
  */
 
 import * as vscode from 'vscode';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createDefaultAdapterRegistry } from './adapter/registry';
 import { refreshAndNotify, registerCommands, type CommandDeps } from './commands';
 import { ConfigService, classifySettingsChange } from './config';
 import { CONFIG_SECTION, VENDOR_ID, initRuntimeInfo, runtimeInfo } from './consts';
 import { safeJsonParse } from './json';
 import { Logger, LoggerService, parseLogLevelName } from './logger';
-import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, MODEL_OVERRIDES_FILE, installModelDataset } from './models/dataset';
+import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, installModelDataset } from './models/dataset';
 import { NewApiChatProvider } from './provider/chatProvider';
 import { SessionRegistry } from './runtime/session';
 import { NewApiStatusBar } from './status/statusBar';
 import { StatusService } from './status/statusService';
 
 /** 模型数据表文件的绝对路径。 */
-function datasetFile(context: vscode.ExtensionContext, file: string): string {
-	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, file).fsPath;
+function datasetFile(context: vscode.ExtensionContext): string {
+	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE).fsPath;
 }
 
 /**
- * 读取数据表目录下的一个 JSON 文件。
+ * 读取随包附带的模型数据表。
  *
  * 读取与解析分开报错：文件不存在与文件坏了是两件事，排查方向完全不同。
  */
-function readDatasetJson(context: vscode.ExtensionContext, file: string, logger: Logger): unknown {
-	const path = datasetFile(context, file);
+function readModelDataset(logger: Logger, path: string): unknown {
 	let text: string;
 	try {
 		text = readFileSync(path, 'utf8');
@@ -54,37 +53,21 @@ function readDatasetJson(context: vscode.ExtensionContext, file: string, logger:
 }
 
 /**
- * 读取手工覆盖表。
- *
- * 文件不存在是**正常情况**（它是可选的），因此不记日志；只有存在但读不出来才值得说一句。
- */
-function loadModelOverrides(context: vscode.ExtensionContext, logger: Logger): unknown {
-	const path = datasetFile(context, MODEL_OVERRIDES_FILE);
-	if (!existsSync(path)) {
-		return undefined;
-	}
-	return readDatasetJson(context, MODEL_OVERRIDES_FILE, logger);
-}
-
-/**
- * 读取随包附带的模型数据表。
+ * 载入随包附带的模型数据表。
  *
  * 同步读取：文件在几十 KB 量级，而模型发现随时可能发生；同步读能保证「激活完成」
  * 就等于「数据表可用」，不必让 provider 等待一个异步初始化。
  * 文件缺失或损坏时只会让数据表为空（模型配置退回「网关返回值 + 默认值」），
  * 不影响扩展其余部分。数据表是生成产物，因此只在激活时读一次。
- *
- * 手工覆盖表（`data/model-overrides.json`）在解析前叠加到数据表上：上游目录表达不了
- * 「带工具时强度只能是某个值」这类站点行为，而那些特判写成代码就是逐模型名正则。
  */
 function loadModelDataset(context: vscode.ExtensionContext, logger: Logger): void {
-	const raw = readDatasetJson(context, MODEL_DATASET_FILE, logger);
+	const raw = readModelDataset(logger, datasetFile(context));
 	if (raw === undefined) {
 		installModelDataset(undefined);
 		return;
 	}
 
-	const dataset = installModelDataset(raw, loadModelOverrides(context, logger));
+	const dataset = installModelDataset(raw);
 	const skipped = dataset.skipped > 0 ? `，忽略 ${dataset.skipped} 条不完整记录` : '';
 	logger.info(`已加载模型数据表：${dataset.entries.length} 条记录${skipped}`);
 	if (dataset.generatedAt !== undefined) {

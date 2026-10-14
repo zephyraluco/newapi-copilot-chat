@@ -4,7 +4,7 @@
  * 与其它适配器的分工是刻意的：
  *
  * - 别的适配器认的是**协议**（某家上游对 OpenAI 协议的实现差异），判据是模型名；
- * - 本适配器认的是**数据**（模型数据表 + `data/model-overrides.json`），判据是能力位。
+ * - 本适配器认的是**数据**（模型数据表），判据是能力位。
  *
  * 这样「只针对某个模型名的特判」不必写成代码里的正则——那是 `ARCHITECTURE.md §11`
  * 明令该进数据表的东西，写成正则还会散落成 `if (model.id.startsWith(...))`。
@@ -21,7 +21,7 @@ import { stripSamplingParams } from './samplingParams';
 
 export class ModelCapabilityAdapter implements ModelAdapter {
 	readonly id = 'model-capabilities';
-	readonly description = '按数据表的能力位改写请求（采样参数、带工具时的思考强度）';
+	readonly description = '按数据表的能力位改写请求（采样参数）';
 	readonly priority = 50;
 
 	supports(): boolean {
@@ -30,18 +30,6 @@ export class ModelCapabilityAdapter implements ModelAdapter {
 
 	transformRequest(request: ChatCompletionRequest, context: AdapterContext): ChatCompletionRequest {
 		const { model } = context;
-
-		// 顺序是语义的一部分：先按能力位定下思考强度，再判断采样参数能不能留——
-		// `when-thinking-off` 这个能力位看的就是改完之后的值。
-		if (model.toolCallingReasoningEffort !== undefined && usesTools(request)) {
-			if (request[DEFAULT_REASONING_EFFORT_FIELD] !== model.toolCallingReasoningEffort) {
-				context.logger.debug(
-					`${model.id}：Chat Completions 工具调用要求 ` +
-					`${DEFAULT_REASONING_EFFORT_FIELD}=${model.toolCallingReasoningEffort}，已覆盖本次思考强度`,
-				);
-			}
-			request[DEFAULT_REASONING_EFFORT_FIELD] = model.toolCallingReasoningEffort;
-		}
 
 		if (!acceptsSamplingParams(model, request) && stripSamplingParams(request)) {
 			context.logger.debug(
@@ -67,15 +55,4 @@ function acceptsSamplingParams(model: ModelConfig, request: ChatCompletionReques
 		return request[DEFAULT_REASONING_EFFORT_FIELD] === 'none';
 	}
 	return true;
-}
-
-/**
- * 这次请求带工具吗。
- *
- * 判据与「工具组预激活」用的那条一致：既要看本次下发的 `tools`，也要看历史里是否已经有
- * 工具调用/工具结果——只有工具结果的那一轮，`tools` 可能已经不再下发。
- */
-function usesTools(request: ChatCompletionRequest): boolean {
-	return (request.tools?.length ?? 0) > 0
-		|| request.messages.some(message => message.role === 'tool' || (message.tool_calls?.length ?? 0) > 0);
 }
