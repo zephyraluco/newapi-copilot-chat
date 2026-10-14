@@ -167,7 +167,8 @@ The design and implementation borrow from two similar extensions:
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` — architecture notes for people modifying this codebase (in Chinese)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture notes for people modifying this codebase (in Chinese)
+- [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md) — design references, the adapter matrix, and the steps for adding a vendor (in Chinese)
 - [Language Model Chat Provider API](https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider)
 - [VS Code API Reference](https://code.visualstudio.com/api/references/vscode-api)
 - [New API](https://github.com/QuantumNous/new-api)

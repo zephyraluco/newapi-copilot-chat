@@ -7,7 +7,7 @@
 - [deepseek-v4-for-copilot 请求准备](https://github.com/Vizards/deepseek-v4-for-copilot/blob/main/src/provider/request.ts)：借鉴厂商原生思考开关、辅助请求分类、思考历史回放等适配思路。
 - [DeepSeek 官方思考接口](https://api-docs.deepseek.com/guides/thinking_mode)：Chat Completions 的开关是 `thinking.type`；关闭时不发送 `reasoning_effort`；带工具的思考请求需要回传历史 `reasoning_content`。
 
-参考仓库持续变化，厂商规则以本项目中实际实现的适配器和测试为准。
+厂商规则以本项目中实际实现的适配器和测试为准。
 
 ## 1. 通用部分
 
@@ -24,20 +24,20 @@ VS Code / Copilot
 
 通用层负责配置、凭据引用、模型列表、消息/工具转换、取消、重试、超时、用量、响应流和错误。模型 ID 保持网关原值；模型元数据只携带目标指纹，不携带密钥。
 
-官方 API 是接入契约。模型级 `configurationSchema`、上下文窗口扩展元数据和思考/回放部件依赖额外宿主能力，不能把这些行为等同于官方指南保证的稳定接口。已有思考渲染代码负责运行时探测与回退。
+官方 API 是接入契约。模型级 `configurationSchema`、上下文窗口扩展元数据和思考/回放部件依赖额外宿主能力。已有思考渲染代码负责运行时探测与回退。
 
 ## 2. 厂商适配契约
 
 `ModelAdapter` 提供 `supports`、可选的 `transformRequest`、可选的 `echoReasoningContent`。`AdapterContext` 只携带模型元数据、日志以及已校验的思考选择，不读取用户设置或直接调用 VS Code。
 
-注册表按优先级执行**全部命中项**。厂商策略先执行，元数据能力位随后执行；无匹配项时直接透传。`transformRequest` 在深复制的请求上执行，已有原地改写不会污染调用方的消息历史；异步适配器的返回值继续传给后续适配器。
+注册表按优先级执行**全部命中项**。厂商策略先执行，元数据能力位随后执行；无匹配项时直接透传。`transformRequest` 在深复制的请求上执行，异步适配器的返回值继续传给后续适配器。
 
 思考配置分成两个概念：
 
-- 请求体中的 `reasoning_effort`：仍遵循“与 schema 默认相同则省略”的规则。
-- 上下文中的有效选择：包含默认档位，使原生开关正确解释 `none` / `off`，避免默认关闭却被适配器重新打开。
+- 请求体中的 `reasoning_effort`：与 schema 默认相同则省略。
+- 上下文中的有效选择：包含默认档位，使原生开关正确解释 `none` / `off`。
 
-请求里的显式强度字段优先于上下文兜底。在没有有效模型选择时，已有厂商原生字段继续透传。
+请求里的显式强度字段优先于上下文兜底。在没有有效模型选择时，厂商原生字段继续透传。
 
 ## 3. 当前适配矩阵
 
@@ -50,15 +50,15 @@ VS Code / Copilot
 | Kimi | 转换为 `thinking.type`；删除转换后的强度字段 | 通用回放保留已知原文，不生成占位 |
 | 其他模型 | 通用 Chat Completions 与数据驱动能力位 | 不要求额外回填 |
 
-Qwen/Kimi 的转换表达**开关**，不把强度凭空换算成 token 预算。Qwen 的 `thinking_budget` 可由 `request.extraBody` 透传。
+Qwen/Kimi 的转换只表达**开关**，不换算 token 预算。Qwen 的 `thinking_budget` 可由 `request.extraBody` 透传。
 
-选项仍来自模型元数据，适配器不新增猜测的档位。不能关闭思考的模型应当由元数据排除 `none` / `off`；未知版本的规则不通过版本号正则臆测。
+选项来自模型元数据，适配器不新增档位。不能关闭思考的模型应由元数据排除 `none` / `off`；未知版本不通过版本号正则臆测。
 
-`samplingParams=when-thinking-off` 能识别 `reasoning_effort=none/off`、`enable_thinking=false`、`thinking.type=disabled`，所以字段改写后仍保留正确的采样语义。
+`samplingParams=when-thinking-off` 识别 `reasoning_effort=none/off`、`enable_thinking=false`、`thinking.type=disabled`。
 
 ## 4. 传输与新增厂商
 
-当前通道是 New API 的 `/v1/chat/completions`。参考项目中的 Responses、Anthropic Messages、Google 原生流需要各自的请求构造与响应归一化；不能只改 URL 就宣称支持。未来新增通道沿 `ChatStreamSource` 边界实现，共享取消、错误与流式上报。
+当前通道是 New API 的 `/v1/chat/completions`。Responses、Anthropic Messages、Google 原生流需要各自的请求构造与响应归一化。未来新增通道沿 `ChatStreamSource` 边界实现，共享取消、错误与流式上报。
 
 新增厂商步骤：
 

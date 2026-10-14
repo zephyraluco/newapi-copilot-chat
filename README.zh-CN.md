@@ -184,7 +184,8 @@ npm run package        # 产出 .vsix
 
 ## 相关文档
 
-- `docs/ARCHITECTURE.md` —— 架构说明，面向要修改本代码库的人
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 架构说明，面向要修改本代码库的人
+- [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md) —— 通用层与厂商适配的设计依据、适配矩阵与新增厂商步骤
 - [Language Model Chat Provider API](https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider)
 - [VS Code API Reference](https://code.visualstudio.com/api/references/vscode-api)
 - [New API](https://github.com/QuantumNous/new-api)
