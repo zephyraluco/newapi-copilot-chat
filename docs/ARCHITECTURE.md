@@ -362,7 +362,7 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 | 工具结果 | 用户消息里的 `LanguageModelToolResultPart` | **独立**的 `role: 'tool'` 消息，带 `tool_call_id` |
 | 图片 | `LanguageModelDataPart` | `image_url`，URL 为 `data:` 形式 |
 
-因此一个 VS Code 消息可能被拆成**多条**上游消息，且顺序敏感。其他细节：带 `tool_calls` 时 `content` 必须为 `null`；`system` 角色由「用户消息 + `name === 'system'`」启发式识别；未知部件尽力转成文本而不是丢掉。
+因此一个 VS Code 消息可能被拆成**多条**上游消息，且顺序敏感。其他细节：仅有 `tool_calls` 时 `content` 为 `null`；`system` 角色由「用户消息 + `name === 'system'`」启发式识别。工具结果中的图片转换为 `image_url`，与工具文本组成多模态数组；非图片数据部件和未知对象直接忽略，避免 `cache_control` 等宿主元数据污染上下文。回放标记仍由专用路径读取。token 估算同样忽略未透传的数据部件。
 
 ### 流式翻译（`stream.ts`）
 

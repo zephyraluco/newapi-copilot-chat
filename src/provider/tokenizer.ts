@@ -14,7 +14,7 @@
  */
 
 import * as vscode from 'vscode';
-import { TOKEN_ESTIMATION } from '../consts';
+import { SUPPORTED_IMAGE_MIME_TYPES, TOKEN_ESTIMATION } from '../consts';
 import { safeJsonStringify } from '../json';
 import { REPLAY_MARKER_MIME, isReplayMarkerPart, parseReplayMarker } from './replay';
 import { readThinkingText } from './thinking';
@@ -133,7 +133,7 @@ export function estimateMessageTokens(
 				if (item instanceof vscode.LanguageModelTextPart) {
 					total += estimateTextTokens(item.value, charsPerToken);
 				} else if (item instanceof vscode.LanguageModelDataPart) {
-					total += estimateDataPartTokens(item, charsPerToken);
+					total += estimateDataPartTokens(item);
 				} else if (typeof item === 'string') {
 					total += estimateTextTokens(item, charsPerToken);
 				}
@@ -146,7 +146,7 @@ export function estimateMessageTokens(
 				replayedReasoning ??= parseReplayMarker(part.data);
 				continue;
 			}
-			total += estimateDataPartTokens(part, charsPerToken);
+			total += estimateDataPartTokens(part);
 			continue;
 		}
 		const thinking = readThinkingText(part);
@@ -165,26 +165,21 @@ export function estimateMessageTokens(
 	return total;
 }
 
-/** 图片按固定开销估算；其它类型的二进制按长度粗略折算。 */
-function estimateDataPartTokens(
-	part: vscode.LanguageModelDataPart,
-	charsPerToken: number,
-): number {
+/** 仅估算实际透传的图片；其它数据部件不进入上游上下文。 */
+function estimateDataPartTokens(part: vscode.LanguageModelDataPart): number {
 	// 回放标记（见 replay.ts）是我们自己写进历史的元数据，不会被当成二进制发给上游，
 	// 它的文本由 `estimateMessageTokens` 单独计入（每条消息只算一次）
 	if (part.mimeType === REPLAY_MARKER_MIME) {
 		return 0;
 	}
 	const mime = part.mimeType.toLowerCase();
-	if (mime.startsWith('image/')) {
+	if (part.data.byteLength > 0
+		&& SUPPORTED_IMAGE_MIME_TYPES.includes(mime as typeof SUPPORTED_IMAGE_MIME_TYPES[number])) {
 		// 视口大小与细节等级都会影响实际消耗，这里取一个常见的中间值。
 		// 高估无妨（见文件头部说明）。
 		return TOKEN_ESTIMATION.imageOverhead;
 	}
-	if (mime.startsWith('text/') || mime.includes('json')) {
-		return estimateTextTokens(new TextDecoder('utf-8').decode(part.data), charsPerToken);
-	}
-	return Math.ceil(part.data.byteLength / 512);
+	return 0;
 }
 
 /**

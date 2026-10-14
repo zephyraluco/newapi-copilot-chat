@@ -144,15 +144,58 @@ test('工具结果为空时给一个占位文本：上游要求 role:tool 的 co
 	assert.equal(result.messages[0].content, '(工具没有返回内容)');
 });
 
-test('工具结果里的数据部件按 MIME 变成文本', () => {
+test('工具结果里的非图片数据部件被忽略，已知文本照常保留', () => {
 	const json = new vscode.LanguageModelDataPart(new TextEncoder().encode('{"a":1}'), 'application/json');
 	const binary = new vscode.LanguageModelDataPart(new Uint8Array(300), 'application/octet-stream');
 
-	const result = convertMessages([userMessage([toolResult('call_1', [json, binary])])], logger);
+	const result = convertMessages([userMessage([toolResult('call_1', [text('ok'), json, binary])])], logger);
 
-	assert.match(result.messages[0].content, /\{"a":1\}/);
-	// 二进制不会把乱码塞进上下文，只给一句说明
-	assert.match(result.messages[0].content, /300 字节/);
+	assert.equal(result.messages[0].content, 'ok');
+});
+
+test('cache_control 与未知控制部件不会污染用户、助手和工具正文', () => {
+	const control = new vscode.LanguageModelDataPart(new Uint8Array(9), 'cache_control');
+	const unknown = { type: 'metadata', internal: true };
+	const result = convertMessages([
+		userMessage([text('hi'), control, unknown]),
+		assistantMessage([text('ok'), control, unknown]),
+		userMessage([toolResult('call_1', [text('done'), control, unknown, createReplayMarkerPart('内部思考')])]),
+	], logger);
+	assert.deepEqual(result.messages, [
+		{ role: 'user', content: 'hi' },
+		{ role: 'assistant', content: 'ok' },
+		{ role: 'tool', tool_call_id: 'call_1', content: 'done' },
+	]);
+});
+
+test('工具结果图片与文字保留为多模态内容，多个结果保持调用对应关系', () => {
+	const png = new vscode.LanguageModelDataPart(new Uint8Array([137, 80, 78, 71]), 'image/png');
+	const result = convertMessages([
+		assistantMessage([toolCall('shot', 'screenshot', {}), toolCall('file', 'read_file', {})]),
+		userMessage([toolResult('shot', [text('截图'), png]), toolResult('file', [text('代码')]), text('继续')]),
+	], logger);
+	assert.deepEqual(result.messages.slice(1), [
+		{ role: 'tool', tool_call_id: 'shot', content: [
+			{ type: 'text', text: '截图' },
+			{ type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw==' } },
+		] },
+		{ role: 'tool', tool_call_id: 'file', content: '代码' },
+		{ role: 'user', content: '继续' },
+	]);
+});
+
+test('工具结果只有图片时保留图片，只有未知数据时保留工具结果占位', () => {
+	const png = new vscode.LanguageModelDataPart(new Uint8Array([1, 2, 3, 4]), 'image/png');
+	const control = new vscode.LanguageModelDataPart(new Uint8Array(9), 'cache_control');
+	const result = convertMessages([userMessage([
+		toolResult('image', [png]), toolResult('empty', [control]),
+	])], logger);
+	assert.deepEqual(result.messages, [
+		{ role: 'tool', tool_call_id: 'image', content: [
+			{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQIDBA==' } },
+		] },
+		{ role: 'tool', tool_call_id: 'empty', content: '(工具没有返回内容)' },
+	]);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -177,24 +220,30 @@ test('只有图片没有文字时也组成多模态内容', () => {
 	assert.equal(Array.isArray(result.messages[0].content), true);
 });
 
-test('不支持的图片类型退化成代码块文本，而不是被丢掉', () => {
+test('不支持的图片类型被忽略，不生成二进制占位文本', () => {
 	const bmp = new vscode.LanguageModelDataPart(new Uint8Array(10), 'image/bmp');
 	const result = convertMessages([userMessage([bmp])], logger);
 
-	assert.equal(typeof result.messages[0].content, 'string');
-	assert.match(result.messages[0].content, /image\/bmp/);
-	assert.match(result.messages[0].content, /```/);
+	assert.deepEqual(result.messages, []);
+	assert.equal(result.skipped, 1);
 });
 
-test('空的图片数据不作为图片发送，只留警告与占位文本', () => {
+test('空的图片数据不作为图片发送，只留警告', () => {
 	const empty = new vscode.LanguageModelDataPart(new Uint8Array(0), 'image/png');
 	const result = convertMessages([userMessage([empty])], logger);
 
 	assert.equal(result.warnings.length, 1);
 	assert.match(result.warnings[0], /空的图片/);
-	// 空图片发出去上游会报错，因此退化成一段文本，而不是把整条消息丢掉
-	assert.equal(typeof result.messages[0].content, 'string');
-	assert.equal(result.messages[0].content.includes('data:'), false);
+	assert.deepEqual(result.messages, []);
+	assert.equal(result.skipped, 1);
+});
+
+test('助手只有图片时也保留多模态内容', () => {
+	const png = new vscode.LanguageModelDataPart(new Uint8Array([1, 2, 3, 4]), 'image/png');
+	const result = convertMessages([assistantMessage([png])], logger);
+	assert.deepEqual(result.messages, [{ role: 'assistant', content: [
+		{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQIDBA==' } },
+	] }]);
 });
 
 /* -------------------------------------------------------------------------- */

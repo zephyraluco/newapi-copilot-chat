@@ -115,18 +115,20 @@ test('estimateMessageTokens：工具调用数函数名与参数', () => {
 	assert.equal(estimateMessageTokens(message), 4 + 3 + 2);
 });
 
-test('estimateMessageTokens：工具结果里的文本与数据部件都要数', () => {
+test('estimateMessageTokens：工具结果图片计入预算，非图片数据部件不计入', () => {
 	const message = {
 		role: 1,
 		content: [
 			new vscode.LanguageModelToolResultPart('call_1', [
 				text('abcd'),
 				new vscode.LanguageModelDataPart(new TextEncoder().encode('你好'), 'text/plain'),
+				new vscode.LanguageModelDataPart(new Uint8Array(4), 'image/png'),
+				new vscode.LanguageModelDataPart(new Uint8Array(9), 'cache_control'),
 			]),
 		],
 	};
 
-	assert.equal(estimateMessageTokens(message), 4 + 1 + 2);
+	assert.equal(estimateMessageTokens(message), 4 + 1 + 1_024);
 });
 
 test('estimateMessageTokens：图片按固定开销估算', () => {
@@ -138,12 +140,20 @@ test('estimateMessageTokens：图片按固定开销估算', () => {
 	assert.equal(estimateMessageTokens(message), 4 + 1_024);
 });
 
-test('estimateMessageTokens：其它二进制按长度粗略折算', () => {
+test('estimateMessageTokens：未透传的数据部件不占用预算', () => {
 	const small = { role: 1, content: [new vscode.LanguageModelDataPart(new Uint8Array(512), 'application/octet-stream')] };
 	const large = { role: 1, content: [new vscode.LanguageModelDataPart(new Uint8Array(5_120), 'application/octet-stream')] };
 
-	assert.equal(estimateMessageTokens(small), 4 + 1);
-	assert.equal(estimateMessageTokens(large), 4 + 10);
+	assert.equal(estimateMessageTokens(small), 4);
+	assert.equal(estimateMessageTokens(large), 4);
+	for (const [mime, data] of [
+		['cache_control', new Uint8Array(9)],
+		['image/bmp', new Uint8Array(10)],
+		['image/png', new Uint8Array(0)],
+		['application/json', new TextEncoder().encode('{"a":1}')],
+	]) {
+		assert.equal(estimateMessageTokens({ role: 1, content: [new vscode.LanguageModelDataPart(data, mime)] }), 4);
+	}
 });
 
 test('estimateMessageTokens：回放标记的思考内容要计入，且只算一次', () => {

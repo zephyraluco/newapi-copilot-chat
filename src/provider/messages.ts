@@ -89,7 +89,7 @@ export function convertMessages(
 				toolMessages.push({
 					role: 'tool',
 					tool_call_id: part.callId,
-					content: toolResultToText(part),
+					content: convertToolResultContent(part, warnings),
 				});
 				continue;
 			}
@@ -105,12 +105,10 @@ export function convertMessages(
 				const image = dataPartToImage(part, warnings);
 				if (image !== undefined) {
 					contentParts.push(image);
-				} else {
-					textBuffer += `\n\`\`\`\n${dataPartToText(part)}\n\`\`\`\n`;
 				}
 				continue;
 			}
-			// 未知部件：尽力转成文本，而不是丢掉（丢掉会让模型失去上下文）
+			// 仅兼容字符串和文本部件形状；未知宿主元数据不能作为正文。
 			const fallback = partToText(part);
 			if (fallback !== undefined && fallback.length > 0) {
 				textBuffer += fallback;
@@ -209,9 +207,9 @@ function convertAssistantMessage(
 	}
 
 	// OpenAI 约定：带 tool_calls 时 content 必须为 null（部分上游对空字符串也会报错）
-	const content: ChatRequestMessage['content'] = text.length > 0
-		? (images.length > 0 ? buildMultimodalContent(text, images) : text)
-		: (toolCalls.length > 0 ? null : '');
+	const content: ChatRequestMessage['content'] = images.length > 0
+		? buildMultimodalContent(text, images)
+		: (text.length > 0 ? text : null);
 
 	const name = normalizeName(message.name);
 	const reasoning = echoReasoningContent
@@ -303,27 +301,23 @@ function dataPartToImage(part: vscode.LanguageModelDataPart, warnings: string[])
 	return { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } };
 }
 
-/** 把非图片的数据部件转成文本。 */
-function dataPartToText(part: vscode.LanguageModelDataPart): string {
-	const text = new TextDecoder('utf-8').decode(part.data);
-	const mime = part.mimeType.toLowerCase();
-	if (mime.includes('json') || mime.includes('markdown') || mime.startsWith('text/')) {
-		return text;
-	}
-	// 二进制：只给出说明，不把乱码塞进上下文
-	return `[${part.mimeType} 数据，${part.data.byteLength} 字节]`;
-}
-
-/** 把工具结果部件转成上游需要的纯文本。 */
-function toolResultToText(part: vscode.LanguageModelToolResultPart): string {
+/** 工具图片保留为 image_url；非图片数据部件直接忽略。 */
+function convertToolResultContent(
+	part: vscode.LanguageModelToolResultPart,
+	warnings: string[],
+): ChatRequestMessage['content'] {
 	const chunks: string[] = [];
+	const images: ChatContentPart[] = [];
 	for (const item of part.content ?? []) {
 		if (item instanceof vscode.LanguageModelTextPart) {
 			chunks.push(item.value);
 			continue;
 		}
 		if (item instanceof vscode.LanguageModelDataPart) {
-			chunks.push(dataPartToText(item));
+			const image = dataPartToImage(item, warnings);
+			if (image !== undefined) {
+				images.push(image);
+			}
 			continue;
 		}
 		const text = partToText(item);
@@ -332,11 +326,14 @@ function toolResultToText(part: vscode.LanguageModelToolResultPart): string {
 		}
 	}
 	const joined = chunks.join('\n');
+	if (images.length > 0) {
+		return buildMultimodalContent(joined, images);
+	}
 	// 上游对 role:'tool' 的 content 要求非空字符串
 	return joined.length > 0 ? joined : '(工具没有返回内容)';
 }
 
-/** 尽力把未知部件转成文本。 */
+/** 只接受文本；未知对象和控制部件不序列化进上下文。 */
 function partToText(part: unknown): string | undefined {
 	if (typeof part === 'string') {
 		return part;
@@ -351,9 +348,8 @@ function partToText(part: unknown): string | undefined {
 		if (typeof maybeText === 'string') {
 			return maybeText;
 		}
-		return safeJsonStringify(part) ?? undefined;
 	}
-	return String(part);
+	return undefined;
 }
 
 /** 规整消息名：空字符串视为未设置。上游对 name 有字符集要求，异常值直接丢弃。 */
