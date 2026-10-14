@@ -180,10 +180,10 @@ Model discovery, configuration groups, message/tool conversion, streaming, cance
 | Vendor | Adaptation |
 | --- | --- |
 | DeepSeek | Native thinking toggle, helper-request optimization, reasoning replay; `none` / `off` disables thinking |
-| OpenAI reasoning models | `max_completion_tokens` and unsupported sampling-field removal |
-| Qwen | Thinking selection becomes `enable_thinking`; `auto` adds no toggle |
-| GLM | Disabled thinking becomes `thinking.type=disabled`; concrete effort passes through |
-| Kimi | Native `thinking.type` toggle and shared reasoning replay |
+| OpenAI reasoning models | o-series and GPT-5 onward: `max_completion_tokens` and unsupported sampling-field removal |
+| Qwen | Models without effort levels map the choice to `enable_thinking`; models with levels keep `reasoning_effort`; `auto` adds no toggle; reasoning replay |
+| GLM | Explicit `thinking.type`; concrete effort passes through; forced-thinking `glm-5.3` / `glm-4.7` become an explicit enable; reasoning replay |
+| Kimi | K2.x thinking becomes `thinking.type` and supports helper-request disabling; K3 / K2.7-code always reason and keep top-level `reasoning_effort`; reasoning replay |
 
 Available choices remain metadata-driven. Qwen/Kimi use native toggles without inventing token budgets. These adapters use the gateway's Chat Completions endpoint. See [the design document](docs/PROVIDER-DESIGN.md) for API boundaries, references, and extension steps.
 

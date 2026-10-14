@@ -1,9 +1,9 @@
 /**
- * DeepSeek 适配器：把请求改写成 DeepSeek 的形态；同目录的 `requestKind.ts` 提供判据。
+ * DeepSeek 适配器：把请求改写成 DeepSeek 的形态；请求种类判据在框架层 `../requestKind.ts`。
  *
  * 1. **思考要显式开关**：`thinking: { type: 'enabled' | 'disabled' }`。
  * 2. **`reasoning_effort` 只与「开启思考」共存**：关掉思考或模型无思考能力时去掉。
- * 3. **辅助请求不思考**：它们的产出只有一行短文本（见 `requestKind.ts`）。
+ * 3. **辅助请求不思考**：它们的产出只有一行短文本（见 `../requestKind.ts`）。
  * 4. **思考内容要回填历史**：思考态下历史里缺 `reasoning_content` 会被上游整次拒掉，
  *    每一条助手消息都算。已知原文由 provider 用回放标记带回（见 `provider/replay.ts`），
  *    拿不到原文的由这里补占位。
@@ -17,7 +17,7 @@ import type { ModelConfig } from '../../models/modelConfig';
 import { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } from '../../reasoning';
 import type { ChatCompletionRequest } from '../../types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
-import { classifyRequest, shouldDisableThinking } from './requestKind';
+import { classifyRequest, shouldDisableThinking } from '../requestKind';
 import { isThinkingDisabled, readThinkingEffort } from '../thinkingMode';
 
 /** 这个模型是不是 DeepSeek。 */

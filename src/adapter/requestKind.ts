@@ -5,9 +5,11 @@
  * 给提示分类等），能用来区分的只有首条消息（系统提示词）的前缀，以及少数「只带一个工具」的请求。
  *
  * 前缀是识别用的特征，不是协议：宿主改了措辞只会退化成 `background`。
+ *
+ * 这里是框架层：判据与厂商无关，`deepseek/` 与 `glm/` 等厂商适配器共用它来决定何时关闭思考。
  */
 
-import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../../types';
+import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../types';
 
 /** 一次请求的种类。 */
 export type ChatRequestKind =

@@ -130,10 +130,10 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 | 厂商 | 适配行为 |
 | --- | --- |
 | DeepSeek | 原生思考开关、辅助请求关闭思考、思考历史回填；`none` / `off` 真正关闭思考 |
-| OpenAI 推理模型 | 输出上限改为 `max_completion_tokens`，移除不支持的采样字段 |
-| Qwen | 思考选择转为 `enable_thinking`；`auto` 不新增开关 |
-| GLM | 关闭思考转为 `thinking.type=disabled`，具体强度透传 |
-| Kimi | 思考选择转为 `thinking.type`，使用共享思考历史回放 |
+| OpenAI 推理模型 | o 系列与 GPT-5 之后：输出上限改为 `max_completion_tokens`，移除不支持的采样字段 |
+| Qwen | 无档位型号的思考选择转为 `enable_thinking`；有档位型号保留 `reasoning_effort`；`auto` 不新增开关；思考历史回填 |
+| GLM | 显式写入 `thinking.type`；具体强度透传；强制思考的 `glm-5.3` / `glm-4.7` 关不了则写 `enabled`；思考历史回填 |
+| Kimi | K2.x 思考选择转为 `thinking.type` 并支持辅助请求关闭；K3 / K2.7-code 思考常开，保留顶层 `reasoning_effort`；思考历史回填 |
 
 可选档位仍来自模型元数据。Qwen/Kimi 使用原生开关，不将强度换算成预算。上述模型通过 New API 的 Chat Completions 通道请求。设计依据与扩展方式见 [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md)。
 

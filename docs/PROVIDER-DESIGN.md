@@ -43,16 +43,28 @@ VS Code / Copilot
 
 | 厂商 | 请求适配 | 思考历史 |
 | --- | --- | --- |
-| DeepSeek | `thinking.type`；`none` / `off` 与辅助请求关闭；关闭时删除强度字段 | 通用回放，开启时补齐缺失历史字段 |
-| OpenAI 推理模型 | `max_tokens` → `max_completion_tokens`；移除不支持的采样字段 | 不要求额外回填 |
-| Qwen | 转换为 `enable_thinking`；`auto` 不新增开关；删除转换后的强度字段 | 不要求额外回填 |
-| GLM | `none` / `off` 转为 `thinking.type=disabled`；具体强度继续透传 | 不要求额外回填 |
-| Kimi | 转换为 `thinking.type`；删除转换后的强度字段 | 通用回放保留已知原文，不生成占位 |
+| DeepSeek | `thinking.type` 一律显式写入；`none` / `off` 与辅助请求关闭；关闭或非思考模型时删除强度字段 | 通用回放，开启时补齐缺失历史字段 |
+| OpenAI 推理模型（o 系列与 GPT-5 之后） | `max_tokens` → `max_completion_tokens`；移除不支持的采样字段；非思考形态清掉强度字段 | 不要求额外回填 |
+| Qwen | 无强度档位的型号把选择转为 `enable_thinking`；有档位的型号保留 `reasoning_effort`；`auto` 不新增开关；非思考模型清掉强度字段 | 通用回放 |
+| GLM | `thinking.type` 一律显式写入；`none` / `off` 与辅助请求转为 `disabled`；强制思考的型号（`glm-5.3`、`glm-4.7`）关不了则写 `enabled`；非思考模型清掉强度字段 | 通用回放（Preserved Thinking 要求回传未修改的原文） |
+| Kimi | K2.x 用 `thinking.type` 显式开关并支持辅助请求关闭；K3 / K2.7-code 思考常开，保留顶层 `reasoning_effort`；非思考模型清掉强度字段 | 通用回放（Preserved Thinking） |
 | 其他模型 | 通用 Chat Completions 与数据驱动能力位 | 不要求额外回填 |
 
 Qwen/Kimi 的转换只表达**开关**，不换算 token 预算。Qwen 的 `thinking_budget` 可由 `request.extraBody` 透传。
+K3 的顶层 `reasoning_effort` 正是强度字段本身，适配器因此原样保留、不落地成语义不同的嵌套开关。
 
-选项来自模型元数据，适配器不新增档位。不能关闭思考的模型应由元数据排除 `none` / `off`；未知版本不通过版本号正则臆测。
+**两个契约在厂商间是一致的**：
+
+- `echoReasoningContent`：DeepSeek / Kimi / GLM / Qwen 都要求把历史助手消息的思考原文原样带回，
+  因此四家都打开它；OpenAI 不要求。
+- **辅助请求关闭思考**：判据放在框架层 `requestKind.ts`（与厂商无关），由 DeepSeek / Kimi(K2.x) / GLM 使用。
+  **只对能真正关掉思考的厂商开启**——Kimi K3、Qwen 没有可靠的关闭手段，写一个不生效的「关闭」
+  反而误导，因此它们只做强度清理，不假装关闭。
+
+选项来自模型元数据，适配器不新增档位。能表达「关不掉」的模型应由元数据排除 `none` / `off`；
+只有在元数据表达不了、而上游又会直接拒绝关闭时，才允许按**官方点名的代际**做例外（`glm-5.3`、
+`glm-4.7`、Kimi K3/K2.7-code），不从版本号臆测其它型号。Kimi 分流优先看数据表给出的档位
+（`kimi-latest` 这类别名靠它归位），命名判据只是数据缺失时的兜底。
 
 `samplingParams=when-thinking-off` 识别 `reasoning_effort=none/off`、`enable_thinking=false`、`thinking.type=disabled`。
 

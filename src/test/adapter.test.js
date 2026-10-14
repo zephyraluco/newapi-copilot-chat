@@ -14,7 +14,7 @@ const { modules } = load({
 	consts: './src/consts',
 	registry: './src/adapter/registry',
 	deepseek: './src/adapter/deepseek/deepseekAdapter',
-	requestKind: './src/adapter/deepseek/requestKind',
+	requestKind: './src/adapter/requestKind',
 	capability: './src/adapter/capabilityAdapter',
 	openaiReasoning: './src/adapter/openai/openaiAdapter',
 	reasoning: './src/reasoning',
@@ -30,7 +30,7 @@ const { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } = modules.reasoning;
 
 /** 造一个够用的模型配置：只有 `id` 与 `meta.vendor` 会被适配器读。 */
 function model(id, vendor) {
-	return { id, meta: vendor === undefined ? {} : { vendor }, reasoning: false };
+	return { id, meta: vendor === undefined ? {} : { vendor }, reasoning: false, reasoningEfforts: [] };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -479,6 +479,183 @@ test('OpenAIAdapter：数据表已表态的模型让位给能力位适配器', (
 	assert.equal('max_tokens' in request, false);
 });
 
+test('OpenAIAdapter：也认 o 系列推理模型', () => {
+	const adapter = new OpenAIAdapter();
+
+	for (const id of ['o1', 'o1-pro', 'o3', 'o3-mini', 'o3-mini-high', 'o3-pro', 'o4-mini', 'o4-mini-high', 'openai/o3@official']) {
+		assert.equal(adapter.supports(model(id)), true, id);
+	}
+	// o 系列之后的普通对话模型不受影响
+	for (const id of ['gpt-4.1', 'gpt-4o']) {
+		assert.equal(adapter.supports(model(id)), false, id);
+	}
+});
+
+test('OpenAIAdapter：o 系列同样只认 max_completion_tokens', () => {
+	const adapter = new OpenAIAdapter();
+	const context = { model: { id: 'o3' }, logger: createLogger() };
+
+	const request = adapter.transformRequest({
+		model: 'o3',
+		messages: [{ role: 'user', content: 'hi' }],
+		max_tokens: 4_096,
+		temperature: 0.4,
+	}, context);
+
+	assert.equal(request.max_completion_tokens, 4_096);
+	assert.equal('max_tokens' in request, false);
+	// o 系列会直接拒绝采样参数，而不是忽略
+	assert.equal('temperature' in request, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Kimi 适配器                                                                 */
+/* -------------------------------------------------------------------------- */
+
+test('Kimi：K3 与 K2.7-code 保留顶层 reasoning_effort，不写会被拒的 thinking', async () => {
+	const registry = createDefaultAdapterRegistry();
+	async function transform(id, request, effort, efforts) {
+		return registry.transformRequest({ model: id, messages: [], ...request }, {
+			model: { ...model(id), reasoning: true, ...(efforts ? { reasoningEfforts: efforts } : {}) },
+			reasoningEffort: effort, logger: createLogger(),
+		});
+	}
+
+	// K3 只认顶层 reasoning_effort，官方要求从 K2.x 迁移时移除 thinking
+	for (const id of ['kimi-k3', 'k3', 'moonshotai/kimi-k3']) {
+		const result = await transform(id, { reasoning_effort: 'high' });
+		assert.equal(result.reasoning_effort, 'high', id);
+		assert.equal('thinking' in result, false, id);
+	}
+	// 别名靠数据表给出的档位分流：有档位说明走的是 K3 那条路
+	const latest = await transform('kimi-latest', { reasoning_effort: 'high' }, undefined, ['max', 'high', 'low']);
+	assert.equal(latest.reasoning_effort, 'high');
+	assert.equal('thinking' in latest, false);
+	// K2.7-code 思考常开，只接受 {type:enabled,keep:all}，因此这里同样不写 thinking
+	const code = await transform('kimi-k2.7-code', { reasoning_effort: 'low' });
+	assert.equal(code.reasoning_effort, 'low');
+	assert.equal('thinking' in code, false);
+});
+
+test('Kimi：K2.x 仍用 thinking.type 表达开关', async () => {
+	const registry = createDefaultAdapterRegistry();
+	async function transform(id, request, effort) {
+		return registry.transformRequest({ model: id, messages: [], ...request }, {
+			model: { ...model(id), reasoning: true }, reasoningEffort: effort, logger: createLogger(),
+		});
+	}
+
+	for (const id of ['kimi-k2.5', 'kimi-k2.6', 'kimi-k2-thinking']) {
+		const enabled = await transform(id, {}, 'high');
+		assert.deepEqual(enabled.thinking, { type: 'enabled' }, id);
+		assert.equal('reasoning_effort' in enabled, false, id);
+		const disabled = await transform(id, { reasoning_effort: 'off' });
+		assert.deepEqual(disabled.thinking, { type: 'disabled' }, id);
+	}
+});
+
+/* -------------------------------------------------------------------------- */
+/* GLM 适配器                                                                  */
+/* -------------------------------------------------------------------------- */
+
+test('GLM：强制思考的 5.3 不写会被拒的 thinking.type=disabled', async () => {
+	const registry = createDefaultAdapterRegistry();
+	async function transform(id, effort) {
+		return registry.transformRequest({ model: id, messages: [], reasoning_effort: effort ?? 'none' }, {
+			model: { ...model(id), reasoning: true }, logger: createLogger(),
+		});
+	}
+
+	// 5.3 系列始终思考：官方的迁移做法是改成 enabled，而不是写一个会 400 的 disabled
+	for (const id of ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5.3-prime', 'z-ai/glm-5.3']) {
+		for (const effort of ['none', 'off']) {
+			const result = await transform(id, effort);
+			assert.deepEqual(result.thinking, { type: 'enabled' }, `${id}/${effort}`);
+			assert.equal('reasoning_effort' in result, false, `${id}/${effort}`);
+		}
+	}
+	// 5.3 之前的型号仍可关闭
+	const older = await transform('glm-5', 'off');
+	assert.deepEqual(older.thinking, { type: 'disabled' });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 与 DeepSeek 同契的厂商行为：显式开关、回填思考、辅助请求、非思考模型          */
+/* -------------------------------------------------------------------------- */
+
+test('厂商适配器：要求回填思考原文的厂商声明 echoReasoningContent', () => {
+	const registry = createDefaultAdapterRegistry();
+	// DeepSeek、Kimi、GLM、Qwen 都要求把历史助手消息的思考原文原样带回
+	for (const id of ['deepseek-v4-pro', 'kimi-k2.6', 'glm-5', 'qwen3.5-plus']) {
+		assert.equal(
+			registry.resolveAll(model(id)).some(item => item.echoReasoningContent === true),
+			true,
+			id,
+		);
+	}
+	// OpenAI 推理模型不要求回填，`reasoning_content` 不是它的字段
+	assert.equal(
+		registry.resolveAll(model('o3')).some(item => item.echoReasoningContent === true),
+		false,
+	);
+});
+
+test('厂商适配器：思考模型一律显式写入开关，不由上游的默认值决定', async () => {
+	const registry = createDefaultAdapterRegistry();
+	for (const id of ['deepseek-v4-pro', 'kimi-k2.6', 'glm-5']) {
+		const result = await registry.transformRequest({ model: id, messages: [] }, {
+			model: { ...model(id), reasoning: true }, reasoningEffort: 'high', logger: createLogger(),
+		});
+		assert.deepEqual(result.thinking, { type: 'enabled' }, id);
+	}
+	// Qwen 用布尔开关
+	const qwen = await registry.transformRequest({ model: 'qwen3.5-plus', messages: [] }, {
+		model: { ...model('qwen3.5-plus'), reasoning: true }, reasoningEffort: 'high', logger: createLogger(),
+	});
+	assert.equal(qwen.enable_thinking, true);
+});
+
+test('厂商适配器：辅助请求关闭思考（能关掉的厂商）', async () => {
+	const registry = createDefaultAdapterRegistry();
+	const helper = [{ role: 'user', content: 'You are an expert in crafting pithy titles for chat sessions' }];
+	for (const id of ['deepseek-v4-pro', 'kimi-k2.6', 'glm-5']) {
+		const result = await registry.transformRequest(
+			{ model: id, messages: helper, reasoning_effort: 'high' },
+			{ model: { ...model(id), reasoning: true }, logger: createLogger() },
+		);
+		assert.deepEqual(result.thinking, { type: 'disabled' }, id);
+		// 强度只与「开启思考」共存
+		assert.equal('reasoning_effort' in result, false, id);
+	}
+});
+
+test('厂商适配器：非思考模型不写原生开关，只清掉强度字段', async () => {
+	const registry = createDefaultAdapterRegistry();
+	for (const id of ['deepseek-chat', 'kimi-k2', 'glm-4.5-air', 'qwen-plus', 'o3']) {
+		const result = await registry.transformRequest(
+			{ model: id, messages: [], reasoning_effort: 'high' },
+			{ model: model(id), logger: createLogger() },
+		);
+		assert.equal('thinking' in result, false, id);
+		assert.equal('enable_thinking' in result, false, id);
+		assert.equal('reasoning_effort' in result, false, id);
+	}
+});
+
+test('厂商适配器：给出强度档位的 Qwen 型号保留 reasoning_effort，不翻译开关', async () => {
+	const registry = createDefaultAdapterRegistry();
+	const result = await registry.transformRequest({ model: 'qwen3.8-max', messages: [], reasoning_effort: 'xhigh' }, {
+		model: { ...model('qwen3.8-max'), reasoning: true, reasoningEfforts: ['xhigh', 'high', 'medium', 'low'] },
+		logger: createLogger(),
+	});
+	assert.equal(result.reasoning_effort, 'xhigh');
+	assert.equal('enable_thinking' in result, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* 适配链顺序与隔离                                                            */
+/* -------------------------------------------------------------------------- */
+
 test('适配链：厂商改写后能力位仍能识别关闭思考，原始历史不被污染', async () => {
 	const registry = createDefaultAdapterRegistry();
 	for (const id of ['deepseek-v4-pro', 'Qwen/Qwen3.5-plus', 'z-ai/glm-5', 'moonshotai/kimi-k2.5']) {
@@ -522,7 +699,7 @@ test('适配链：DeepSeek 默认关闭与显式关闭均不补思考占位', as
 	}
 });
 
-test('适配链：Qwen 自动模式保留预算，Kimi 保留真实思考历史，GLM 保留具体强度', async () => {
+test('适配链：Qwen 自动模式保留预算，Kimi 保留真实思考历史，GLM 显式开启并保留具体强度', async () => {
 	const registry = createDefaultAdapterRegistry();
 	async function transform(id, extra, effort) {
 		return registry.transformRequest({
@@ -540,17 +717,27 @@ test('适配链：Qwen 自动模式保留预算，Kimi 保留真实思考历史�
 	assert.equal(kimi.messages[0].reasoning_content, '真实原文');
 	assert.equal(registry.resolveAll(model('kimi-k2.5')).some(item => item.echoReasoningContent), true);
 	const glm = await transform('glm-5', { reasoning_effort: 'max' });
+	// 具体强度保留；开关一律显式写入，不依赖上游对「没给这个字段」的默认理解
 	assert.equal(glm.reasoning_effort, 'max');
-	assert.equal('thinking' in glm, false);
+	assert.deepEqual(glm.thinking, { type: 'enabled' });
 });
 
 test('适配链：未知与非思考模型不猜测原生开关，厂商匹配有名称边界', async () => {
 	const registry = createDefaultAdapterRegistry();
-	for (const id of ['custom-model', 'notqwen3', 'my-glm-5', 'notkimi-k2', 'qwen3.5-plus']) {
+	// 名称不匹配：适配器链为空，请求原样透传
+	for (const id of ['custom-model', 'notqwen3', 'my-glm-5', 'notkimi-k2']) {
 		const input = { model: id, messages: [], reasoning_effort: 'off' };
 		const result = await registry.transformRequest(input, { model: model(id), logger: createLogger() });
 		assert.deepEqual(result, input, id);
 	}
+	// 名称匹配但不具备思考能力：不写任何原生开关，只清掉强度字段
+	const matched = await registry.transformRequest(
+		{ model: 'qwen3.5-plus', messages: [], reasoning_effort: 'off' },
+		{ model: model('qwen3.5-plus'), logger: createLogger() },
+	);
+	assert.equal('enable_thinking' in matched, false);
+	assert.equal('thinking' in matched, false);
+	assert.equal('reasoning_effort' in matched, false);
 });
 
 test('适配链：异步改写结果继续传给下一个适配器', async () => {

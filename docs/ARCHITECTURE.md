@@ -88,8 +88,9 @@ flowchart TD
 | 转换后没有可发送的消息 | `chatProvider.ts` | 抛错，不发请求 |
 | 用户取消（token 已取消，或 `isAbortError`） | `chatProvider.ts` | 静默返回，不算失败 |
 | 客户端被退役/释放（配置变更、扩展停用） | `chatProvider.ts` | 照常报错（`disposed` 不是用户取消） |
-| 模型是 DeepSeek 且具备思考能力 | `adapter/deepseek/` | 写入 `thinking: { type: 'enabled' }` |
-| 辅助请求（起标题、提交信息等） | `adapter/deepseek/` | `thinking: { type: 'disabled' }` 并去掉 `reasoning_effort` |
+| 模型具备思考能力且属于 DeepSeek / GLM / Kimi(K2.x) | `adapter/<supplier>/` | 写入原生思考开关（`thinking` 或 `enable_thinking`） |
+| 辅助请求（起标题、提交信息等） | `adapter/<supplier>/` | 能关掉思考的厂商写 `disabled` 并去掉 `reasoning_effort`；关不掉的只保留强度 |
+| 模型不具备思考能力 | `adapter/<supplier>/` | 不写原生开关，只清掉 `reasoning_effort` |
 | 数据表能力位说「不接受采样参数」 | `adapter/capabilityAdapter.ts` | 按能力位改写请求（数据驱动，不写模型名正则） |
 | HTTP 非 2xx | `client/http.ts` | `HttpError`，按 `isAuthError` / `isNotFound` / `isRetryable` 分流 |
 | 可重试的错误 | `client/http.ts` | `Retry-After` 优先，否则指数退避 + 抖动 |
@@ -154,11 +155,11 @@ flowchart TD
 | `toolFlow.ts` | 工具组预激活（`activate_*`）与预激活控制流的过滤 |
 | `preflight.ts` | 工具组预激活的宿主侧；独立于 `toolFlow.ts` 是为了让后者不依赖 `vscode` |
 | **`adapter/`** 差异出口 | |
-| `adapter.ts` / `registry.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、适配链执行 |
+| `adapter.ts` / `registry.ts` / `requestKind.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、适配链执行；请求种类识别（与厂商无关） |
 | `capabilityAdapter.ts` / `samplingParams.ts` | 数据驱动：按 `ModelConfig` 的能力位改写请求；采样参数字段与删除逻辑的唯一实现 |
-| `deepseek/` | DeepSeek：请求种类识别（`requestKind.ts`）、思考开关、辅助请求改写、思考历史占位 |
-| `openai/` | OpenAI 新一代推理模型：移除采样参数、把 `max_tokens` 改名为 `max_completion_tokens` |
-| `qwen/` / `glm/` / `kimi/` | 厂商原生思考开关与强度字段适配；Kimi 使用共享思考回放 |
+| `deepseek/` | DeepSeek：思考开关、辅助请求改写、思考历史占位 |
+| `openai/` | OpenAI 推理模型（o 系列与 GPT-5 之后）：移除采样参数、`max_tokens` → `max_completion_tokens` |
+| `qwen/` / `glm/` / `kimi/` | 厂商原生思考开关与强度字段适配；均使用共享思考回放与辅助请求判据 |
 | `thinkingMode.ts` | 思考选择读取与关闭语义，供厂商与能力位适配器共享 |
 | **`status/`** UI | |
 | `statusService.ts` | 状态的唯一真相来源，按配置组聚合 |
@@ -557,7 +558,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
   避免污染调用方历史。无匹配项时直接透传。
 - **适配器不区分站点**：New API 是网关，同一个模型后面接的是哪个上游无法从地址判断。
 - **目录约定**：供应商适配器放在以供应商命名的子目录下，`adapter.ts` / `registry.ts` /
-  `capabilityAdapter.ts` / `samplingParams.ts` / `thinkingMode.ts` 是框架层。
+  `capabilityAdapter.ts` / `samplingParams.ts` / `thinkingMode.ts` / `requestKind.ts` 是框架层。
   新增供应商时新建目录 + 在注册表登记，不需要改 provider。扩展方式见
   [`PROVIDER-DESIGN.md`](./PROVIDER-DESIGN.md)。
 
@@ -596,11 +597,35 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 | 删除 `reasoning_effort` | 关掉思考时，或模型不具备思考能力时 | 强度只在开启思考时才成立 |
 | 写入 `reasoning_content: ' '`（占位） | 开启思考且历史里的助手消息缺这个字段 | 思考态下上游要求每条助手消息都带回思考内容，缺了整次请求被拒 |
 
-**辅助请求**（`requestKind.ts`）由首条消息的前缀识别，少数内部请求还可以靠「只带一个工具」认出来。
+**辅助请求**由 `adapter/requestKind.ts` 按首条消息的前缀识别，少数内部请求还可以靠「只带一个工具」认出来。
 识别用的是特征而不是协议：宿主改了措辞只会退化成 `background`（不触发任何改写），不会把请求改坏。
-改写结果带上请求种类写进 debug 日志。
+改写结果带上请求种类写进 debug 日志。这个判据是**框架层**的，DeepSeek / Kimi(K2.x) / GLM 共用它。
 
 适配器还声明了 `echoReasoningContent`（由 provider 用回放标记完成），并自己补上 provider 拿不到原文的缺口。
+
+### 其余厂商（`adapter/kimi/`、`adapter/glm/`、`adapter/qwen/`、`adapter/openai/`）
+
+这些厂商共用 DeepSeek 立下的两个契约，只在「上游会直接拒绝某种写法」时才分叉：
+
+| 契约 | DeepSeek | GLM | Kimi | Qwen | OpenAI |
+| --- | --- | --- | --- | --- | --- |
+| 显式写开关 | `thinking` | `thinking` | K2.x `thinking` | `enable_thinking`（无档位型号） | 无 |
+| 辅助请求关闭思考 | 是 | 是（可关的型号） | 仅 K2.x | 否 | 不适用 |
+| 回填思考原文 | 是（补占位） | 是 | 是 | 是 | 否 |
+| 非思考模型清强度 | 是 | 是 | 是 | 是 | 是 |
+
+分叉只在**有官方依据**时发生：
+
+| 适配器 | 分叉 | 依据 |
+| --- | --- | --- |
+| Kimi | K3 与 K2.7-code 保留顶层 `reasoning_effort`，不写嵌套 `thinking`；且不对它们做「辅助请求关闭思考」 | K3 只认顶层 `reasoning_effort`，官方要求迁移时移除 `thinking`；K2.7-code 思考连续开启；两者关不掉，删强度只会回落到默认 `max` |
+| GLM | 强制思考的 `glm-5.3` / `glm-4.7` 不写 `disabled`；回填 `echoReasoningContent` | 这两个代际传 `disabled` 会失败（迁移做法就是改成 `enabled`）；Preserved Thinking 要求回传**未修改**的 `reasoning_content` |
+| Qwen | 只在数据表**没给出强度档位**的型号上把选择转成 `enable_thinking` | 有档位的型号本身接受 `reasoning_effort`，翻译会丢档位信息 |
+| OpenAI | o 系列与 GPT-5 之后共用同一条改写；不回填思考 | 两代都拒绝采样参数且只认 `max_completion_tokens`；思考内容不在该字段回传 |
+
+**不假装能关掉思考**：Qwen 没有可靠的关闭手段，K3 关不掉 —— 给它们写一个不生效的「关闭」比不写更糟，
+因此这两家只做强度清理。判据的原则与 DeepSeek 一致：**能由数据表达的差异不写进代码**；
+只有数据表达不了、上游又会拒绝请求时，才按官方点名的代际做窄匹配，不从版本号泛化。
 
 ## 10. `status/` —— 状态栏
 
