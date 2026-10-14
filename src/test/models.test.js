@@ -3,8 +3,7 @@
 /**
  * models 层：数据表解析与匹配、数值校正、网关字段提取、三路信息合并、tooltip 排版。
  *
- * 注意 `dataset` 与 `modelConfig` 必须在**同一次加载**里取，否则 `modelConfig` 用的是
- * 另一份 `dataset` 实例，这里装进去的数据表它看不见。
+ * `dataset` 与 `modelConfig` 必须在同一次加载里取，否则数据表实例不共享。
  */
 
 const { test } = require('node:test');
@@ -83,7 +82,7 @@ test('parseModelDataset：缺失的能力字段收敛成 false，思考能力保
 });
 
 test('随包数据表能整份解析，且没有条目被丢弃', () => {
-	// 这条断言守的是「生成脚本改了字段名而没人发现」——丢条目的数据表就是静默降级
+	// 丢条目的数据表就是静默降级
 	const raw = require(path.join(__dirname, '..', '..', 'data', 'openrouter-models.json'));
 	const parsed = parseModelDataset(raw);
 
@@ -225,7 +224,7 @@ test('isSignificantlyDifferent：10% 是分界线', () => {
 test('extractRemoteHints：New API 只给 max_tokens 时不猜测上下文窗口', () => {
 	const hints = extractRemoteHints({ id: 'gpt-4o', max_tokens: 16_384 });
 
-	// 这个字段的语义含糊，宁可保守：当作输出上限，窗口留给数据表
+	// max_tokens 语义含糊，当作输出上限，窗口留给数据表
 	assert.equal(hints.maxOutputTokens, 16_384);
 	assert.equal(hints.contextWindow, undefined);
 });
@@ -371,7 +370,7 @@ test('resolveModelConfig：网关值覆盖数据表并记进日志', () => {
 	assert.equal(config.meta.provenance.contextWindow, 'remote');
 	assert.equal(config.meta.provenance.maxOutputTokens, 'remote');
 	assert.equal(config.meta.provenance.toolCalling, 'remote');
-	// 数值被网关改过必须有出口，否则用户碰到「站点明明支持更大窗口」无从排查
+	// 数值被网关改过必须有出口，便于排查
 	assert.ok(localLogger.messages('debug').some(line => /不一致/.test(line)));
 });
 

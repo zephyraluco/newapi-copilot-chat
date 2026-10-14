@@ -1,10 +1,4 @@
-/**
- * JSON 辅助函数。
- *
- * 只放「无副作用、无外部依赖」的纯函数。目标是把「解析不可信数据」的防御性代码
- * 收敛到一处，让 client / models 层可以直白地写业务逻辑，而不是满屏
- * `typeof x === 'object' && x !== null && ...`。
- */
+/** JSON 辅助函数：解析与校验不可信数据的纯函数。 */
 
 /** 判断是否为普通对象（排除 `null` 与数组）。 */
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,10 +20,7 @@ export function safeJsonParse<T = unknown>(text: string): T | undefined {
 }
 
 /**
- * 安全序列化。
- *
- * 遇到循环引用、BigInt 等不可序列化的值返回 `undefined` 而不是抛异常——
- * 调用点通常只是想把日志/参数转成字符串，不该因此让请求失败。
+ * 安全序列化：遇到循环引用、BigInt 等不可序列化的值返回 `undefined` 而不抛异常。
  */
 export function safeJsonStringify(value: unknown, space?: number): string | undefined {
 	try {
@@ -99,8 +90,7 @@ export function asStringArray(value: unknown): string[] | undefined {
 /**
  * 从对象中按候选键依次取字符串，返回第一个非空值。
  *
- * 用于兼容同一语义在不同网关上的多种字段名（例如上下文窗口的
- * `context_length` / `context_window` / `max_context_tokens`）。
+ * 用于兼容同一语义在不同网关上的多种字段名。
  */
 export function pickString(source: unknown, keys: readonly string[]): string | undefined {
 	if (!isRecord(source)) {
@@ -159,8 +149,7 @@ export function pickRecord(source: unknown, key: string): Record<string, unknown
 /**
  * 截断文本，超长时追加省略号。
  *
- * 用 `Array.from` 按「码点」而非「UTF-16 单元」切分，避免把 emoji 或
- * 罕见汉字从中间劈开产生乱码。
+ * 按「码点」而非「UTF-16 单元」切分，避免把 emoji 等字符从中间劈开。
  */
 export function truncate(text: string, maxLength: number, ellipsis = '…'): string {
 	if (maxLength <= 0) {

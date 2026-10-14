@@ -1,14 +1,10 @@
 /**
  * 网络错误的分类与人话化。
  *
- * `fetch`（undici）失败时外壳永远是一句 `TypeError: fetch failed`，真正的原因在 `cause` 里，
- * 而 `code` 才是可分类的那一个（`ENOTFOUND` / `ECONNREFUSED` / `DEPTH_ZERO_SELF_SIGNED_CERT` …）。
- * 码本身对用户没有意义，**用户需要的是「哪一类问题、该去改什么」**，码用来把这句话选准。
+ * `fetch`（undici）失败时外壳是 `TypeError: fetch failed`，可分类的原因在 `cause` 的 `code` 上。
  *
  * 两个出口：`getNetworkErrorMessage` 给用户（`[CODE]（站点）解释与建议`），
- * `describeErrorCause` 给日志（整条链与诊断字段）。认不出的码照原样展示，只是解释退化成通用建议。
- *
- * 放在基础层：日志也要打印 `cause`（`logger.ts` 的 `formatArg`），而基础层不能反向依赖 `client/`。
+ * `describeErrorCause` 给日志（整条链与诊断字段）。认不出的码照原样展示，解释退化成通用建议。
  */
 
 import { isRecord } from './json';
@@ -17,7 +13,7 @@ import { isRecord } from './json';
 /* 错误链                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** 错误链上的所有成员（含自身），遇到重复对象即停（`cause` 成环时的终止条件）。 */
+/** 错误链上的所有成员（含自身），遇到重复对象即停。 */
 function errorChain(error: unknown): unknown[] {
 	const chain: unknown[] = [];
 	const seen = new Set<unknown>();
@@ -45,10 +41,10 @@ function readField(source: unknown, key: string): string | undefined {
 	return undefined;
 }
 
-/** 诊断字段单值的最大长度：整条链要能一行读完，不能被某个超长字段撑破。 */
+/** 诊断字段单值的最大长度。 */
 const MAX_DIAGNOSTIC_FIELD_LENGTH = 300;
 
-/** 折叠成一个单行字段并限长（多行消息进日志会破坏「一行一条」的可读性）。 */
+/** 折叠成一个单行字段并限长。 */
 function toDiagnosticField(value: string): string {
 	const singleLine = value.replace(/\s+/gu, ' ').trim();
 	return singleLine.length > MAX_DIAGNOSTIC_FIELD_LENGTH
@@ -58,12 +54,10 @@ function toDiagnosticField(value: string): string {
 
 /**
  * 诊断用的字段：Node 把它们放在错误的平级属性上，`message` 里不一定提到。
- *
- * 不限于错误码——`syscall` / `address` / `port` 往往才是定位到具体那一步的线索。
  */
 const DIAGNOSTIC_FIELDS: readonly string[] = ['code', 'errno', 'syscall', 'address', 'port', 'hostname'];
 
-/** 单层错误的一句话明细：消息加上它自带的诊断字段（重复也照样带出，不做取舍）。 */
+/** 单层错误的一句话明细：消息加上它自带的诊断字段。 */
 function layerDetail(member: unknown): string | undefined {
 	const parts: string[] = [];
 	const message = readField(member, 'message');
@@ -89,9 +83,9 @@ function layerDetail(member: unknown): string | undefined {
 }
 
 /**
- * 把错误链渲染成一行明细（给日志看）。逐层用 ` ← ` 串起来，读作「由…引起」。
+ * 把错误链渲染成一行明细（给日志看），逐层用 ` ← ` 串起来。
  *
- * 不脱敏：日志里由 `LoggerService.write` 统一处理，给用户的消息由 `describeError` 处理。
+ * 不脱敏：日志里由 `LoggerService.write` 统一处理。
  */
 export function describeErrorCause(error: unknown): string {
 	const layers: string[] = [];
@@ -109,8 +103,7 @@ export function describeErrorCause(error: unknown): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * 网络故障的类别。分类是给建议用的：「解析不了域名」与「证书不被信任」的处置完全相反，
- * 而在错误消息里两者都只是一句 `fetch failed`。
+ * 网络故障的类别，用于选择给用户的建议。
  */
 export type NetworkErrorCategory =
 	| 'dns'
@@ -124,10 +117,9 @@ export type NetworkErrorCategory =
 	| 'generic';
 
 /**
- * 实际观察到的错误码 → 类别。来源是 Node errno / c-ares、Node TLS/OpenSSL，
- * 以及 undici 的 `code` / `name` 字面量。
+ * 错误码 → 类别。来源是 Node errno / c-ares、Node TLS/OpenSSL，以及 undici 的 `code` / `name` 字面量。
  *
- * 不求穷尽：认不出的码落到 `generic`，但仍然原样展示给用户。
+ * 不求穷尽：认不出的码落到 `generic`，仍然原样展示给用户。
  */
 export const NETWORK_ERROR_CATEGORY_BY_CODE: Readonly<Record<string, NetworkErrorCategory>> = {
 	// DNS：c-ares 与 Node 的解析类错误
@@ -252,10 +244,8 @@ export interface NetworkErrorCauseInfo {
 }
 
 /**
- * 不算错误码的构造名。
- *
- * 没有 `code` 时用 `cause?.name` 当码（undici 的 `TimeoutError` / `SocketError` 只能靠名字识别）。
- * 但普通错误一律叫 `Error` / `TypeError`，把它们当码只会让用户看到 `[Error]` 这样没有信息的方括号。
+ * 不算错误码的构造名：没有 `code` 时可用 `cause?.name` 当码，
+ * 但普通的 `Error` / `TypeError` 当码只会让用户看到没有信息的方括号。
  */
 const GENERIC_ERROR_NAMES: ReadonlySet<string> = new Set([
 	'Error',
@@ -307,13 +297,12 @@ export function getNetworkErrorCategory(code: string | undefined): NetworkErrorC
 /**
  * 把错误码翻译成一句用户能照看做的话，格式为 `[CODE]（站点）解释与建议`。
  *
- * 方括号里的码是能拿去搜索、比对的原始信息，后面是它的译文，括号里是「哪个站点」
- * ——多站点配置下这是第一个要回答的问题。**认不出的码也照原样展示**。
+ * 认不出的码也照原样展示。
  */
 export function getNetworkErrorMessage(code: string | undefined, host?: string): string {
 	const displayCode = code ?? 'UNKNOWN';
 	const where = host !== undefined && host.length > 0 ? `（${host}）` : '';
-	// 替换值必须用函数形式：字符串形式里 `$&` / `$'` / `` $` `` 是替换模式，
+	// 替换值必须用函数形式：字符串形式里 `$&` 等是替换模式，
 	// 码里偶然出现这些序列时会把占位符本身或周围文本搬进消息里。
 	return CATEGORY_MESSAGES[getNetworkErrorCategory(code)]
 		.replace('{code}', () => displayCode)
@@ -325,8 +314,7 @@ export function getNetworkErrorMessage(code: string | undefined, host?: string):
 /* -------------------------------------------------------------------------- */
 
 /**
- * URL 里的主机名：连接失败时「哪个站点连不上」是第一个要回答的问题，
- * 而路径与查询串没有诊断价值、还可能是敏感信息。解析不出来时返回 `undefined`。
+ * 取 URL 里的主机名；解析不出来时返回 `undefined`。
  */
 export function hostOfUrl(url: string | undefined): string | undefined {
 	if (url === undefined) {

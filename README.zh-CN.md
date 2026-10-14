@@ -121,6 +121,21 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 
 - **默认不发送**：控件预选数据表里的 `defaultReasoningEffort`，但这个值不会被发出去（站点本来就在用它），只有改成别的档位才加 `reasoning_effort`
 - 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由适配器层改写——见 `src/adapter/`
+- **有些模型不显示这个控件**：带工具调用时强度会被上游强制成某个固定值（例如 GPT-6 Sol/Luna 只能是 `none`），而 Agent 模式的请求总是带工具——显示一个选得了却不起作用的选项比不显示更糟
+
+## 厂商适配
+
+通用层统一处理模型发现、配置组、消息/工具转换、流式响应、取消与用量；厂商差异集中在 `src/adapter/`：
+
+| 厂商 | 适配行为 |
+| --- | --- |
+| DeepSeek | 原生思考开关、辅助请求关闭思考、思考历史回填；`none` / `off` 真正关闭思考 |
+| OpenAI 推理模型 | 输出上限改为 `max_completion_tokens`，移除不支持的采样字段 |
+| Qwen | 思考选择转为 `enable_thinking`；`auto` 不新增开关 |
+| GLM | 关闭思考转为 `thinking.type=disabled`，具体强度透传 |
+| Kimi | 思考选择转为 `thinking.type`，使用共享思考历史回放 |
+
+可选档位仍来自模型元数据。Qwen/Kimi 使用原生开关，不将强度换算成预算。上述模型通过 New API 的 Chat Completions 通道请求。设计依据与扩展方式见 [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md)。
 
 ## 配置来源
 
@@ -169,7 +184,8 @@ npm run package        # 产出 .vsix
 
 ## 相关文档
 
-- `docs/ARCHITECTURE.md` —— 架构说明，面向要修改本代码库的人
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 架构说明，面向要修改本代码库的人
+- [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md) —— 通用层与厂商适配的设计依据、适配矩阵与新增厂商步骤
 - [Language Model Chat Provider API](https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider)
 - [VS Code API Reference](https://code.visualstudio.com/api/references/vscode-api)
 - [New API](https://github.com/QuantumNous/new-api)

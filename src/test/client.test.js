@@ -3,7 +3,7 @@
 /**
  * client 层：URL 拼接、错误判别、SSE 解析、带超时与重试的 HTTP 客户端。
  *
- * 这一层不 import `vscode`，但会用到全局 `fetch`，因此需要临时替换它。
+ * 这一层不 import `vscode`，但会用到全局 `fetch`，测试里临时替换它。
  */
 
 const { test } = require('node:test');
@@ -92,7 +92,7 @@ test('HttpError：限流时把服务端要求的等待时间写进消息', () =>
 	assert.equal(error.retryAfterMs, 12_000);
 	assert.match(error.message, /12 秒/);
 
-	// 小于 1 秒不值得提，写出来只是噪音
+	// 小于 1 秒不值得提
 	const brief = new HttpError(429, 'Too Many Requests', 'https://api.example.com', undefined, undefined, 200);
 	assert.doesNotMatch(brief.message, /秒/);
 });
@@ -100,7 +100,7 @@ test('HttpError：限流时把服务端要求的等待时间写进消息', () =>
 test('isAbortError：认得 VS Code 的 Canceled，也认得标准的 AbortError', () => {
 	assert.equal(isAbortError(new TransportError('aborted', '取消')), true);
 	assert.equal(isAbortError(Object.assign(new Error('x'), { name: 'AbortError' })), true);
-	// new vscode.CancellationError().name 是 Canceled 而不是 AbortError
+	// CancellationError 的 name 是 Canceled 而不是 AbortError
 	assert.equal(isAbortError(Object.assign(new Error('x'), { name: 'Canceled' })), true);
 
 	assert.equal(isAbortError(new TransportError('timeout', '超时')), false);
@@ -162,7 +162,7 @@ test('parseSseStream：缓冲区里残留的半行也要处理', async () => {
 });
 
 test('parseSseStream：分片从中间切断时不会丢字符', async () => {
-	// UTF-8 多字节字符被切在两片之间，也必须能正确解码回来
+	// UTF-8 多字节字符被切在两片之间也要能正确解码
 	const bytes = encode('data: {"a":"中文"}\n\n');
 	const events = await collect(parseSseStream(streamOf([
 		bytes.slice(0, 14),
@@ -182,7 +182,7 @@ test('parseSseStream：静默超时抛 SseIdleTimeoutError 并回调', async () 
 	await assert.rejects(
 		(async () => {
 			for await (const _event of generator) {
-				// 第一条之后连接就不吐数据了
+				// 第一条之后连接不再吐数据
 			}
 		})(),
 		error => {
@@ -270,7 +270,7 @@ function fakeResponse(options = {}) {
 	};
 }
 
-/** 临时替换全局 `fetch`；无论成败都还原。 */
+/** 临时替换全局 `fetch`，无论成败都还原。 */
 async function withFetch(stub, run) {
 	const original = globalThis.fetch;
 	globalThis.fetch = stub;
@@ -281,7 +281,7 @@ async function withFetch(stub, run) {
 	}
 }
 
-/** 造一个客户端；默认零重试，重试路径要单独指定。 */
+/** 造一个客户端；默认零重试。 */
 function makeClient(options = {}) {
 	return new HttpClient({
 		timeoutMs: options.timeoutMs ?? 5_000,
@@ -515,7 +515,7 @@ test('HttpClient：流式响应正常返回未读完的 body', async () => {
 	assert.equal(response.body, bodyStream);
 });
 
-test('HttpClient：dispose 之后所有请求立刻失败', async () => {
+test('HttpClient：dispose 之后所有请求立刻失败（且不算用户取消）', async () => {
 	const client = makeClient();
 	assert.equal(client.isDisposed, false);
 
@@ -526,8 +526,70 @@ test('HttpClient：dispose 之后所有请求立刻失败', async () => {
 		client.requestText({ url: 'https://api.example.com/v1/models' }),
 		error => {
 			assert.ok(error instanceof TransportError);
-			assert.equal(error.kind, 'aborted');
+			// `disposed` 而不是 `aborted`：它不是用户取消
+			assert.equal(error.kind, 'disposed');
+			assert.equal(isAbortError(error), false);
 			return true;
+		},
+	);
+});
+
+test('HttpClient：retire 让在途请求跑完，只挡住新请求', async () => {
+	const client = makeClient();
+	let releaseRequest;
+	const gate = new Promise(resolve => { releaseRequest = resolve; });
+
+	const pending = withFetch(
+		async () => {
+			await gate;
+			return fakeResponse({ text: '{"data":[]}' });
+		},
+		() => client.requestText({ url: 'https://api.example.com/v1/models' }),
+	);
+
+	// 退役不掐断在途请求
+	client.retire();
+	releaseRequest();
+	const response = await pending;
+	assert.equal(response.status, 200);
+
+	// 但新请求立刻失败
+	await assert.rejects(
+		client.requestText({ url: 'https://api.example.com/v1/models' }),
+		error => {
+			assert.ok(error instanceof TransportError);
+			assert.equal(error.kind, 'disposed');
+			return true;
+		},
+	);
+});
+
+test('NewApiClient：retire 不会掐断正在消费的流式响应', async () => {
+	const logger = createLogger();
+	logger.child = () => logger;
+	const client = new modules.newApiClient.NewApiClient({
+		baseUrl: 'https://api.example.com',
+		apiKey: 'test-key',
+		timeoutMs: 5_000,
+		maxRetries: 0,
+		logger,
+	});
+	const bodyStream = streamOf([
+		'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n',
+		'data: [DONE]\n\n',
+	]);
+
+	await withFetch(
+		async () => fakeResponse({ headers: { 'content-type': 'text/event-stream' }, bodyStream }),
+		async () => {
+			const chunks = [];
+			for await (const chunk of client.streamChatCompletion({ model: 'm', messages: [] })) {
+				chunks.push(chunk);
+				// 数据块刚到就退役：在途登记必须覆盖到响应体读完
+				client.retire();
+			}
+			assert.equal(chunks.length, 1);
+			assert.equal(chunks[0].choices[0].delta.content, 'hi');
 		},
 	);
 });
@@ -573,7 +635,7 @@ test('describeFailureHint：限流按是否有 Retry-After 给不同措辞', () 
 
 test('describeFailureHint：超时指向可调的配置项，网络故障不重复啰嗦', () => {
 	assert.match(describeFailureHint(new TransportError('timeout', '超时'), true), /timeoutMs/);
-	// 网络错误的消息里已经带了分类与处置
+	// 网络错误的消息里已带了分类与处置
 	assert.equal(describeFailureHint(new TransportError('network', '断网'), true), undefined);
 });
 

@@ -3,7 +3,7 @@
 /**
  * provider/tokenizer.ts：token 估算与比例校准。
  *
- * 估算会直接决定 VS Code 何时裁剪历史，因此偏差方向（宁可高估）与校准的边界都要有用例。
+ * 估算决定 VS Code 何时裁剪历史。
  */
 
 const { test } = require('node:test');
@@ -52,26 +52,40 @@ test('estimateTextTokens：比例可以由调用方覆盖', () => {
 /* -------------------------------------------------------------------------- */
 
 test('calibrateCharsPerToken：没有可用观测时保持原值', () => {
-	assert.equal(calibrateCharsPerToken(1_000, undefined), 4);
-	assert.equal(calibrateCharsPerToken(1_000, 0), 4);
-	assert.equal(calibrateCharsPerToken(1_000, -1), 4);
-	assert.equal(calibrateCharsPerToken(0, 100), 4);
+	const measure = { cjkChars: 0, otherChars: 1_000 };
+	assert.equal(calibrateCharsPerToken(measure, undefined), 4);
+	assert.equal(calibrateCharsPerToken(measure, 0), 4);
+	assert.equal(calibrateCharsPerToken(measure, -1), 4);
+	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 0 }, 100), 4);
 });
 
 test('calibrateCharsPerToken：新观测按 0.3 的权重混进现有比例', () => {
 	// 观测 1000 / 100 = 10，与默认的 4 混合：4 * 0.7 + 10 * 0.3 = 5.8
-	assert.equal(calibrateCharsPerToken(1_000, 100), 5.8);
+	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 1_000 }, 100), 5.8);
+});
+
+test('calibrateCharsPerToken：CJK 字符不参与非 CJK 的折算', () => {
+	// 估算器认为 promptTokens ≈ cjkChars + otherChars / r，因此反解 r = other / (tokens - cjk)。
+	// 这里：1000 = 800 + 1000 / r ⇒ r = 5 ⇒ 4 * 0.7 + 5 * 0.3 = 4.3
+	assert.equal(calibrateCharsPerToken({ cjkChars: 800, otherChars: 1_000 }, 1_000), 4.3);
+	// CJK 已吃满用量：分母 ≤ 0，不校准
+	assert.equal(calibrateCharsPerToken({ cjkChars: 1_000, otherChars: 1_000 }, 1_000), 4);
+	assert.equal(calibrateCharsPerToken({ cjkChars: 1_200, otherChars: 1_000 }, 1_000), 4);
 });
 
 test('calibrateCharsPerToken：观测值被夹在 1 ~ 16 之间', () => {
-	// 上游给出离谱用量时不能让它把估算带偏一个量级
-	assert.equal(calibrateCharsPerToken(1_000_000, 1), 4 * 0.7 + 16 * 0.3);
-	assert.equal(calibrateCharsPerToken(10, 1_000), 4 * 0.7 + 1 * 0.3);
+	// 上游给出离谱用量时不能把估算带偏一个量级
+	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 1_000_000 }, 1), 4 * 0.7 + 16 * 0.3);
+	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 10 }, 1_000), 4 * 0.7 + 1 * 0.3);
 });
 
 test('calibrateCharsPerToken：混合结果同样夹在区间内', () => {
-	for (const [chars, tokens] of [[1, 1], [1e9, 1], [1, 1e9]]) {
-		const value = calibrateCharsPerToken(chars, tokens);
+	for (const measure of [
+		{ cjkChars: 0, otherChars: 1 },
+		{ cjkChars: 0, otherChars: 1e9 },
+		{ cjkChars: 5, otherChars: 1 },
+	]) {
+		const value = calibrateCharsPerToken(measure, 1);
 		assert.ok(value >= 1 && value <= 16, String(value));
 	}
 });
@@ -100,18 +114,20 @@ test('estimateMessageTokens：工具调用数函数名与参数', () => {
 	assert.equal(estimateMessageTokens(message), 4 + 3 + 2);
 });
 
-test('estimateMessageTokens：工具结果里的文本与数据部件都要数', () => {
+test('estimateMessageTokens：工具结果图片计入预算，非图片数据部件不计入', () => {
 	const message = {
 		role: 1,
 		content: [
 			new vscode.LanguageModelToolResultPart('call_1', [
 				text('abcd'),
 				new vscode.LanguageModelDataPart(new TextEncoder().encode('你好'), 'text/plain'),
+				new vscode.LanguageModelDataPart(new Uint8Array(4), 'image/png'),
+				new vscode.LanguageModelDataPart(new Uint8Array(9), 'cache_control'),
 			]),
 		],
 	};
 
-	assert.equal(estimateMessageTokens(message), 4 + 1 + 2);
+	assert.equal(estimateMessageTokens(message), 4 + 1 + 1_024);
 });
 
 test('estimateMessageTokens：图片按固定开销估算', () => {
@@ -123,18 +139,40 @@ test('estimateMessageTokens：图片按固定开销估算', () => {
 	assert.equal(estimateMessageTokens(message), 4 + 1_024);
 });
 
-test('estimateMessageTokens：其它二进制按长度粗略折算', () => {
+test('estimateMessageTokens：未透传的数据部件不占用预算', () => {
 	const small = { role: 1, content: [new vscode.LanguageModelDataPart(new Uint8Array(512), 'application/octet-stream')] };
 	const large = { role: 1, content: [new vscode.LanguageModelDataPart(new Uint8Array(5_120), 'application/octet-stream')] };
 
-	assert.equal(estimateMessageTokens(small), 4 + 1);
-	assert.equal(estimateMessageTokens(large), 4 + 10);
+	assert.equal(estimateMessageTokens(small), 4);
+	assert.equal(estimateMessageTokens(large), 4);
+	for (const [mime, data] of [
+		['cache_control', new Uint8Array(9)],
+		['image/bmp', new Uint8Array(10)],
+		['image/png', new Uint8Array(0)],
+		['application/json', new TextEncoder().encode('{"a":1}')],
+	]) {
+		assert.equal(estimateMessageTokens({ role: 1, content: [new vscode.LanguageModelDataPart(data, mime)] }), 4);
+	}
 });
 
-test('estimateMessageTokens：回放标记不占上下文', () => {
-	const message = { role: 2, content: [createReplayMarkerPart('很长的思考内容'), text('abcd')] };
+test('estimateMessageTokens：回放标记的思考内容要计入，且只算一次', () => {
+	// 开启 echoReasoningContent 时，这段文本会作为 reasoning_content 发给上游
+	const markerOnly = { role: 2, content: [createReplayMarkerPart('想想'), text('abcd')] };
+	assert.equal(estimateMessageTokens(markerOnly), 4 + 2 + 1);
 
-	assert.equal(estimateMessageTokens(message), 4 + 1);
+	// 思考部件与标记装的是同一段文本：分别累加会把上下文算成两倍
+	const withThinking = load(
+		{ tokenizer: './src/provider/tokenizer', replay: './src/provider/replay' },
+		{ vscode: createVscodeStub({ thinkingPart: true }) },
+	);
+	const both = {
+		role: 2,
+		content: [
+			new withThinking.vscode.LanguageModelThinkingPart('想想'),
+			withThinking.modules.replay.createReplayMarkerPart('想想'),
+		],
+	};
+	assert.equal(withThinking.modules.tokenizer.estimateMessageTokens(both), 4 + 2);
 });
 
 test('estimateMessageTokens：字符串部件与认不出的部件都有兜底', () => {

@@ -1,11 +1,11 @@
 /**
  * 工具组预激活的宿主侧部分：需要时把 `activate_*` 伪调用上报给宿主。
  *
- * 判据与过滤是纯函数，在 `toolFlow.ts`；这里只负责与 VS Code 打交道的那一半
- * （上报 `LanguageModelToolCallPart`），从而让 `toolFlow.ts` 保持无 vscode 依赖。
+ * 判据与过滤是纯函数，在 `toolFlow.ts`；这里只负责与 VS Code 打交道的那一半，从而让
+ * `toolFlow.ts` 保持无 vscode 依赖。
  *
- * 上报完就**结束本次请求**：宿主执行这些伪调用、展开工具组，然后带着完整工具列表重新发起。
- * 这段控制流不会到上游——伪调用与它们的结果在后续请求里会被 `filterPreflightMessages` 过滤掉。
+ * 上报完就结束本次请求：宿主执行这些伪调用、展开工具组，然后带着完整工具列表重新发起。
+ * 伪调用与它们的结果在后续请求里会被 `filterPreflightMessages` 过滤掉。
  */
 
 import * as vscode from 'vscode';
@@ -19,7 +19,7 @@ import {
 /**
  * 需要预激活工具组时上报伪调用并返回 `true`（调用方应结束本次请求），否则返回 `false`。
  *
- * 消息必须传**未过滤**的那一份：已经激活过哪些工具组，只有伪调用还在历史里时才看得出来。
+ * 消息必须传未过滤的那一份：已经激活过哪些工具组，只有伪调用还在历史里时才看得出来。
  */
 export function runToolGroupPreflight(input: {
 	messages: readonly vscode.LanguageModelChatRequestMessage[];

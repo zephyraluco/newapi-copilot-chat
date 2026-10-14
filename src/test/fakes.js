@@ -4,10 +4,9 @@
  * 最小 `vscode` 替身。
  *
  * 被测模块里 `import * as vscode from 'vscode'` 由 esbuild 标成 external，
- * 于是加载时走 `require('vscode')`——测试用这个替身顶上，就不必启动扩展宿主。
+ * 于是加载时走 `require('vscode')`——测试用这个替身顶上，不必启动扩展宿主。
  *
- * 只实现**被测代码真正用到**的那部分：部件类（`instanceof` 判定靠它）、两个枚举、
- * 事件与取消错误。刻意不实现 UI 与命令，用到时应当补在这里而不是在测试里就地造。
+ * 只实现被测代码真正用到的那部分：部件类、两个枚举、事件与取消错误。
  */
 
 /** 文本部件。`messages.ts` / `tokenizer.ts` 用 `part.value`。 */
@@ -35,9 +34,7 @@ class LanguageModelToolResultPart {
 }
 
 /**
- * 二进制/结构化数据部件。
- *
- * `data` 按 VS Code 的语义是 `Uint8Array`，但字符串也接受（`DataPart.text()` 就是这么用的）。
+ * 二进制/结构化数据部件。`data` 为 `Uint8Array`，字符串也接受。
  */
 class LanguageModelDataPart {
 	constructor(data, mimeType) {
@@ -81,7 +78,7 @@ class EventEmitter {
 	}
 }
 
-/** VS Code 的取消错误：注意 `name` 是 `Canceled` 而不是 `AbortError`（http.ts 专门认它）。 */
+/** VS Code 的取消错误：`name` 是 `Canceled` 而不是 `AbortError`。 */
 class CancellationError extends Error {
 	constructor() {
 		super('Canceled');
@@ -90,13 +87,11 @@ class CancellationError extends Error {
 }
 
 /**
- * 日志级别。数值与 VS Code 一致（越大越严重），`logger.ts` 会拿它比大小。
- *
- * 模块加载期就会读它来建级别映射表，因此即便测试不碰日志也必须有。
+ * 日志级别。数值与 VS Code 一致（越大越严重）。
  */
 const LogLevel = { Off: 0, Trace: 1, Debug: 2, Info: 3, Warning: 4, Error: 5 };
 
-/** 可释放对象。`LoggerService` 等类实现了它。 */
+/** 可释放对象。 */
 class Disposable {
 	constructor(callOnDispose) {
 		this.callOnDispose = callOnDispose;
@@ -129,7 +124,7 @@ function createOutputChannel(name) {
 	};
 }
 
-/** `LanguageModelError` 的两个工厂方法；`chatProvider` 用它把 401/403/404 分类上报。 */
+/** `LanguageModelError` 的两个工厂方法。 */
 class LanguageModelError extends Error {
 	constructor(message, code) {
 		super(message);
@@ -149,8 +144,7 @@ class LanguageModelError extends Error {
  * 造一个替身。
  *
  * @param {{ thinkingPart?: boolean }} [options] `thinkingPart` 为真时挂上
- *   `LanguageModelThinkingPart`，用于覆盖 `thinking.ts` 的「宿主提供该部件」分支
- *   （默认不提供，走的是 Markdown 引用块那条真实路径）。
+ *   `LanguageModelThinkingPart`，默认不提供。
  */
 function createVscodeStub(options = {}) {
 	const stub = {

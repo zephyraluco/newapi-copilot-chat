@@ -2,20 +2,18 @@
  * 本地模型数据表。
  *
  * New API 的 `/v1/models` 只返回 `id` / `created` / `owned_by`，而 VS Code 需要
- * `maxInputTokens` / `maxOutputTokens` / `capabilities`：估小了浪费上下文，估大了会被上游拒请求。
- * 数据表就是这些元数据的来源，由 `npm run models:openrouter` 生成，激活时读入内存。
- * 它是**只读的生成产物**，要更新数据就重跑生成脚本。
+ * `maxInputTokens` / `maxOutputTokens` / `capabilities`。数据表就是这些元数据的来源，
+ * 由 `npm run models:openrouter` 生成，激活时读入内存；要更新数据就重跑生成脚本。
  *
  * 三个要点：
- * - **不可信输入**：文件由外部脚本生成，每条记录都过类型收窄；缺 `id` 或缺正数窗口/输出上限的
- *   条目丢弃并计数，一条坏记录不会让整张表失效。表为空等价于「没有这张表」。
- * - **匹配从精确到宽松**：表里的 `id` 已规范化（无厂商前缀与 `:free` / `:batch` 变体），
- *   而网关 ID 常带渠道与日期后缀（`gpt-4o@official`、`gpt-4o-2024-08-06`）。先精确命中，
- *   命中不了才逐层剥前缀、变体、渠道、日期后缀；「先精确」保证 `gpt-4o-2024-08-06`
- *   不会挑中 `gpt-4o`。
- * - **思考档位用上游原词**：`supportsReasoningEffort` / `defaultReasoningEffort` 可选，
- *   取值是 `max` / `xhigh` / `minimal` 这类上游词汇，只是「能选哪些档」的提示，
- *   是否被站点接受取决于站点与它的上游。
+ * - 不可信输入：每条记录都过类型收窄；缺 `id` 或缺正数窗口/输出上限的条目丢弃并计数。
+ *   表为空等价于「没有这张表」。
+ * - 匹配从精确到宽松：表里的 `id` 已规范化（无厂商前缀与 `:free` / `:batch` 变体），
+ *   网关 ID 常带渠道与日期后缀（`gpt-4o@official`、`gpt-4o-2024-08-06`）。先精确命中，
+ *   命中不了才逐层剥前缀、变体、渠道、日期后缀。
+ * - 思考档位用上游原词：`supportsReasoningEffort` / `defaultReasoningEffort` 可选，取值是
+ *   `max` / `xhigh` / `minimal` 这类上游词汇，只是「能选哪些档」的提示，是否被站点接受
+ *   取决于站点与它的上游。
  */
 
 import { asBoolean, asNonEmptyString, asPositiveNumber, asStringArray, isRecord } from '../json';
@@ -25,6 +23,17 @@ export const MODEL_DATASET_DIR = 'data';
 
 /** 数据表文件名。 */
 export const MODEL_DATASET_FILE = 'openrouter-models.json';
+
+/**
+ * 采样参数（`temperature` / `top_p` / …）在 Chat Completions 里的接受情况。
+ *
+ * 缺省（字段不存在）等价于「始终接受」，因此这里只表达两个非默认取值：
+ *
+ * - `'never'`：始终不接受（新一代推理模型会直接拒绝这些字段）；
+ * - `'when-thinking-off'`：只在 `reasoning_effort` 为 `none` 时接受
+ *   （关掉思考后就不再是推理请求，采样参数重新合法）。
+ */
+export type ModelSamplingParams = 'never' | 'when-thinking-off';
 
 /** 一条模型记录。字段名与生成脚本的输出对齐。 */
 export interface ModelDatasetEntry {
@@ -48,10 +57,21 @@ export interface ModelDatasetEntry {
 	readonly supportsReasoningEffort?: readonly string[];
 	/** 不指定思考强度时上游使用的取值 */
 	readonly defaultReasoningEffort?: string;
+	/** 采样参数在 Chat Completions 里的接受情况；缺省表示始终接受 */
+	readonly samplingParams?: ModelSamplingParams;
 	/** 厂商显示名 */
 	readonly vendor?: string;
 	/** 规范展示名 */
 	readonly displayName?: string;
+}
+
+/** 采样参数接受情况的合法取值。 */
+const SAMPLING_PARAMS_VALUES: readonly ModelSamplingParams[] = ['never', 'when-thinking-off'];
+
+/** 把原始值收窄成 `ModelSamplingParams`；不认识的值当作没表态。 */
+function asSamplingParams(value: unknown): ModelSamplingParams | undefined {
+	const text = asNonEmptyString(value);
+	return SAMPLING_PARAMS_VALUES.find(item => item === text);
 }
 
 /**
@@ -107,12 +127,13 @@ function parseEntry(raw: unknown): ModelDatasetEntry | undefined {
 		id,
 		contextWindow: Math.round(contextWindow),
 		maxOutputTokens: Math.round(maxOutputTokens),
-		// 「字段缺失」与「明确为 false」在配置层的效果相同，因此统一收敛成 false
+		// 「字段缺失」与「明确为 false」在配置层效果相同，因此统一收敛成 false
 		imageInput: asBoolean(raw.imageInput) ?? false,
 		toolCalling: asBoolean(raw.toolCalling) ?? false,
 		reasoning: asBoolean(raw.reasoning),
 		supportsReasoningEffort: normalizeEfforts(raw.supportsReasoningEffort),
 		defaultReasoningEffort: asNonEmptyString(raw.defaultReasoningEffort),
+		samplingParams: asSamplingParams(raw.samplingParams),
 		vendor: asNonEmptyString(raw.vendor),
 		displayName: asNonEmptyString(raw.displayName),
 	};
@@ -121,8 +142,7 @@ function parseEntry(raw: unknown): ModelDatasetEntry | undefined {
 /**
  * 校验原始数据。
  *
- * 接受生成脚本的完整输出（`{ models: [...] }`）与裸数组两种形态：
- * 前者是数据文件，后者便于手工准备的小表。
+ * 接受生成脚本的完整输出（`{ models: [...] }`）与裸数组两种形态。
  */
 export function parseModelDataset(raw: unknown): ModelDataset {
 	const list = Array.isArray(raw)
@@ -154,8 +174,8 @@ let index = new Map<string, ModelDatasetEntry>();
 /**
  * 安装数据表。
  *
- * 传入 `undefined` 或非法数据会**清空**当前数据表——这正是想要的行为：
- * 文件缺失或损坏时宁可退回「网关返回值 + 默认值」，也不要继续沿用一份来路不明的旧数据。
+ * 传入 `undefined` 或非法数据会清空当前数据表：文件缺失或损坏时退回「网关返回值 + 默认值」，
+ * 不沿用旧数据。
  *
  * 返回解析结果（含被丢弃的条目数），便于调用方写日志。
  */
@@ -164,7 +184,7 @@ export function installModelDataset(raw: unknown): ModelDataset {
 	index = new Map();
 	for (const entry of dataset.entries) {
 		const key = entry.id.trim().toLowerCase();
-		// 同 id 只保留第一条：生成脚本已去重，这里只防御意外重复
+		// 同 id 只保留第一条，防御意外重复
 		if (!index.has(key)) {
 			index.set(key, entry);
 		}
@@ -175,9 +195,7 @@ export function installModelDataset(raw: unknown): ModelDataset {
 /**
  * 按「从精确到宽松」生成候选键。
  *
- * 顺序是语义的一部分：先精确匹配，命中不了才逐层剥后缀。每一步都基于上一步的结果，
- * 因此 `anthropic/claude-3-5-sonnet:free@official` 会被依次试成
- * `claude-3-5-sonnet:free@official` → `claude-3-5-sonnet:free` → `claude-3-5-sonnet`。
+ * 顺序是语义的一部分：先精确匹配，命中不了才逐层剥后缀，每一步都基于上一步的结果。
  */
 export function datasetKeysFor(modelId: string): readonly string[] {
 	const keys: string[] = [];
@@ -189,7 +207,7 @@ export function datasetKeysFor(modelId: string): readonly string[] {
 	};
 
 	push(modelId);
-	// 厂商前缀：`~anthropic/claude-sonnet-4`（`~` 是 latest 别名标记）
+	// 厂商前缀（`~` 是 latest 别名标记）
 	const withoutVendor = modelId.replace(/^~?[^/]*\//, '');
 	push(withoutVendor);
 	// 变体后缀：`:free` / `:batch`

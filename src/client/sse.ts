@@ -1,9 +1,6 @@
 /**
- * Server-Sent Events（SSE）解析。
- *
- * OpenAI 兼容的流式接口用的是 SSE：一行行纯文本，空行分隔事件。
- * 这里只做「字节流 → 事件」的翻译，不涉及任何业务字段；
- * 业务字段的解释在 `newApiClient.ts` 完成。
+ * Server-Sent Events（SSE）解析：把 OpenAI 兼容流式接口的字节流翻译成事件，
+ * 不解释业务字段（业务字段在 `newApiClient.ts`）。
  */
 
 import { SSE_DONE } from '../consts';
@@ -24,12 +21,7 @@ export interface SseEvent {
 export interface SseStreamOptions {
 	/** 调用方信号；用于在取消时让读取立刻失败 */
 	signal?: AbortSignal;
-	/**
-	 * 静默超时：连续多久没有收到任何字节就认为连接已死。
-	 *
-	 * 流式请求不能复用「整体超时」——一个长回答很容易超过整体超时，
-	 * 但正常的长回答一定在持续吐字节，所以用「静默」来判定。
-	 */
+	/** 静默超时：连续多久没收到任何字节就认为连接已死（长回答会超过整体超时，故按静默判定）。 */
 	idleTimeoutMs?: number;
 	/** 静默超时触发时回调，由调用方负责中断底层连接 */
 	onIdleTimeout?: () => void;
@@ -47,19 +39,19 @@ export class SseIdleTimeoutError extends Error {
 }
 
 /**
- * 流在给出正常收尾信号之前就结束了。
+ * 流在给出正常收尾信号之前就结束了：连接已关闭，既没有 `[DONE]` 也没有 `finish_reason`。
  *
- * 与 {@link SseIdleTimeoutError} 的区别：那个是「连接还在，但不再吐数据」，这个是
- * 「连接已经关闭，却既没有 `[DONE]` 也没有 `finish_reason`」——后半截回答被掐掉了。
- * 两者必须分开：上层需要知道「能不能安全重发」（还没给用户看过任何内容时可以），
- * 而静默超时是不吐数据、截断是连接已断。
+ * 与 {@link SseIdleTimeoutError}（连接还在但不吐数据）区分：上层据此判断能否安全重发。
  */
 export class SseTruncatedError extends Error {
 	constructor(
 		/** 断流前成功解析出的数据块数，仅用于诊断 */
 		readonly blocks: number,
 	) {
-		super(`上游连接在回答完成前断开（已收到 ${blocks} 个数据块，没有 [DONE] 也没有 finish_reason）`);
+		super(
+			`上游连接在回答完成前断开（已收到 ${blocks} 个数据块，没有 [DONE] 也没有 finish_reason），` +
+			'已经显示的内容可能不完整，请重试。',
+		);
 		this.name = 'SseTruncatedError';
 	}
 }
@@ -167,7 +159,7 @@ export async function* parseSseStream(
 			yield trailing;
 		}
 	} finally {
-		// 无论是正常结束、超时还是取消，都要释放读取锁，否则连接会一直挂着
+		// 释放读取锁，否则连接会一直挂着
 		try {
 			await reader.cancel();
 		} catch {
@@ -202,7 +194,7 @@ async function readWithIdleTimeout(
 		if (timer !== undefined) {
 			clearTimeout(timer);
 		}
-		// 超时分支会让 `pending` 悬空；连接被中断后它会 reject，
+		// 超时分支会让 `pending` 悬空：连接中断后它会 reject，
 		// 挂一个空 catch 避免变成 unhandled rejection。
 		void pending.catch(() => { });
 	}
@@ -211,9 +203,9 @@ async function readWithIdleTimeout(
 /**
  * 一次性读完字节流并解码成文本。
  *
- * 用于「网关忽略了 stream 参数」的降级路径：拿到的是普通 JSON，不是 SSE。
- * `options.idleTimeoutMs` 与 SSE 路径语义一致：连续多久没有新字节就判定连接已死。
- * 这条路上必须自己带超时：HTTP 层的超时守卫在拿到响应头之后就已经撤掉了。
+ * 用于「网关忽略了 stream 参数」的降级路径（拿到的是普通 JSON）。
+ * `idleTimeoutMs` 与 SSE 路径语义一致；这条路上必须自带超时，
+ * HTTP 层的超时守卫在拿到响应头之后就已经撤掉了。
  */
 export async function readStreamText(
 	body: ReadableStream<Uint8Array>,
@@ -247,10 +239,8 @@ export async function readStreamText(
 }
 
 /**
- * `parseSseJson` 会回填的收尾信息。
- *
- * 生成器的返回值拿不到（`for await` 会把它丢掉），因此用这个可变对象把
- * 「流是怎么结束的」带出来——判断响应是不是被截断全靠它。
+ * `parseSseJson` 回填的收尾信息：`for await` 拿不到生成器的返回值，
+ * 因此用这个可变对象带出「流是如何结束的」。
  */
 export interface SseJsonOutcome {
 	/** 是否收到了 `[DONE]` 结束标记 */
@@ -267,11 +257,8 @@ export interface SseJsonOptions extends SseStreamOptions {
 }
 
 /**
- * 把 SSE 事件流解析成 JSON 对象流。
- *
- * 用于 OpenAI 兼容接口的 `data: {...}` chunk。遇到 `[DONE]` 直接结束；
- * 单个 chunk 解析失败只记日志并跳过——网关偶尔会插入非 JSON 的心跳或日志行，
- * 不应该因此让整个回答失败。
+ * 把 SSE 事件流解析成 JSON 对象流，用于 OpenAI 兼容接口的 `data: {...}` chunk。
+ * 遇到 `[DONE]` 结束；单个 chunk 解析失败只记日志并跳过（网关可能插入非 JSON 行）。
  */
 export async function* parseSseJson<T>(
 	body: ReadableStream<Uint8Array>,

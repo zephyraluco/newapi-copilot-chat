@@ -1,10 +1,8 @@
 /**
- * 日志。基于 VS Code 的 `LogOutputChannel`：用户在「输出」面板里可直接调整级别、
- * 也能拿到时间戳与来源渲染，不需要自己实现一套日志 UI。
+ * 日志，基于 VS Code 的 `LogOutputChannel`。
  *
- * 额外做两件事：一是 `newapi-copilot-chat.logLevel` 设置（我们自己的级别闸门，
- * 与通道级别是两回事，见 `warnIfChannelLevelBlocks`）；二是 `redactSecret` / `redactText`，
- * 确保 API Key 永远不会写进日志。
+ * 两件事：`newapi-copilot-chat.logLevel` 设置（自己的级别闸门，与通道级别是两回事）；
+ * `redactSecret` / `redactText` 确保 API Key 不会写进日志。
  */
 
 import * as vscode from 'vscode';
@@ -25,16 +23,6 @@ const LEVEL_ORDER: Record<LogLevelName, number> = {
 	trace: 5,
 };
 
-/** 我们的级别 → VS Code 通道级别。用于判断通道是否会把日志吞掉。 */
-const CHANNEL_LEVEL: Record<LogLevelName, vscode.LogLevel> = {
-	off: vscode.LogLevel.Off,
-	error: vscode.LogLevel.Error,
-	warn: vscode.LogLevel.Warning,
-	info: vscode.LogLevel.Info,
-	debug: vscode.LogLevel.Debug,
-	trace: vscode.LogLevel.Trace,
-};
-
 /** 把设置里的字符串收敛成合法级别，非法值回退到 `info`。 */
 export function parseLogLevelName(value: unknown): LogLevelName {
 	if (typeof value === 'string' && value in LEVEL_ORDER) {
@@ -43,11 +31,7 @@ export function parseLogLevelName(value: unknown): LogLevelName {
 	return 'info';
 }
 
-/**
- * 脱敏密钥：只保留头尾少量字符，便于确认「是不是同一把 key」，但无法还原。
- *
- * 任何把 key 输出到日志、状态的路径都必须先经过它。
- */
+/** 脱敏密钥：只保留头尾少量字符，无法还原。 */
 export function redactSecret(value: string | undefined): string {
 	if (!value) {
 		return '(未设置)';
@@ -67,11 +51,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 	/\bsk-[A-Za-z0-9_-]{8,}/gi,
 ];
 
-/**
- * 对任意文本做脱敏，用于日志与错误消息。
- *
- * 兜底手段：即使调用点忘了用 `redactSecret`，也不会把整个 key 泄漏出去。
- */
+/** 对任意文本做脱敏，用于日志与错误消息。 */
 export function redactText(text: string): string {
 	let result = text;
 	for (const pattern of SECRET_PATTERNS) {
@@ -81,10 +61,8 @@ export function redactText(text: string): string {
 }
 
 /**
- * 日志服务：持有唯一的输出通道，并负责级别判定与格式化。
- *
- * 全局只应创建一次（在 extension.ts 里），其余模块通过 `logger.child('scope')`
- * 取得带作用域的写入口。
+ * 日志服务：持有唯一的输出通道，负责级别判定与格式化。
+ * 全局只创建一次（在 extension.ts 里）。
  */
 export class LoggerService implements vscode.Disposable {
 	private readonly channel: vscode.LogOutputChannel;
@@ -95,7 +73,7 @@ export class LoggerService implements vscode.Disposable {
 	constructor(initialLevel: LogLevelName) {
 		this.channel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME, { log: true });
 		this.level = initialLevel;
-		// 用户在「输出」面板里调整通道级别后，我们可能就有机会把之前被吞掉的日志放出来了。
+		// 通道级别变化后重新评估是否需要提示
 		this.levelChangeListener = this.channel.onDidChangeLogLevel(() => {
 			this.warnedAboutChannelLevel = false;
 			this.warnIfChannelLevelBlocks();
@@ -129,8 +107,7 @@ export class LoggerService implements vscode.Disposable {
 	}
 
 	/**
-	 * 一次性提示：本扩展配置的级别比输出通道级别更详细，用户将看不到那些日志。
-	 * 这类「配了却看不到」的问题极难自查，所以主动说清楚该去哪里改。
+	 * 一次性提示：本扩展配置的级别比输出通道级别更详细，那些日志会被通道过滤掉。
 	 */
 	warnIfChannelLevelBlocks(): void {
 		if (this.warnedAboutChannelLevel || !this.isBlockedByChannelLevel) {
@@ -229,7 +206,7 @@ function formatArg(value: unknown): string {
 	}
 	if (value instanceof Error) {
 		// 用 describeErrorCause 而不是 value.message：`fetch` 失败时原因在 `cause` 里，
-		// 而 stack 并不包含它，只打 name + message 等于把原因丢了。
+		// 而 stack 并不包含它。
 		const chain = describeErrorCause(value);
 		const stack = value.stack ? `\n${value.stack}` : '';
 		return `${value.name}: ${chain}${stack}`;
@@ -244,9 +221,7 @@ function formatArg(value: unknown): string {
 }
 
 /**
- * 带作用域的日志写入口。
- *
- * 作用域用于在日志行里定位来源，例如 `[client]`、`[models]`、`[provider]`。
+ * 带作用域的日志写入口，作用域用于在日志行里定位来源（如 `[client]`）。
  */
 export class Logger {
 	constructor(

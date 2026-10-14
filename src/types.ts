@@ -1,9 +1,8 @@
 /**
- * New API（OpenAI 兼容 / DeepSeek 风格）接口的数据结构。
+ * New API（OpenAI 兼容 / DeepSeek 风格）接口的数据结构，以 OpenAI Chat Completions 为基准，
+ * 并标注 DeepSeek、OpenRouter 等上游的非标准扩展字段。
  *
- * 以 OpenAI Chat Completions 为基准，并标注 DeepSeek、OpenRouter 等上游常见但**非** OpenAI 标准的扩展字段。
- * 服务端字段一律可选：网关版本、上游模型、代理层都可能裁掉字段，代码要把「字段缺失」当常态；
- * 无法穷举的字段交给索引签名兜底。
+ * 服务端字段一律可选：网关版本、上游模型、代理层都可能裁掉字段，代码要把「字段缺失」当常态。
  */
 
 /* -------------------------------------------------------------------------- */
@@ -29,8 +28,7 @@ export interface ApiErrorBody {
 /**
  * 模型列表中的单个模型。
  *
- * 标准 OpenAI 只保证 `id` / `object` / `created` / `owned_by`；
- * 其余字段来自 New API 或上游网关的扩展，读取时必须走 `json.ts` 里的安全取值函数。
+ * 标准 OpenAI 只保证 `id` / `object` / `created` / `owned_by`；其余字段来自网关扩展。
  */
 export interface NewApiModel {
 	/** 模型 ID，也是调用 `/v1/chat/completions` 时 `model` 字段的取值 */
@@ -60,8 +58,7 @@ export interface NewApiModelListResponse {
 /**
  * 站点状态。
  *
- * 这是 New API 的自有端点（非 OpenAI 标准），字段随版本变化较大，
- * 因此只声明相对稳定的几个，其余交给索引签名。
+ * New API 的自有端点（非 OpenAI 标准），字段随版本变化较大。
  */
 export interface NewApiStatus {
 	/** 站点名称，用于 UI 展示 */
@@ -122,7 +119,7 @@ export interface ChatRequestMessage {
 	role: ChatRole;
 	/**
 	 * 字符串，或内容片段数组，或 `null`。
-	 * 注意：当存在 `tool_calls` 时，OpenAI 要求 content 为 `null`。
+	 * 存在 `tool_calls` 时，OpenAI 要求 content 为 `null`。
 	 */
 	content: string | ChatContentPart[] | null;
 	name?: string;

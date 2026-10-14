@@ -120,6 +120,7 @@ Models that support reasoning get a **reasoning effort** control in the model pi
 
 - **Not sent by default**: the control pre-selects the dataset's `defaultReasoningEffort`, but that value is never sent (the site is already using it); only a different choice adds `reasoning_effort`
 - The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the adapter layer — see `src/adapter/`
+- **Some models do not show the control**: with tool calls present the upstream forces a fixed value (GPT-6 Sol/Luna only accept `none`), and agent-mode requests always carry tools — showing an option that can never take effect is worse than not showing it
 
 ## Where the configuration comes from
 
@@ -166,10 +167,25 @@ The design and implementation borrow from two similar extensions:
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` — architecture notes for people modifying this codebase (in Chinese)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture notes for people modifying this codebase (in Chinese)
+- [`docs/PROVIDER-DESIGN.md`](docs/PROVIDER-DESIGN.md) — design references, the adapter matrix, and the steps for adding a vendor (in Chinese)
 - [Language Model Chat Provider API](https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider)
 - [VS Code API Reference](https://code.visualstudio.com/api/references/vscode-api)
 - [New API](https://github.com/QuantumNous/new-api)
+
+## Provider adaptation design
+
+Model discovery, configuration groups, message/tool conversion, streaming, cancellation, and usage share one provider pipeline. Vendor-specific request rules live in `src/adapter/`:
+
+| Vendor | Adaptation |
+| --- | --- |
+| DeepSeek | Native thinking toggle, helper-request optimization, reasoning replay; `none` / `off` disables thinking |
+| OpenAI reasoning models | `max_completion_tokens` and unsupported sampling-field removal |
+| Qwen | Thinking selection becomes `enable_thinking`; `auto` adds no toggle |
+| GLM | Disabled thinking becomes `thinking.type=disabled`; concrete effort passes through |
+| Kimi | Native `thinking.type` toggle and shared reasoning replay |
+
+Available choices remain metadata-driven. Qwen/Kimi use native toggles without inventing token budgets. These adapters use the gateway's Chat Completions endpoint. See [the design document](docs/PROVIDER-DESIGN.md) for API boundaries, references, and extension steps.
 
 ## License
 

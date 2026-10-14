@@ -1,5 +1,5 @@
 /**
- * New API 客户端：与 New API 交互的唯一入口（上层只依赖这里的方法与返回类型，不直接碰 HTTP）。
+ * New API 客户端：与 New API 交互的唯一入口（上层只依赖这里的方法与返回类型）。
  *
  * - `GET  /api/status`           公开状态（探活、站点信息、版本）
  * - `GET  /v1/models`            模型列表
@@ -31,10 +31,9 @@ import {
 import type { SseJsonOutcome } from './sse';
 
 /**
- * 「响应不是我们认识的形状」时给用户的建议。
+ * 「响应不是我们认识的形状」时附在错误消息里的提示。
  *
- * 这类错误是自己合成的（不是网络栈抛的），因此建议直接写进消息里。
- * 最常见的成因是站点地址填成了某个网页或别的服务，那里回的是 HTML 而不是 JSON。
+ * 这类错误是自己合成的，最常见成因是站点地址填成了网页或其他服务。
  */
 const RESPONSE_SHAPE_HINT = '（请确认站点地址指向 New API 站点根目录，而不是某个网页）';
 
@@ -49,8 +48,7 @@ export interface NewApiClientOptions {
 	/**
 	 * 流式响应两个数据块之间的静默超时；缺省沿用 `timeoutMs`。
 	 *
-	 * 单独一个旋钮，是因为它和「等响应头」的合理取值差得很远：缓冲型网关上长思考的模型
-	 * 可能长时间不吐字节，但把等待响应头一起放宽又会掩盖真正连不上的情况。
+	 * 与「等响应头」的合理取值差得很远，故单独一个旋钮。
 	 */
 	streamIdleTimeoutMs?: number;
 	/**
@@ -76,9 +74,8 @@ export interface StatusFetchResult {
 /**
  * New API 客户端。
  *
- * 实例是「一次性」的：baseUrl / apiKey / 超时等参数在构造时固定，配置变化时
- * 由上层重建实例并 `dispose()` 掉旧的。这样能避免「请求发出后配置被改了」
- * 造成的不一致状态。
+ * 实例是一次性的：baseUrl / apiKey / 超时等参数在构造时固定，配置变化时由上层
+ * 重建实例并 `dispose()` 旧实例。
  */
 export class NewApiClient {
 	private readonly http: HttpClient;
@@ -109,8 +106,8 @@ export class NewApiClient {
 	/**
 	 * 拉取模型列表。
 	 *
-	 * 兼容几种常见返回形态：`{data:[...]}`、`{data:{data:[...]}}`、裸数组。
-	 * 结果按 id 排序，保证模型选择器顺序稳定（否则每次刷新顺序都会变）。
+	 * 兼容 `{data:[...]}`、`{data:{data:[...]}}`、裸数组几种返回形态；结果按 id 排序，
+	 * 保证模型选择器顺序稳定。
 	 */
 	async listModels(signal?: AbortSignal): Promise<NewApiModel[]> {
 		const url = joinUrl(this.options.baseUrl, ENDPOINTS.models);
@@ -146,8 +143,8 @@ export class NewApiClient {
 	/**
 	 * 读取站点状态。
 	 *
-	 * 该端点是 New API 自有扩展且无需鉴权，第三方 OpenAI 兼容网关通常没有它，
-	 * 因此失败时返回 `available: false` 而不是抛异常——它只是「锦上添花」的信息。
+	 * 该端点是 New API 自有扩展且无需鉴权，第三方网关通常没有它，因此失败时返回
+	 * `available: false` 而不抛异常。
 	 */
 	async getStatus(signal?: AbortSignal): Promise<StatusFetchResult> {
 		const url = joinUrl(this.options.baseUrl, ENDPOINTS.status);
@@ -170,18 +167,17 @@ export class NewApiClient {
 	/**
 	 * 流式对话补全。
 	 *
-	 * 把「调用方取消」与「静默超时」都收敛到同一个 AbortSignal 上：
-	 * 任意一方触发，底层的 fetch 与 SSE 读取都会立刻结束。
+	 * 把「调用方取消」与「静默超时」收敛到同一个 AbortSignal：任意一方触发，
+	 * 底层 fetch 与 SSE 读取都会立刻结束。
 	 *
-	 * 流在给出正常收尾信号（`[DONE]` 或 `finish_reason`）之前就结束时会抛
-	 * {@link SseTruncatedError}：半截回答必须让上层知道，否则用户会把它当成完整的。
+	 * 流在给出正常收尾信号（`[DONE]` 或 `finish_reason`）之前结束时会抛
+	 * {@link SseTruncatedError}。
 	 */
 	async *streamChatCompletion(
 		request: ChatCompletionRequest,
 		signal?: AbortSignal,
 		/**
-		 * 单次请求的传输覆盖。目前只有一项：站点不认 `stream_options` 时（400 自愈阶梯）
-		 * 本次不再要求上游返回用量。
+		 * 单次请求的传输覆盖：站点不认 `stream_options` 时本次不再要求上游返回用量。
 		 */
 		options?: { readonly includeUsage?: boolean },
 	): AsyncGenerator<ChatCompletionChunk> {
@@ -199,6 +195,8 @@ export class NewApiClient {
 		const idleTimeoutMs = this.options.streamIdleTimeoutMs ?? this.options.timeoutMs;
 		const controller = new AbortController();
 		const forward = attachAbort(signal, controller);
+		// 在途登记覆盖「取响应头 + 读完响应体」，否则 `retire()` 会在读到一半时掐断连接
+		const release = this.http.beginInFlight();
 		this.options.logger.trace(`→ POST ${url}`, redactText(truncate(body, 2000)));
 
 		try {
@@ -212,9 +210,8 @@ export class NewApiClient {
 
 			const contentType = response.headers.get('content-type') ?? '';
 			if (!contentType.includes(SSE_CONTENT_TYPE)) {
-				// 网关忽略了 stream:true，直接返回普通 JSON（部分中转/降级配置会这样）。
-				// 这时如果继续按 SSE 解析，会把整段 JSON 当成一行数据而什么都拿不到，
-				// 因此这里降级成「单块非流式响应」。
+				// 网关忽略了 stream:true，返回普通 JSON。继续按 SSE 解析会拿不到任何数据，
+				// 因此降级成单块非流式响应。
 				this.options.logger.warn(`响应不是 SSE（content-type=${contentType || '未知'}），按单块 JSON 处理`);
 				const text = await readStreamText(response.body, controller.signal, {
 					idleTimeoutMs,
@@ -246,17 +243,16 @@ export class NewApiClient {
 			}
 			this.options.logger.debug(`流式响应结束，共 ${chunkCount} 个数据块`);
 
-			// 正常收尾只有两种：收到 `[DONE]`，或上游在数据块里给了 `finish_reason`。
-			// 两者都没有就说明连接被中途掐断，后半截回答已经丢了——必须让上层知道，
-			// 否则用户会把半截回答当成完整的。已解析出数据块是前提：一块都没解析出来时
-			// 分不清「响应为空」与「格式不认识」，不能当作截断。
+			// 正常收尾只有两种：收到 `[DONE]`，或上游给了 `finish_reason`。
+			// 两者都没有且已解析出数据块，说明连接被中途掐断。
 			if (outcome.blocks > 0 && !outcome.sawDone && !sawFinishReason) {
 				throw new SseTruncatedError(outcome.blocks);
 			}
 		} finally {
 			forward.dispose();
-			// 提前退出（例如调用方 break）时要主动断流，否则连接会挂到超时
+			// 提前退出（调用方 break）时主动断流，否则连接会挂到超时
 			controller.abort(new TransportError('aborted', '流式请求已结束'));
+			release();
 		}
 	}
 
@@ -290,7 +286,16 @@ export class NewApiClient {
 
 	/* ---------------------------------------------------------------------- */
 
-	/** 释放客户端，中断所有在途请求。 */
+	/**
+	 * 优雅退役：不再接受新请求，等在途请求结束后才中断连接。
+	 *
+	 * 配置变更时用这个而不是 {@link dispose}，避免正在生成的回答被掐成半截。
+	 */
+	retire(): void {
+		this.http.retire();
+	}
+
+	/** 释放客户端，中断所有在途请求（扩展停用时用）。 */
 	dispose(): void {
 		this.http.dispose();
 	}
@@ -319,8 +324,7 @@ function buildUserAgent(): string {
 /**
  * 把外部信号转发到内部控制器，并返回解绑函数。
  *
- * 用内部控制器是为了把「调用方取消」与「静默超时」合并到同一条信号上：
- * 任意一方触发，底层的 fetch 与 SSE 读取都会立刻结束。
+ * 用内部控制器是为了把「调用方取消」与「静默超时」合并到同一条信号上。
  */
 function attachAbort(source: AbortSignal | undefined, controller: AbortController): { dispose(): void } {
 	if (source === undefined) {
@@ -337,13 +341,11 @@ function attachAbort(source: AbortSignal | undefined, controller: AbortControlle
 
 /**
  * 把非流式响应转成等价的 chunk，让上层只需要处理一种形态。
- *
- * 失败时返回 `undefined`（由调用方决定如何报错），不在这里抛异常。
+ * 失败时返回 `undefined`，由调用方决定如何报错。
  */
 function completionToChunk(text: string): ChatCompletionChunk | undefined {
 	const parsed = safeJsonParse<ChatCompletionResponse>(text);
-	// 注意：这里不能用 `isRecord` 收窄——它会把类型变成 `Record<string, unknown>`，
-	// 反而丢掉 `ChatCompletionResponse` 的字段类型。用 typeof 判断即可。
+	// 不能用 `isRecord` 收窄：它会把类型变成 `Record<string, unknown>`，丢掉字段类型
 	if (!parsed || typeof parsed !== 'object') {
 		return undefined;
 	}
@@ -359,7 +361,7 @@ function completionToChunk(text: string): ChatCompletionChunk | undefined {
 			delta: {
 				role: choice.message?.role,
 				content: choice.message?.content ?? undefined,
-				// 与流式路径用同一个读取器：思维链的字段名各家不同
+				// 与流式路径共用同一个读取器（思维链字段名各家不同）
 				reasoning_content: readReasoningText(choice.message),
 				tool_calls: choice.message?.tool_calls?.map((call, callIndex) => ({
 					index: callIndex,
@@ -372,7 +374,7 @@ function completionToChunk(text: string): ChatCompletionChunk | undefined {
 	};
 }
 
-/** 这个数据块里是否带了 `finish_reason`（收到它就说明上游认为回答已经结束）。 */
+/** 该数据块里是否带了 `finish_reason`。 */
 function hasFinishReason(chunk: ChatCompletionChunk): boolean {
 	for (const choice of chunk.choices ?? []) {
 		if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
@@ -405,13 +407,11 @@ function extractModelList(parsed: unknown): NewApiModel[] {
 }
 
 /**
- * 把原始条目转成模型对象。
- *
- * 接受两种 id 字段名：
+ * 把原始条目转成模型对象，接受两种 id 字段名：
  * - 标准 OpenAI `/v1/models`：`id`
  * - New API 自有 `/api/models`：`model_name`
  *
- * 两者都不存在时返回 `undefined`，由调用方计入 `invalidCount`。
+ * 两者都不存在时返回 `undefined`。
  */
 function toModel(value: unknown): NewApiModel | undefined {
 	if (!isRecord(value)) {
@@ -424,9 +424,8 @@ function toModel(value: unknown): NewApiModel | undefined {
 /**
  * 把任意异常描述成一句可展示的话。
  *
- * 运输层错误的消息已经是面向用户的（见 `src/errors.ts`），直接用它；其余走错误链渲染，
- * 因为包装错误的外壳（「XXX 失败」）没有信息量，真正的原因写在 `cause` 里。
- * 唯一保留的加工是密钥脱敏。
+ * 运输层错误的消息已面向用户，直接使用；其余走错误链渲染（包装外壳没有信息量，
+ * 真正的原因在 `cause` 里）。输出一律做密钥脱敏。
  */
 export function describeError(error: unknown): string {
 	if (error === undefined) {
@@ -439,9 +438,7 @@ export function describeError(error: unknown): string {
 }
 
 /**
- * 针对常见失败给出可操作建议。
- *
- * 只根据错误本身判断，不读配置：调用方自己清楚密钥是否已设置。
+ * 针对常见失败给出可操作建议；只根据错误本身判断，不读配置。
  */
 export function describeFailureHint(error: unknown, hasApiKey: boolean): string | undefined {
 	if (error instanceof HttpError) {
@@ -464,7 +461,7 @@ export function describeFailureHint(error: unknown, hasApiKey: boolean): string 
 		if (error.kind === 'timeout') {
 			return '请求超时：请检查网络，或调大 newapi-copilot-chat.request.timeoutMs。';
 		}
-		// `network` 不给建议：消息里已经带了分类与处置，再来一句就是同一件事说两遍
+		// `network` 不给建议：错误消息里已经带了分类与处置
 	}
 	if (error instanceof SseIdleTimeoutError) {
 		return '上游长时间没有返回新数据，请求已中断：长思考的模型可以调大 ' +

@@ -5,14 +5,13 @@
  * | --- | --- | --- |
  * | 角色 | 只有 `User` / `Assistant` | `system` / `user` / `assistant` / `tool` |
  * | 工具调用 | 助手消息里的 `LanguageModelToolCallPart` | 助手消息的 `tool_calls` |
- * | 工具结果 | 用户消息里的 `LanguageModelToolResultPart` | **独立**的 `role: 'tool'` 消息，带 `tool_call_id` |
+ * | 工具结果 | 用户消息里的 `LanguageModelToolResultPart` | 独立的 `role: 'tool'` 消息，带 `tool_call_id` |
  * | 图片 | `LanguageModelDataPart`（mimeType + Uint8Array） | `image_url`，URL 为 `data:` 形式 |
  *
- * 因此一个 VS Code 消息可能被拆成**多条**上游消息，且顺序敏感：assistant(tool_calls) 之后
- * 必须紧跟若干条 tool 消息，顺序错了上游会直接报 400。
+ * 一个 VS Code 消息可能被拆成多条上游消息，且顺序敏感：assistant(tool_calls) 之后
+ * 必须紧跟若干条 tool 消息，顺序错了上游会报 400。
  *
- * 另外两类部件只在这条链路上处理：思考部件（宿主提供时才有）不能当正文发出去，
- * 回放标记（见 `replay.ts`）是我们自己写进历史的元数据，也不能发出去。
+ * 思考部件（宿主提供时才有）与回放标记（见 `replay.ts`）也不能当正文发出去。
  */
 
 import * as vscode from 'vscode';
@@ -29,13 +28,15 @@ import type {
 } from '../types';
 import { isReplayMarkerPart, readReplayedReasoning } from './replay';
 import { readThinkingText } from './thinking';
+import { splitCjkChars } from './tokenizer';
+import type { RequestTextMeasure } from './tokenizer';
 
 /** 转换结果。 */
 export interface ConvertedMessages {
 	readonly messages: ChatRequestMessage[];
 	/** 因为没有内容而被跳过的消息数 */
 	readonly skipped: number;
-	/** 转换过程中遇到的、值得记录但不足以失败的问题 */
+	/** 转换过程中值得记录但不致命的问题 */
 	readonly warnings: readonly string[];
 }
 
@@ -44,8 +45,7 @@ export interface ConvertMessagesOptions {
 	/**
 	 * 是否把历史里的思考内容回填成上一轮的思维链字段（`REASONING_ECHO_FIELD`）。
 	 *
-	 * 只有明确需要它的上游才打开（例如 DeepSeek 在思考态的工具调用历史里要求这个字段，
-	 * 见 `adapter/deepseek`）；对不认这个字段的实现，多送一个字段就是多一个 400 的理由。
+	 * 只有需要它的上游才打开（如 `adapter/deepseek`）；其余上游多送这个字段可能被拒。
 	 */
 	readonly echoReasoningContent?: boolean;
 }
@@ -56,8 +56,6 @@ export function convertMessages(
 	logger: Logger,
 	options: ConvertMessagesOptions = {},
 ): ConvertedMessages {
-	// `name === 'system'` 的用户消息会被提升为 `system` 角色：VS Code 的消息模型没有 system
-	// 角色，宿主有时会把系统提示按用户消息下发并用 `name` 标记来源；没命中时保持原样。
 	const echoReasoning = options.echoReasoningContent ?? false;
 	const result: ChatRequestMessage[] = [];
 	const warnings: string[] = [];
@@ -87,7 +85,7 @@ export function convertMessages(
 				toolMessages.push({
 					role: 'tool',
 					tool_call_id: part.callId,
-					content: toolResultToText(part),
+					content: convertToolResultContent(part, warnings),
 				});
 				continue;
 			}
@@ -96,19 +94,17 @@ export function convertMessages(
 				continue;
 			}
 			if (part instanceof vscode.LanguageModelDataPart) {
-				// 回放标记是我们自己写进历史的元数据，既不是图片也不是正文
+				// 回放标记是元数据，不是图片也不是正文
 				if (isReplayMarkerPart(part)) {
 					continue;
 				}
 				const image = dataPartToImage(part, warnings);
 				if (image !== undefined) {
 					contentParts.push(image);
-				} else {
-					textBuffer += `\n\`\`\`\n${dataPartToText(part)}\n\`\`\`\n`;
 				}
 				continue;
 			}
-			// 未知部件：尽力转成文本，而不是丢掉（丢掉会让模型失去上下文）
+			// 仅兼容字符串和文本部件形状；未知宿主元数据不能作为正文。
 			const fallback = partToText(part);
 			if (fallback !== undefined && fallback.length > 0) {
 				textBuffer += fallback;
@@ -126,6 +122,8 @@ export function convertMessages(
 			continue;
 		}
 
+		// VS Code 的消息模型没有 system 角色，宿主有时把系统提示按用户消息下发并用 `name` 标记来源，
+		// 这类消息会被提升为 `system` 角色。
 		const name = normalizeName(message.name);
 		const role = name === 'system' ? 'system' : 'user';
 		const content: ChatRequestMessage['content'] = hasImages
@@ -150,9 +148,8 @@ export function convertMessages(
 /**
  * 转换助手消息。返回 `undefined` 表示该消息没有任何有效内容。
  *
- * `echoReasoningContent` 打开时，思考内容会被回填成 `reasoning_content`（见 `replay.ts`）。
- * 优先用回放标记里的文本：宿主可能根本不把思考部件放回历史里，那时标记是唯一的来源；
- * 只有标记缺失时才退回宿主给的思考部件。
+ * `echoReasoningContent` 打开时，思考内容回填成 `reasoning_content`（见 `replay.ts`）；
+ * 优先用回放标记里的文本，标记缺失时才退回宿主给的思考部件。
  */
 function convertAssistantMessage(
 	message: vscode.LanguageModelChatRequestMessage,
@@ -207,9 +204,9 @@ function convertAssistantMessage(
 	}
 
 	// OpenAI 约定：带 tool_calls 时 content 必须为 null（部分上游对空字符串也会报错）
-	const content: ChatRequestMessage['content'] = text.length > 0
-		? (images.length > 0 ? buildMultimodalContent(text, images) : text)
-		: (toolCalls.length > 0 ? null : '');
+	const content: ChatRequestMessage['content'] = images.length > 0
+		? buildMultimodalContent(text, images)
+		: (text.length > 0 ? text : null);
 
 	const name = normalizeName(message.name);
 	const reasoning = echoReasoningContent
@@ -225,39 +222,47 @@ function convertAssistantMessage(
 }
 
 /**
- * 统计请求体里的**文本**字符数，用于按上游返回的真实用量校准 token 估算比例。
+ * 统计请求体里的文本字符构成，用于按上游返回的真实用量校准 token 估算比例。
  *
- * 图片以 `data:` URL 传输，字符数没有意义（还会把比例彻底带偏），因此只数文本、
- * 工具调用与回填的思考内容。调用方拿到的是「与 `prompt_tokens` 对应的字符量」。
+ * 口径与估算器一致：工具定义计入，CJK 与非 CJK 分开数，图片不计。
  */
-export function countRequestChars(messages: readonly ChatRequestMessage[]): number {
-	let total = 0;
-	for (const message of messages) {
-		total += contentChars(message.content);
-		total += message.reasoning_content?.length ?? 0;
-		for (const call of message.tool_calls ?? []) {
-			total += call.function.name.length;
-			total += call.function.arguments.length;
+export function measureRequestText(
+	messages: readonly ChatRequestMessage[],
+	tools: readonly ChatToolDefinition[] | undefined,
+): RequestTextMeasure {
+	const measure = { cjkChars: 0, otherChars: 0 };
+	const add = (text: string | undefined): void => {
+		if (text === undefined || text.length === 0) {
+			return;
 		}
-	}
-	return total;
-}
+		const part = splitCjkChars(text);
+		measure.cjkChars += part.cjkChars;
+		measure.otherChars += part.otherChars;
+	};
 
-/** 内容里可计入字符数的部分。 */
-function contentChars(content: ChatRequestMessage['content']): number {
-	if (typeof content === 'string') {
-		return content.length;
-	}
-	if (content === null) {
-		return 0;
-	}
-	let total = 0;
-	for (const part of content) {
-		if (part.type === 'text') {
-			total += part.text?.length ?? 0;
+	for (const message of messages) {
+		const content = message.content;
+		if (typeof content === 'string') {
+			add(content);
+		} else if (content !== null) {
+			for (const part of content) {
+				if (part.type === 'text') {
+					add(part.text);
+				}
+			}
+		}
+		add(message.reasoning_content);
+		for (const call of message.tool_calls ?? []) {
+			add(call.function.name);
+			add(call.function.arguments);
 		}
 	}
-	return total;
+	for (const tool of tools ?? []) {
+		add(tool.function.name);
+		add(tool.function.description);
+		add(safeJsonStringify(tool.function.parameters) ?? undefined);
+	}
+	return measure;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -284,32 +289,28 @@ function dataPartToImage(part: vscode.LanguageModelDataPart, warnings: string[])
 		warnings.push('收到空的图片数据部件，已跳过');
 		return undefined;
 	}
-	// 上游需要 data URL 形式；直接透传二进制在 OpenAI 协议里没有位置
+	// 上游要求 data URL 形式
 	const base64 = Buffer.from(part.data).toString('base64');
 	return { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } };
 }
 
-/** 把非图片的数据部件转成文本。 */
-function dataPartToText(part: vscode.LanguageModelDataPart): string {
-	const text = new TextDecoder('utf-8').decode(part.data);
-	const mime = part.mimeType.toLowerCase();
-	if (mime.includes('json') || mime.includes('markdown') || mime.startsWith('text/')) {
-		return text;
-	}
-	// 二进制：只给出说明，不把乱码塞进上下文
-	return `[${part.mimeType} 数据，${part.data.byteLength} 字节]`;
-}
-
-/** 把工具结果部件转成上游需要的纯文本。 */
-function toolResultToText(part: vscode.LanguageModelToolResultPart): string {
+/** 工具图片保留为 image_url；非图片数据部件直接忽略。 */
+function convertToolResultContent(
+	part: vscode.LanguageModelToolResultPart,
+	warnings: string[],
+): ChatRequestMessage['content'] {
 	const chunks: string[] = [];
+	const images: ChatContentPart[] = [];
 	for (const item of part.content ?? []) {
 		if (item instanceof vscode.LanguageModelTextPart) {
 			chunks.push(item.value);
 			continue;
 		}
 		if (item instanceof vscode.LanguageModelDataPart) {
-			chunks.push(dataPartToText(item));
+			const image = dataPartToImage(item, warnings);
+			if (image !== undefined) {
+				images.push(image);
+			}
 			continue;
 		}
 		const text = partToText(item);
@@ -318,11 +319,14 @@ function toolResultToText(part: vscode.LanguageModelToolResultPart): string {
 		}
 	}
 	const joined = chunks.join('\n');
+	if (images.length > 0) {
+		return buildMultimodalContent(joined, images);
+	}
 	// 上游对 role:'tool' 的 content 要求非空字符串
 	return joined.length > 0 ? joined : '(工具没有返回内容)';
 }
 
-/** 尽力把未知部件转成文本。 */
+/** 只接受文本；未知对象和控制部件不序列化进上下文。 */
 function partToText(part: unknown): string | undefined {
 	if (typeof part === 'string') {
 		return part;
@@ -331,15 +335,13 @@ function partToText(part: unknown): string | undefined {
 		return undefined;
 	}
 	if (typeof part === 'object') {
-		// LanguageModelTextPart 的鸭子类型兜底：宿主可能来自另一个模块实例，
-		// `instanceof` 会失效，因此这里再按形状识别一次。
+		// 鸭子类型兜底：宿主对象可能来自另一个模块实例，`instanceof` 会失效
 		const maybeText = (part as { value?: unknown }).value;
 		if (typeof maybeText === 'string') {
 			return maybeText;
 		}
-		return safeJsonStringify(part) ?? undefined;
 	}
-	return String(part);
+	return undefined;
 }
 
 /** 规整消息名：空字符串视为未设置。上游对 name 有字符集要求，异常值直接丢弃。 */
@@ -358,20 +360,14 @@ function normalizeName(name: string | undefined): string | undefined {
 /* 工具定义                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/**
- * 零参数工具的 `parameters`。
- *
- * 上游要求 `parameters` 是一个 JSON Schema 对象，空的 object schema 就是
- * 「这个函数不收参数」的标准写法。
- */
+/** 零参数工具的 `parameters`：上游要求是 JSON Schema 对象，空 object schema 即「不收参数」。 */
 export const NO_PARAMETER_SCHEMA: object = { type: 'object', properties: {} };
 
 /**
  * 把 VS Code 的工具声明转换成上游的 `tools` 数组。
  *
  * `inputSchema` 缺失是合法情况：宿主对零参数工具不声明 schema（如内置的
- * `terminal_last_command` 与用来展开工具组的 `activate_*`），此时补成空 object schema。
- * 工具一个都不能少——少一个，模型就完全不知道它存在。
+ * `terminal_last_command`），此时补成空 object schema。
  */
 export function convertTools(
 	tools: readonly vscode.LanguageModelChatTool[] | undefined,

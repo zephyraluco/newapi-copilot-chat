@@ -1,9 +1,8 @@
 /**
  * VS Code 配置读取：把 `contributes.configuration` 的原始值校验成强类型，并广播变化。
  *
- * **站点地址与 API Key 不在这里**（由 provider 配置组提供，见 `runtime/target.ts`），
- * **模型元数据也不在这里**（由只读的模型数据表提供，见 `models/dataset.ts`）。
- * 这里只有与连接无关的共享调整项：模型列表缓存与兜底值、请求参数、状态栏、日志级别。
+ * 只有与连接无关的共享调整项：模型列表缓存与兜底值、请求参数、状态栏、日志级别。
+ * 站点地址与 API Key 由 provider 配置组提供，模型元数据由只读的模型数据表提供。
  */
 
 import * as vscode from 'vscode';
@@ -70,12 +69,48 @@ export interface NewApiSettings {
 }
 
 /**
- * 规范化 baseUrl。
+ * 一次设置变更的影响面。
  *
- * 使用者粘贴的地址形态五花八门（带尾斜杠、带 `/v1`、带 `/v1/chat/completions`），
- * 这里统一收敛成「协议 + 主机 + 可选路径前缀」的形式，端点由 `ENDPOINTS` 拼上去。
+ * `ConfigService` 对 `newapi-copilot-chat.*` 下任何设置变化都会广播，而下游的反应不同。
+ */
+export interface SettingsChangeScope {
+	/** client 的构造参数变了（超时、静默超时、是否要用量、重试次数）：需要按新设置重建 client */
+	readonly client: boolean;
+	/** 模型设置变了（缓存有效期、兜底窗口/输出）：模型缓存与解析结果要重算 */
+	readonly models: boolean;
+	/** 状态设置变了（显示开关、刷新间隔） */
+	readonly status: boolean;
+	/** 日志级别变了 */
+	readonly logLevel: boolean;
+}
+
+/**
+ * 判断一次设置变更影响了哪些部分。
  *
- * 幂等：对已规范化的地址再调一次不会有副作用。
+ * 只比较需要动作的字段：`request` 下的采样参数、思考回显、工具组预激活、`extraBody`
+ * 都是每次请求现读的，因此不出现在这里。
+ */
+export function classifySettingsChange(
+	previous: NewApiSettings,
+	next: NewApiSettings,
+): SettingsChangeScope {
+	return {
+		client: previous.request.timeoutMs !== next.request.timeoutMs
+			|| previous.request.streamIdleTimeoutMs !== next.request.streamIdleTimeoutMs
+			|| previous.request.includeUsage !== next.request.includeUsage
+			|| previous.request.maxRetries !== next.request.maxRetries,
+		models: previous.models.cacheTtlMs !== next.models.cacheTtlMs
+			|| previous.models.defaultContextWindow !== next.models.defaultContextWindow
+			|| previous.models.defaultMaxOutputTokens !== next.models.defaultMaxOutputTokens,
+		status: previous.status.showStatusBar !== next.status.showStatusBar
+			|| previous.status.refreshIntervalMs !== next.status.refreshIntervalMs,
+		logLevel: previous.logLevel !== next.logLevel,
+	};
+}
+
+/**
+ * 规范化 baseUrl：收敛成「协议 + 主机 + 可选路径前缀」，端点由 `ENDPOINTS` 拼上去。
+ * 会剥掉末尾斜杠与已知的 `/v1`、`/v1/chat/completions` 后缀。幂等。
  */
 export function normalizeBaseUrl(raw: string | undefined): string {
 	const trimmed = (raw ?? '').trim();
@@ -84,7 +119,7 @@ export function normalizeBaseUrl(raw: string | undefined): string {
 	}
 	// 去掉末尾斜杠
 	let value = trimmed.replace(/\/+$/, '');
-	// 用户常常复制了完整的兼容端点地址，这里把已知后缀剥掉
+	// 剥掉常见的完整兼容端点后缀
 	value = value.replace(/\/(v1\/)?chat\/completions$/i, '');
 	value = value.replace(/\/v1$/i, '');
 	value = value.replace(/\/+$/, '');
@@ -190,7 +225,7 @@ export function readSettings(logger: Logger): NewApiSettings {
 	};
 }
 
-/** 配置服务：读取、广播变更、并提供脱敏摘要。 */
+/** 配置服务：读取、广播变更并提供摘要。 */
 export class ConfigService implements vscode.Disposable {
 	private readonly emitter = new vscode.EventEmitter<NewApiSettings>();
 	private readonly listener: vscode.Disposable;

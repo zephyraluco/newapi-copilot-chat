@@ -3,11 +3,8 @@
 /**
  * 测试基架：把一个或多个 TypeScript 模块打包进内存后加载。
  *
- * 用 esbuild 现打包而不是等 `tsc` 产物，有两个原因：
- * 1. 不依赖构建顺序，`npm test` 单独跑也能过；
- * 2. 入口由测试自己拼（下面用 `stdin`），因此**一次加载里的模块共享实例**——
- *    这点很关键：`models/dataset.ts` 的数据表是模块级状态，如果测试与它导入的
- *    `modelConfig.ts` 各自拿到一份副本，`installModelDataset` 装进去的表就永远看不见。
+ * 用 esbuild 现打包而不等 `tsc` 产物：不依赖构建顺序，且**一次加载里的模块共享实例**
+ * （`models/dataset.ts` 的数据表是模块级状态，副本不共享会让 `installModelDataset` 装进去的表看不见）。
  */
 
 const path = require('node:path');
@@ -20,8 +17,8 @@ const ROOT = path.join(__dirname, '..', '..');
 /**
  * 打包并加载若干模块。
  *
- * @param {Record<string, string>} entries 别名 → **相对仓库根**的模块路径，例如
- *   `{ dataset: './src/models/dataset' }`。返回值里就按这个别名取导出。
+ * @param {Record<string, string>} entries 别名 → 相对仓库根的模块路径，例如
+ *   `{ dataset: './src/models/dataset' }`。返回值里按这个别名取导出。
  * @param {{ vscode?: object }} [options] 自定义 `vscode` 替身；缺省用标准替身。
  * @returns {{ modules: Record<string, any>, vscode: object }}
  */
@@ -59,8 +56,6 @@ function load(entries, options = {}) {
 
 /**
  * 收集日志的假 logger。
- *
- * 用 `messages(level)` 断言「某级别下没有日志」比断言文案更稳：文案会改，行为不会。
  */
 function createLogger() {
 	const lines = [];
@@ -85,8 +80,7 @@ function createLogger() {
 /**
  * 假的 `ReadableStream`。
  *
- * 只要 `getReader()` 返回的对象形状对（`read` / `cancel` / `releaseLock`）即可，
- * 不需要真的 `ReadableStream`——用的是全局类，Node 版本变了行为也可能变。
+ * 只要 `getReader()` 返回的对象形状对（`read` / `cancel` / `releaseLock`）即可。
  *
  * @param {Array<string | Uint8Array>} chunks 依次吐出的分片；字符串按 UTF-8 编码。
  * @param {{ hang?: boolean }} [options] `hang` 为真时读完分片后不再返回 `done`，
@@ -122,7 +116,7 @@ function streamOf(chunks, options = {}) {
 	};
 }
 
-/** 把异步生成器收成数组，省掉每个用例里的 `for await` 样板。 */
+/** 把异步生成器收成数组。 */
 async function collect(iterable) {
 	const items = [];
 	for await (const item of iterable) {

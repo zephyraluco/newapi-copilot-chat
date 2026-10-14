@@ -2,11 +2,9 @@
  * 请求种类识别：区分「主对话」与宿主发起的各种辅助请求。
  *
  * 宿主把这些内部请求也交给同一个 provider（起标题、写提交信息、生成分支名、整理待办、
- * 给提示分类……），能用来区分的只有**首条消息（系统提示词）的前缀**，
- * 以及少数「只带一个工具」的请求。
+ * 给提示分类等），能用来区分的只有首条消息（系统提示词）的前缀，以及少数「只带一个工具」的请求。
  *
- * 前缀是识别用的**特征**，不是协议：宿主改了措辞，识别只会退化成 `background`，
- * 不会把请求改坏。
+ * 前缀是识别用的特征，不是协议：宿主改了措辞只会退化成 `background`。
  */
 
 import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../../types';
@@ -59,10 +57,7 @@ const TODO_TRACKER_TOOL = 'manage_todo_list';
 const PROMPT_CATEGORIZER_TOOL = 'categorize_prompt';
 
 /**
- * 「开了思考也白开」的请求种类。
- *
- * 这些请求的产出是一行标题、一句提交信息、一个分支名之类，上游想出来的内容会被调用方
- * 直接丢掉，思考只会让它们慢几倍。
+ * 「开了思考也白开」的请求种类：产出一行标题、提交信息之类，思考只会让它们慢几倍。
  */
 const KINDS_WITHOUT_THINKING: ReadonlySet<ChatRequestKind> = new Set<ChatRequestKind>([
 	'todo-tracker',

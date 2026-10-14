@@ -3,7 +3,7 @@
 /**
  * provider/requestRepair.ts：HTTP 400 的自愈阶梯。
  *
- * 三条边界各有用例守着：只对 400 生效、没有线索就不猜、每轮改动必须真的发生。
+ * 边界：只对 400 生效、没有线索就不猜、每轮改动必须真的发生。
  */
 
 const { test } = require('node:test');
@@ -16,6 +16,7 @@ const { modules } = load({
 });
 
 const { planRequestRepair } = modules.requestRepair;
+const { RepairMemory, applyRememberedRepair } = modules.requestRepair;
 const { DEFAULT_REASONING_EFFORT_FIELD } = modules.consts;
 
 /** 一个「什么可选字段都带着」的请求体。 */
@@ -129,6 +130,99 @@ test('协议骨架字段不会被自愈删掉', () => {
 test('上游点名了请求里不存在的字段时不动手', () => {
 	// 去掉一个本来就没有的字段什么也不会改变
 	assert.equal(plan({ apiMessage: '{"error":{"message":"Unknown parameter: \'logit_bias\'"}}' }), undefined);
+});
+
+/* -------------------------------------------------------------------------- */
+/* 白名单：只去掉我们自己加的可选项                                            */
+/* -------------------------------------------------------------------------- */
+
+test('工具 schema 不合法时绝不能把 tools 删掉', () => {
+	// 否则响应体里任何带引号且请求里存在的字段名都会被当成「上游不认的字段」而删掉
+	const request = { ...fullRequest(), tools: [{ type: 'function', function: { name: 'read_file' } }] };
+
+	for (const message of [
+		'{"error":{"message":"Invalid schema for function \'read_file\'","param":"tools"}}',
+		"Unknown parameter: 'tools'",
+		'tools is not supported',
+		'Invalid schema for function read_file',
+	]) {
+		assert.equal(plan({ request, apiMessage: message }), undefined, message);
+	}
+});
+
+test('白名单之外的请求字段一律不动', () => {
+	const request = { ...fullRequest(), extra_knob: 1 };
+
+	// 不是我们加的字段：不动手
+	assert.equal(plan({ request, apiMessage: "Unknown parameter: 'extra_knob'" }), undefined);
+	// 用户自己填进 extraBody 的键由调用方传进来，那时才允许去掉
+	const result = plan({
+		request,
+		apiMessage: "Unknown parameter: 'extra_knob'",
+		optionalFields: ['extra_knob'],
+	});
+	assert.equal(result.id, 'field:extra_knob');
+	assert.equal('extra_knob' in result.request, false);
+});
+
+test('DeepSeek 的 thinking 属可自愈字段', () => {
+	const request = { ...fullRequest(), thinking: { type: 'enabled' } };
+	const result = plan({ request, apiMessage: 'unknown field "thinking"' });
+
+	assert.equal(result.id, 'field:thinking');
+	assert.equal('thinking' in result.request, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* 自愈记忆                                                                    */
+/* -------------------------------------------------------------------------- */
+
+test('RepairMemory：按会话 + 模型记住已经确认过的不兼容字段', () => {
+	const memory = new RepairMemory();
+
+	assert.equal(memory.get('t1', 'm1'), undefined);
+	memory.remember('t1', 'm1', { id: 'field:temperature', request: {}, note: '' });
+	// 重复记住同一个字段不会重复累积
+	memory.remember('t1', 'm1', { id: 'field:temperature', request: {}, note: '' });
+
+	assert.deepEqual(memory.get('t1', 'm1'), { fields: ['temperature'], includeUsage: undefined });
+	// 另一个站点或另一个模型互不影响
+	assert.equal(memory.get('t2', 'm1'), undefined);
+	assert.equal(memory.get('t1', 'm2'), undefined);
+});
+
+test('RepairMemory：stream_options 记为「不再要求用量」', () => {
+	const memory = new RepairMemory();
+	memory.remember('t1', 'm1', { id: 'stream_options', request: {}, note: '', includeUsage: false });
+
+	assert.deepEqual(memory.get('t1', 'm1'), { fields: [], includeUsage: false });
+});
+
+test('RepairMemory：超过上限时淘汰最久未使用的条目', () => {
+	const memory = new RepairMemory(2);
+	memory.remember('t', 'a', { id: 'field:temperature', request: {}, note: '' });
+	memory.remember('t', 'b', { id: 'field:temperature', request: {}, note: '' });
+	// 命中 a，使它成为最近使用
+	assert.ok(memory.get('t', 'a') !== undefined);
+	memory.remember('t', 'c', { id: 'field:temperature', request: {}, note: '' });
+
+	assert.equal(memory.size, 2);
+	assert.equal(memory.get('t', 'b'), undefined);
+	assert.ok(memory.get('t', 'a') !== undefined);
+	assert.ok(memory.get('t', 'c') !== undefined);
+});
+
+test('applyRememberedRepair：把记忆里的字段预先去掉，且不改原请求', () => {
+	const request = { ...fullRequest() };
+
+	assert.deepEqual(applyRememberedRepair(request, undefined), request);
+	assert.deepEqual(applyRememberedRepair(request, { fields: [], includeUsage: false }), request);
+
+	const next = applyRememberedRepair(request, { fields: ['temperature'], includeUsage: undefined });
+	assert.equal('temperature' in next, false);
+	assert.equal(next.top_p, 0.9);
+	// 原请求不被改动
+	assert.equal(request.temperature, 0.5);
 });
 
 /* --------------------------------------------------------------------------- */
