@@ -386,7 +386,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 两件事相互独立：**怎么显示**是外观问题，**要不要回填**是上游的协议要求。
 
 - **渲染**：宿主提供 `LanguageModelThinkingPart` 时走专用部件（Copilot 渲染成可折叠思考块）；宿主没提供、或用户关掉 `request.includeReasoning` 时回退到 Markdown 引用块。三种情况都在 `emitReasoning` 里收敛，探测按**构造时定好一次**处理：同一次响应里忽冷忽热地换渲染路径更糟。该部件属提案 API，扩展不声明 `enabledApiProposals`，因此**引用块是常规路径，专用部件是例外**。
-- **回填**：DeepSeek 在思考态的工具调用历史里要求助手消息带回 `reasoning_content`，而稳定 API 不会把思考内容交还给 provider。因此响应结束时额外上报一个 `mimeType` 为 `stateful_marker` 的 data 部件（宿主不渲染，但会留在历史里原样回传），下次构造请求时读出来填进 `reasoning_content`。是否打开由适配器的 `echoReasoningContent` 决定。标记格式自产自销，但任何一步不合预期都当作「没有标记」——一个坏标记不该把整次请求弄崩。
+- **回填**：DeepSeek 在思考态要求历史里的助手消息都带回 `reasoning_content`——**缺席**这个字段会被上游整次拒掉，不只是工具调用那几条，宿主自己插入的助手消息（例如读取后台终端输出的工具调用）同样算数。而稳定 API 不会把思考内容交还给 provider，因此响应结束时额外上报一个 `mimeType` 为 `stateful_marker` 的 data 部件（宿主不渲染，但会留在历史里原样回传），下次构造请求时读出来填进 `reasoning_content`。是否打开由适配器的 `echoReasoningContent` 决定；provider 只管**已知的原文**，缺口由声明这个要求的适配器补——DeepSeek 在开启思考时给缺字段的助手消息写一个空格占位（`REASONING_PLACEHOLDER`），因为「谁都拿不到原文」的历史真实存在（宿主插入的工具调用、会话重启后不再带回思考的历史），省略字段的代价是整次请求被拒。标记格式自产自销，但任何一步不合预期都当作「没有标记」——一个坏标记不该把整次请求弄崩。
 
 ### 工具组预激活（`toolFlow.ts`）
 
@@ -448,10 +448,11 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | `thinking: { type: 'enabled' }` | 模型具备思考能力 | 一律显式写入，不依赖上游对「没给这个字段」的默认理解 |
 | `thinking: { type: 'disabled' }` | 思考模型 **且** 是辅助请求 | 辅助请求的产出只有一行短文本，思考会让它慢几倍、结果还会被丢掉 |
 | 删除 `reasoning_effort` | 关掉思考时，或模型不具备思考能力时 | 强度只在「开启思考」时才成立 |
+| 写入 `reasoning_content: ' '`（占位） | 开启思考 **且** 历史里的助手消息缺这个字段 | 思考态下上游要求每条助手消息都带回思考内容，缺了整次请求被拒；provider 填得了「已知的原文」，宿主插入的消息、重启后不带思考的历史只能这样满足它 |
 
 **辅助请求**由首条消息的前缀识别，少数内部请求还可以靠「只带一个工具」认出来（`shouldDisableThinking` 列出全部类型）。识别用的是**特征而不是协议**：宿主改了措辞只会退化成 `background`（不触发任何改写），不会把请求改坏。改写结果带上请求种类写进 debug 日志。
 
-适配器还声明了 `echoReasoningContent`，由 provider 用回放标记完成（见 §8）。
+适配器还声明了 `echoReasoningContent`（由 provider 用回放标记完成），并自己补上 provider 拿不到原文的缺口（开启思考时写占位，见 §8）。
 
 ## 10. `status/` —— 状态栏
 
@@ -493,7 +494,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，**这个值不会自�
 | --- | --- |
 | 思考内容默认回退成 Markdown 引用块，专用思考部件是**例外路径** | 该部件不在稳定 typings 里，扩展又不声明 `enabledApiProposals`（提案 API 不允许发布到 Marketplace），因此只能运行时探测；探到才用（见 §8）——代价是 Copilot 自己的思考样式设置只在那条路径上生效 |
 | 不声明 `enabledApiProposals` | 提案 API 不允许发布到 Marketplace；代价是「可折叠思考块」只在宿主恰好提供了那个部件时可用，其余情况退化成引用块 |
-| 思考内容靠 `stateful_marker` 数据部件回环 | 稳定 API 不把思考内容交还给 provider，这是唯一能按轮次把 `reasoning_content` 带回上游的通道；宿主不回传时退化成「不回填」，不会出错 |
+| 思考内容靠 `stateful_marker` 数据部件回环 | 稳定 API 不把思考内容交还给 provider，这是唯一能按轮次把 `reasoning_content` 带回上游的通道；宿主不回传时退化成占位空格（见 §8，只在开启思考的请求上）——要求回填的上游把字段缺席当协议错误，什么都不写等于整次请求被拒 |
 | 思考强度默认「不指定」，用户选过才发 | VS Code 会把 schema 的 `default` 带进每一次请求，不能替用户改请求 |
 | 思考档位逐模型且**不经翻译** | 上游词汇就是站点文档里的写法；编一套映射只会在出现新档位时显示一个猜出来的名字 |
 | 思考强度字段名固定 `reasoning_effort` | 数据表是生成产物，不适合承载逐模型的请求改写规则；且 VS Code 的模型配置只能从我们声明的枚举里选 |

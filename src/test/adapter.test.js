@@ -17,6 +17,7 @@ const { modules } = load({
 	requestKind: './src/adapter/deepseek/requestKind',
 	capability: './src/adapter/capabilityAdapter',
 	openaiReasoning: './src/adapter/openai/openaiReasoningAdapter',
+	reasoning: './src/reasoning',
 });
 
 const { DefaultModelAdapter } = modules.defaultAdapter;
@@ -25,6 +26,7 @@ const { DeepSeekAdapter, isDeepSeekModel, THINKING_FIELD } = modules.deepseek;
 const { classifyRequest, shouldDisableThinking } = modules.requestKind;
 const { ModelCapabilityAdapter } = modules.capability;
 const { OpenAIReasoningAdapter } = modules.openaiReasoning;
+const { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } = modules.reasoning;
 
 /** 造一个够用的模型配置：只有 `id` 与 `meta.vendor` 会被适配器读。 */
 function model(id, vendor) {
@@ -220,7 +222,7 @@ function deepseekTransform(requestBody, options = {}) {
 	const adapter = new DeepSeekAdapter();
 	const context = {
 		model: { id: options.id ?? 'deepseek-chat', reasoning: options.reasoning ?? true },
-		logger: createLogger(),
+		logger: options.logger ?? createLogger(),
 	};
 	return adapter.transformRequest(requestBody, context);
 }
@@ -282,6 +284,83 @@ test('DeepSeek：只改自己的字段，不动消息与工具', () => {
 	assert.equal(request.tool_choice, 'auto');
 	assert.equal(request.tools, tools);
 	assert.equal(request.messages.length, 1);
+});
+
+/* --- 思考内容的回填与补齐 --------------------------------------------------- */
+
+test('DeepSeek：思考态下给缺思考内容的历史助手消息补占位', () => {
+	// 宿主自己插入的助手消息（读取后台终端输出的工具调用就是这样出现的）本来就没有思考可
+	// 回填，而思考态下缺这个字段上游会整次拒掉——包括没有工具调用的普通助手消息
+	const logger = createLogger();
+	const request = deepseekTransform({
+		messages: [
+			{ role: 'user', content: MAIN_AGENT_PROMPT },
+			{
+				role: 'assistant',
+				content: null,
+				tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_shell', arguments: '{}' } }],
+			},
+			{ role: 'tool', tool_call_id: 'call_1', content: '输出' },
+			{ role: 'assistant', content: '答案' },
+		],
+	}, { logger });
+
+	assert.equal(request.messages[1][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
+	assert.equal(request.messages[3][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
+	// 占位只补字段，正文与工具调用照旧
+	assert.equal(request.messages[1].content, null);
+	assert.equal(request.messages[1].tool_calls.length, 1);
+	assert.equal(request.messages[3].content, '答案');
+	assert.match(logger.messages('debug').join(' '), /2 条/);
+});
+
+test('DeepSeek：已经带回的思考内容不动，只补缺的', () => {
+	const request = deepseekTransform({
+		messages: [
+			{ role: 'user', content: MAIN_AGENT_PROMPT },
+			{ role: 'assistant', content: '答案', reasoning_content: '回放里的思考' },
+		],
+	});
+
+	assert.equal(request.messages[1][REASONING_ECHO_FIELD], '回放里的思考');
+});
+
+test('DeepSeek：空字符串的思考内容同样是缺，补占位', () => {
+	// 空串过不了上游的「非空」校验，与字段缺席同义
+	const request = deepseekTransform({
+		messages: [
+			{ role: 'user', content: MAIN_AGENT_PROMPT },
+			{ role: 'assistant', content: '答案', reasoning_content: '' },
+		],
+	});
+
+	assert.equal(request.messages[1][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
+});
+
+test('DeepSeek：关掉思考的辅助请求不补占位', () => {
+	// 关掉思考的请求不欠上游这个字段，多送一个反而多一种被拒的可能
+	const request = deepseekTransform({
+		messages: [
+			{ role: 'user', content: 'You are an expert in crafting pithy titles for chat sessions' },
+			{ role: 'assistant', content: '标题' },
+		],
+	});
+
+	assert.equal(REASONING_ECHO_FIELD in request.messages[1], false);
+});
+
+test('DeepSeek：模型不具备思考能力时不补占位', () => {
+	const request = deepseekTransform(
+		{
+			messages: [
+				{ role: 'user', content: MAIN_AGENT_PROMPT },
+				{ role: 'assistant', content: '答案' },
+			],
+		},
+		{ reasoning: false },
+	);
+
+	assert.equal(REASONING_ECHO_FIELD in request.messages[1], false);
 });
 
 /* -------------------------------------------------------------------------- */
