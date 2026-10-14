@@ -11,7 +11,7 @@ import { stripSamplingParams } from '../samplingParams';
  */
 const OPENAI_REASONING_MODEL = /(?:^|\/)(?:gpt-(?:5(?:\.[1-9]\d*)?|6)(?:-(?:code|codex|spark))?|gpt-(?:astra|luna|mini|sol|terra)-latest)(?:$|[@:./-])/i;
 
-export class OpenAIReasoningAdapter implements ModelAdapter {
+export class OpenAIAdapter implements ModelAdapter {
 	readonly id = 'openai-reasoning';
 	readonly priority = 80;
 

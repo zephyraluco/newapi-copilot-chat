@@ -9,7 +9,7 @@ import type { AdapterContext, ModelAdapter } from './adapter';
 import type { ChatCompletionRequest } from '../types';
 import { ModelCapabilityAdapter } from './capabilityAdapter';
 import { DeepSeekAdapter } from './deepseek/deepseekAdapter';
-import { OpenAIReasoningAdapter } from './openai/openaiReasoningAdapter';
+import { OpenAIAdapter } from './openai/openaiAdapter';
 import { QwenAdapter } from './qwen/qwenAdapter';
 import { GlmAdapter } from './glm/glmAdapter';
 import { KimiAdapter } from './kimi/kimiAdapter';
@@ -77,7 +77,7 @@ export function createDefaultAdapterRegistry(logger?: Logger): AdapterRegistry {
 	registry.register(new QwenAdapter(), logger);
 	registry.register(new GlmAdapter(), logger);
 	registry.register(new KimiAdapter(), logger);
-	registry.register(new OpenAIReasoningAdapter(), logger);
+	registry.register(new OpenAIAdapter(), logger);
 	// 数据驱动的能力位：优先级低于供应商适配器，因此它看到的是那些适配器改写之后的请求
 	registry.register(new ModelCapabilityAdapter(), logger);
 

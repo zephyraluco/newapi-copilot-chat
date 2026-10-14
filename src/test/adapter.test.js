@@ -16,7 +16,7 @@ const { modules } = load({
 	deepseek: './src/adapter/deepseek/deepseekAdapter',
 	requestKind: './src/adapter/deepseek/requestKind',
 	capability: './src/adapter/capabilityAdapter',
-	openaiReasoning: './src/adapter/openai/openaiReasoningAdapter',
+	openaiReasoning: './src/adapter/openai/openaiAdapter',
 	reasoning: './src/reasoning',
 });
 
@@ -25,7 +25,7 @@ const { DeepSeekAdapter, isDeepSeekModel } = modules.deepseek;
 const { DEFAULT_THINKING_FIELD: THINKING_FIELD } = modules.consts;
 const { classifyRequest, shouldDisableThinking } = modules.requestKind;
 const { ModelCapabilityAdapter } = modules.capability;
-const { OpenAIReasoningAdapter } = modules.openaiReasoning;
+const { OpenAIAdapter } = modules.openaiReasoning;
 const { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } = modules.reasoning;
 
 /** 造一个够用的模型配置：只有 `id` 与 `meta.vendor` 会被适配器读。 */
@@ -435,8 +435,8 @@ test('ModelCapabilityAdapter：数据表没表态时不动请求', () => {
 /* OpenAI 推理模型适配器                                                       */
 /* -------------------------------------------------------------------------- */
 
-test('OpenAIReasoningAdapter：只认新一代推理模型', () => {
-	const adapter = new OpenAIReasoningAdapter();
+test('OpenAIAdapter：只认新一代推理模型', () => {
+	const adapter = new OpenAIAdapter();
 
 	for (const id of ['gpt-5.4', 'gpt-5-code', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol']) {
 		assert.equal(adapter.supports(model(id)), true, id);
@@ -446,8 +446,8 @@ test('OpenAIReasoningAdapter：只认新一代推理模型', () => {
 	}
 });
 
-test('OpenAIReasoningAdapter：把 max_tokens 改名为 max_completion_tokens', () => {
-	const adapter = new OpenAIReasoningAdapter();
+test('OpenAIAdapter：把 max_tokens 改名为 max_completion_tokens', () => {
+	const adapter = new OpenAIAdapter();
 	const context = { model: { id: 'gpt-5.4' }, logger: createLogger() };
 
 	const request = adapter.transformRequest({
@@ -460,9 +460,9 @@ test('OpenAIReasoningAdapter：把 max_tokens 改名为 max_completion_tokens', 
 	assert.equal('max_tokens' in request, false);
 });
 
-test('OpenAIReasoningAdapter：数据表已表态的模型让位给能力位适配器', () => {
+test('OpenAIAdapter：数据表已表态的模型让位给能力位适配器', () => {
 	// 数据表知道得更细（例如「关掉思考时才接受采样参数」），因此不在这里一刀切
-	const adapter = new OpenAIReasoningAdapter();
+	const adapter = new OpenAIAdapter();
 	const context = {
 		model: { id: 'gpt-6-sol', samplingParams: 'when-thinking-off' },
 		logger: createLogger(),
