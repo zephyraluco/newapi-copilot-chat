@@ -1,11 +1,8 @@
 'use strict';
 
 /**
- * models/catalog.ts：快照变化事件。
- *
- * 事件链的终点是 `onDidChangeLanguageModelChatInformation`——宿主收到它就会重新拉一遍模型列表。
- * 周期性状态刷新会走到这里，因此「没变就不触发」是硬要求：否则宿主每分钟都会重新发现一次模型，
- * 模型缓存等于没有。
+ * models/catalog.ts：快照变化事件。宿主收到事件后会重新拉一遍模型列表，
+ * 因此「没变就不触发」是要求。
  */
 
 const { test } = require('node:test');
@@ -29,7 +26,7 @@ function makeCatalog(initialModels) {
 	const catalog = new ModelCatalog({
 		logger: createLogger(),
 		getClient: () => client,
-		// 缓存有效期设为 0，强制每次调用都走网络（用 force 也可以，这里更省事）
+		// 缓存有效期设为 0，强制每次调用都走网络
 		getSettings: () => ({ cacheTtlMs: 0, defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 }),
 	});
 	let fires = 0;

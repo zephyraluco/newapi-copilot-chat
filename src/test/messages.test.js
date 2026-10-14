@@ -3,8 +3,7 @@
 /**
  * provider/messages.ts（加上它消费的 replay / thinking 两个部件模块）：VS Code ⇄ OpenAI 兼容的消息转换。
  *
- * 这里用 `fakes.js` 里的 `vscode` 替身——转换靠 `instanceof` 认部件，因此替身里的类必须与
- * 被测模块看到的是同一批（同一次 `load` 里加载即可）。
+ * 转换靠 `instanceof` 认部件，因此替身里的类必须与被测模块看到的是同一批（同一次 `load` 里加载）。
  */
 
 const { test } = require('node:test');
@@ -21,7 +20,7 @@ const { modules, vscode } = load({
 const { convertMessages, measureRequestText } = modules.messages;
 const { createReplayMarkerPart, REPLAY_MARKER_MIME } = modules.replay;
 
-/** 不提供思考部件的宿主（默认情形）。 */
+/** 默认替身不提供思考部件。 */
 const logger = createLogger();
 
 /** 用户在消息里发文字。 */
@@ -324,7 +323,7 @@ test('measureRequestText：只数文本、工具调用、工具定义与回填�
 			role: 'user',
 			content: [
 				{ type: 'text', text: '看这个' },
-				// 图片以 data URL 传输，字符数与 token 无关，不该计入
+				// 图片以 data URL 传输，字符数与 token 无关，不计入
 				{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
 			],
 		},

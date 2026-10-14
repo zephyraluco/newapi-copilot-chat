@@ -1,7 +1,7 @@
 /**
  * 远端字段提取：把网关返回的模型对象翻译成 `RemoteModelHints`。
  *
- * 这里是**唯一**知道各家网关用什么字段名的地方。不同网关暴露的字段名都不一样：
+ * 这里是唯一知道各家网关用什么字段名的地方：
  * - New API / one-api 扩展：`context_length`、`max_tokens`
  * - OpenRouter：`context_length`、`top_provider.max_completion_tokens`、
  *   `architecture.input_modalities`、`supported_parameters`
@@ -9,7 +9,7 @@
  * - 通用猜测：`supports_vision`、`capabilities.*`
  *
  * 提取结果全部可选，拿不到就交给本地模型数据表与默认值兜底（优先级见 `modelConfig.ts`）。
- * 本模块是纯数据转换、不依赖 `vscode`，因此可以被单测直接覆盖。
+ * 本模块是纯数据转换、不依赖 `vscode`。
  */
 
 import { asBoolean, asStringArray, isRecord, pickBoolean, pickNumber, pickRecord, pickString } from '../json';
@@ -32,9 +32,8 @@ export interface RemoteModelHints {
 	/**
 	 * 网关明确声明支持思考参数时为 `true`。
 	 *
-	 * 只有「肯定」一种取值：网关没列出来并不代表模型不会思考
-	 * （New API 的 `/v1/models` 根本不返回 `supported_parameters`），
-	 * 因此这里不允许据此推断 `false`，否则会把数据表里已知的思考能力抹掉。
+	 * 只有「肯定」一种取值：网关没列出相关参数不代表模型不会思考，
+	 * 因此不据此推断 `false`（否定由数据表负责）。
 	 */
 	reasoning?: true;
 	/** 网关给出的展示名 */
@@ -82,10 +81,7 @@ export function extractRemoteHints(model: NewApiModel): RemoteModelHints {
 			hints.maxOutputTokens = genericMaxTokens;
 		}
 	} else if (genericMaxTokens !== undefined) {
-		// 只有 max_tokens：多数网关在此语义下表示「生成长度上限」，
-		// 但把它当成上下文窗口更接近其他工具的处理方式，因此这里宁可保守：
-		// 既当作输出上限，也不去猜测上下文窗口（留给本地模型数据表）。
-		// New API 的 `/v1/models` 正是这种形态，因此数据表的命中率很关键。
+		// 只有 max_tokens：当作输出上限，不在此猜测上下文窗口（留给数据表）
 		if (hints.maxOutputTokens === undefined) {
 			hints.maxOutputTokens = genericMaxTokens;
 		}
@@ -126,9 +122,8 @@ export function extractRemoteHints(model: NewApiModel): RemoteModelHints {
 	}
 
 	// ---- 思考能力 --------------------------------------------------------
-	// 只认「肯定」：列出推理参数说明支持；没有列出来只说明网关不暴露这些参数
-	// （New API 的 `/v1/models` 就完全不返回 `supported_parameters`），
-	// 因此这里不下 `false` 的结论——否定由数据表（即生成脚本）负责。
+	// 只认「肯定」：列出推理参数说明支持；没有列出来只说明网关不暴露这些参数，
+	// 因此不下 `false` 的结论——否定由数据表负责。
 	const reasoningParameters = ['reasoning', 'include_reasoning', 'reasoning_effort', 'thinking', 'enable_thinking'];
 	if (supportedParameters !== undefined
 		&& supportedParameters.some(item => reasoningParameters.includes(item.toLowerCase()))) {
@@ -143,7 +138,7 @@ export function extractRemoteHints(model: NewApiModel): RemoteModelHints {
 	hints.family = pickString(model, ['family', 'model_family']);
 	hints.version = pickString(model, ['version']);
 
-	// 网关返回的 displayName 常常就是 id 本身，没有信息量，去掉以免 tooltip 重复
+	// 网关返回的 displayName 常常就是 id 本身，去掉以免 tooltip 重复
 	if (hints.displayName === model.id) {
 		hints.displayName = undefined;
 	}

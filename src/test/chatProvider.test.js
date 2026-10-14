@@ -3,15 +3,12 @@
 /**
  * provider 侧的模型信息映射（`toModelInformation`）。
  *
- * 它只被 `provideLanguageModelChatInformation` 调用，因此这里用 `fakes.js` 的 `vscode` 替身
- * 加一个「永远命中」的假会话注册表，把 provider 真的建起来跑一遍，而不是复制一份映射逻辑。
+ * 用 `fakes.js` 的 `vscode` 替身加一个「永远命中」的假会话注册表，把 provider 建起来跑一遍。
  *
- * 关注点有两个，都来自宿主实现：
- * - **真实上下文窗口要单独上报**（`maxContextWindowTokens`）。宿主没有这个字段时按
- *   `maxInputTokens + maxOutputTokens` 兜底，两者的差只在「网关给出比『窗口 − 输出上限』
- *   更小的输入上限」时才暴露；
- * - **`capabilities.apiType` / `adaptiveThinking` 必须保持不下发**：宿主读到这两个字段时会
- *   `checkProposedApiEnabled(..., 'languageModelCapabilities')`，扩展不能声明提案，那是直接抛异常。
+ * 两个关注点：
+ * - 真实上下文窗口要单独上报（`maxContextWindowTokens`），宿主没有该字段时按
+ *   `maxInputTokens + maxOutputTokens` 兜底；
+ * - `capabilities.apiType` / `adaptiveThinking` 必须不下发，宿主读到它们时会检查提案能力并抛异常。
  */
 
 const test = require('node:test');
@@ -67,7 +64,7 @@ test('模型信息：网关给出更小的输入上限时窗口不被那个和�
 	const [info] = await discover([config]);
 
 	assert.equal(info.maxContextWindowTokens, 128_000);
-	// 这正是不能只依赖宿主兜底的原因：那个和会比真实窗口小
+	// 宿主兜底算出的和会比真实窗口小
 	assert.ok(info.maxInputTokens + info.maxOutputTokens < info.maxContextWindowTokens);
 });
 

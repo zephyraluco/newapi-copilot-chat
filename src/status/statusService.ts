@@ -2,7 +2,7 @@
  * 状态服务：「扩展当前处于什么状态」的唯一真相来源——有哪些配置组、各自是否可用、
  * 各有多少模型、本次会话消耗了多少 token。
  *
- * 状态栏订阅这里并渲染，不自己去发请求。状态是**按目标聚合**的，每个目标一行，
+ * 状态栏订阅这里并渲染，不自己去发请求。状态按目标聚合，每个目标一行，
  * 整体可用性取「是否存在任一可用目标」。
  */
 
@@ -90,11 +90,10 @@ export interface UsageDeltaSummary {
 }
 
 /**
- * 状态服务看到的会话视图：**只列它真正用到的东西**。
+ * 状态服务看到的会话视图：只列它用到的成员。
  *
- * 刻意不写成 `ProviderSession` / `SessionRegistry`——状态层需要的只是「有哪些目标、各自能不能发请求、
- * 当前模型快照是什么」，绑到 provider 的具体实现上会同时带来两个坏处：依赖方向横着走，
- * 以及任何用例都得先拼装真实客户端与目录才能测这一层。
+ * 不写成 `ProviderSession` / `SessionRegistry`：状态层只需要「有哪些目标、各自能不能发请求、
+ * 当前模型快照是什么」，绑到 provider 的具体实现会带来反向依赖，也让测试必须拼装真实客户端与目录。
  */
 export interface StatusSessionView {
 	readonly target: ProviderTarget;
@@ -111,7 +110,7 @@ export interface StatusSessionView {
 export interface StatusSessionSource {
 	list(): readonly StatusSessionView[];
 	readonly onDidChange: vscode.Event<void>;
-	/** 让各会话丢弃模型缓存（**保留 client**，因此不会中断在途请求） */
+	/** 让各会话丢弃模型缓存（保留 client，不会中断在途请求） */
 	invalidateCatalogs(): void;
 }
 
@@ -163,8 +162,7 @@ export class StatusService implements vscode.Disposable {
 			this.deps.config.onDidChange(settings => {
 				const scope = classifySettingsChange(previous, settings);
 				previous = settings;
-				// 只有模型设置变化才需要丢掉模型缓存。**绝不在这里重建会话**：那会释放 client
-				// 并中断正在生成的回答，用户看到的是一个没有报错的半截回答（见 runtime/session.ts）。
+				// 只有模型设置变化才需要丢掉模型缓存；不在这里重建会话，那会中断正在生成的回答
 				if (scope.models) {
 					this.deps.sessions.invalidateCatalogs();
 				}
@@ -203,7 +201,7 @@ export class StatusService implements vscode.Disposable {
 	async refresh(options: { forceModels?: boolean } = {}): Promise<void> {
 		const sessions = this.deps.sessions.list();
 		if (sessions.length === 0) {
-			// 用户还没在本扩展里配置任何站点。这不是错误，只是「没有可探测的目标」；
+			// 用户还没配置任何站点：不是错误，只是没有可探测的目标，
 			// 状态栏与「测试连接」命令会指出这一点。
 			this.deps.logger.debug('尚无可用的配置组，跳过探测');
 			this.emit();
@@ -236,10 +234,8 @@ export class StatusService implements vscode.Disposable {
 		this.emit();
 
 		try {
-			// 模型列表交给 catalog（它与 provider 共享同一份缓存，
-			// 因此状态里显示的数量就是模型选择器里的数量）。
-			// 同时探一下 /api/status：它给出这段往返的耗时，也顺带确认这个端点是否可用
-			//（第三方兼容网关往往没有它，但客户端不会因此报错）。
+			// 模型列表交给 catalog（与 provider 共享同一份缓存，状态里的数量即模型选择器里的数量）；
+			// 同时探 /api/status：给出往返耗时，也确认该端点是否可用。
 			const startedAt = Date.now();
 			const [snapshot] = await Promise.all([
 				session.catalog.getModels({ force: forceModels, signal: this.inFlight?.signal }),
@@ -250,7 +246,7 @@ export class StatusService implements vscode.Disposable {
 				this.deps.logger.warn(`刷新模型列表失败：${target.label}：${snapshot.error}`);
 			}
 		} catch (error) {
-			// getModels 自己会吞掉失败，这里兜的是「意料之外」的错误
+			// getModels 自己会吞掉失败，这里兜住意料之外的错误
 			this.deps.logger.error(`刷新状态失败：${target.label}`, describeError(error));
 		} finally {
 			this.refreshing.delete(key);
@@ -259,9 +255,8 @@ export class StatusService implements vscode.Disposable {
 	}
 
 	/**
-	 * 探测单个目标（供「测试连接」命令使用）。
-	 *
-	 * 与周期性刷新走同一条路径，因此状态栏与命令的口径完全一致。
+	 * 探测单个目标（供「测试连接」命令使用）；与周期性刷新走同一条路径，
+	 * 因此状态栏与命令的口径一致。
 	 */
 	async probe(session: StatusSessionView): Promise<TargetStatus> {
 		await this.refreshSession(session, true);
@@ -351,9 +346,7 @@ export class StatusService implements vscode.Disposable {
 		}
 		const interval = this.deps.config.settings.status.refreshIntervalMs;
 		this.timer = setInterval(() => {
-			// 只探测状态：模型列表按自己的缓存有效期（`models.cacheTtl`）自然刷新。
-			// 早先这里传 `forceModels: true`，于是每 60 秒都会强制重拉一次模型列表，
-			// 5 分钟的缓存形同虚设，而且每次都会让宿主重新发现一遍模型。
+			// 只探测状态；模型列表按自己的缓存有效期（`models.cacheTtl`）刷新
 			void this.refresh({ forceModels: false });
 		}, interval);
 		this.deps.logger.debug(`状态刷新间隔：${Math.round(interval / 1000)}s`);

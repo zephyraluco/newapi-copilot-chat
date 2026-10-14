@@ -1,20 +1,17 @@
 /**
  * 会话注册表：把「连接目标」映射到一整套运行时对象（client + 模型目录）。
  *
- * 每个配置组可以指向不同的站点、用不同的密钥，因此 client 与模型缓存**不能全局共用**
- * （否则 A 站的模型列表会串到 B 站），也**不该每次新建**（VS Code 会反复轮询）。
- * 这里按目标维护一份会话：**会话签名**没变就复用，变了就重建。
+ * 每个配置组可以指向不同的站点、用不同的密钥，因此 client 与模型缓存不全局共用，
+ * 也不每次新建；这里按目标维护一份会话：会话签名没变就复用，变了就重建。
  *
- * 签名包含目标指纹与 client 的构造参数（超时、重试、是否要用量）。这样「改日志级别」或
- * 「改采样参数」这类变化完全不会碰会话，而真正换了连接身份时才重建。
+ * 签名包含目标指纹与 client 的构造参数（超时、重试、是否要用量）。
  *
- * 重建与「模型设置变化」走**两条不同的路**，这是关键：
+ * 重建与「模型设置变化」走两条不同的路：
  *
- * - 只是模型设置变了 → {@link SessionRegistry.invalidateCatalogs}：丢缓存，**client 不动**；
- * - 连接身份变了 → 旧会话**优雅退役**：不再接新请求，等在途请求跑完再释放。
+ * - 只是模型设置变了 → {@link SessionRegistry.invalidateCatalogs}：丢缓存，client 不动；
+ * - 连接身份变了 → 旧会话优雅退役：不再接新请求，等在途请求跑完再释放。
  *
- * 两条路都不中断在途请求。早先的实现对任何设置变化都直接 `dispose()` 全部会话，
- * 于是用户改一下日志级别就会看到一个没有报错的半截回答（见 `client/http.ts` 的 `retire`）。
+ * 两条路都不中断在途请求。
  */
 
 import * as vscode from 'vscode';
@@ -50,12 +47,7 @@ export interface SessionRegistryDeps {
 	getRequestSettings(): RequestSettings;
 }
 
-/**
- * 按目标缓存会话。
- *
- * 同一个「槽位」只保留一个会话：槽位就是组名。这样配置变更时旧会话一定会被替换掉，
- * 不会在 Map 里堆积。
- */
+/** 按目标缓存会话；槽位即组名，同一槽位只保留一个会话。 */
 export class SessionRegistry implements vscode.Disposable {
 	private readonly sessions = new Map<string, ProviderSession>();
 	private readonly emitter = new vscode.EventEmitter<void>();
@@ -95,9 +87,7 @@ export class SessionRegistry implements vscode.Disposable {
 	}
 
 	/**
-	 * 按指纹找回会话。
-	 *
-	 * 用于响应阶段：模型上带的指纹能唯一定位它当初属于哪个目标。
+	 * 按指纹找回会话；用于响应阶段，模型上带的指纹定位它当初属于哪个目标。
 	 * 找不到说明配置在对话期间被改过（旧会话已被重建）。
 	 */
 	find(key: string): ProviderSession | undefined {
@@ -116,10 +106,7 @@ export class SessionRegistry implements vscode.Disposable {
 	}
 
 	/**
-	 * 让所有会话的模型缓存失效，但**保留 client**。
-	 *
-	 * 用于「模型设置变化」这类需要重算模型列表的场景。**不要**用重建会话来做这件事：
-	 * 那会释放 client，从而中断正在生成的回答。
+	 * 让所有会话的模型缓存失效，保留 client（重建会话会释放 client 并中断在途请求）。
 	 */
 	invalidateCatalogs(): void {
 		if (this.sessions.size === 0) {
@@ -157,8 +144,7 @@ export class SessionRegistry implements vscode.Disposable {
 		});
 		const catalog = new ModelCatalog({
 			logger: logger.child(`catalog:${target.group ?? 'default'}`),
-			// 用闭包固定这个会话自己的 client：配置变化时整个会话会被重建，
-			// 因此这里不需要（也不应该）再去读全局的最新实例。
+			// 用闭包固定本会话的 client：配置变化时整个会话会被重建
 			getClient: () => client,
 			getSettings: () => this.deps.getModelSettings(),
 		});
@@ -204,10 +190,8 @@ export class SessionRegistry implements vscode.Disposable {
 }
 
 /**
- * 会话签名：决定「能不能复用这个 client」。
- *
- * 只包含 client 构造时用到的参数——`target.key`（站点地址 + 密钥的指纹）与请求侧的
- * 超时/重试/用量开关。采样参数、思考回显、`extraBody` 都是每次请求现读的，改了不必重建。
+ * 会话签名：只包含 client 构造用到的参数——`target.key`（站点地址 + 密钥的指纹）与
+ * 请求侧的超时/重试/用量开关；签名相同即可复用 client。
  */
 function sessionSignature(target: ProviderTarget, requests: RequestSettings): string {
 	return [

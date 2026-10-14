@@ -1,5 +1,5 @@
 /**
- * 适配器注册表：保存已注册的适配器，并按模型解析出应该用哪一个。
+ * 适配器注册表：保存已注册的适配器，并按模型解析出应该用哪些。
  * provider 只与这里交互，新增适配器不会波及 provider。
  */
 
@@ -21,8 +21,7 @@ export class AdapterRegistry {
 	/**
 	 * 注册适配器。
 	 *
-	 * 重复注册同一个 id 会被忽略并留下警告——通常是复制粘贴代码时忘了改 id，
-	 * 静默覆盖会让「为什么适配器没生效」变得难查。
+	 * 重复注册同一个 id 会被忽略并留下警告，避免静默覆盖导致适配器不生效。
 	 */
 	register(adapter: ModelAdapter, logger?: Logger): void {
 		if (this.adapters.some(item => item.id === adapter.id)) {
@@ -37,11 +36,7 @@ export class AdapterRegistry {
 	/**
 	 * 解析模型应使用的**全部**适配器，按 `priority` 从高到低。
 	 *
-	 * 返回全部命中项而不是第一个：差异是按「一个协议特性」拆的（推理模型不收采样参数、
-	 * 某类模型带工具时只能用某个思考强度…），一个模型常常同时命中多条。只取第一条会逼着
-	 * 每个适配器把别的适配器已经写过的逻辑再抄一遍——那正是「逐模型名特判」的温床。
-	 *
-	 * 无匹配项时返回空数组，请求直接透传。
+	 * 差异按「一个协议特性」拆分，一个模型常常同时命中多条；无匹配项时返回空数组，请求直接透传。
 	 */
 	resolveAll(model: ModelConfig): readonly ModelAdapter[] {
 		return this.adapters.filter(adapter => adapter.supports(model));
@@ -53,7 +48,7 @@ export class AdapterRegistry {
 		context: AdapterContext,
 		adapters: readonly ModelAdapter[] = this.resolveAll(context.model),
 	): Promise<ChatCompletionRequest> {
-		// 兼容已有的原地改写适配器，但不能污染调用方持有的历史与请求模板。
+		// 复制请求，避免原地改写污染调用方持有的历史与请求模板
 		let current = structuredClone(request);
 		for (const adapter of adapters) {
 			if (adapter.transformRequest !== undefined) {
@@ -67,7 +62,7 @@ export class AdapterRegistry {
 /**
  * 创建内置默认配置的注册表。
  *
- * 供应商适配器各自放在以供应商命名的子目录里（例如 `deepseek/`），目录内的文件只服务该供应商；
+ * 供应商适配器各自放在以供应商命名的子目录里（例如 `deepseek/`）；
  * `capabilityAdapter` 作为框架层留在本目录，在厂商适配器之后处理数据驱动的能力位。
  */
 export function createDefaultAdapterRegistry(logger?: Logger): AdapterRegistry {
@@ -78,7 +73,7 @@ export function createDefaultAdapterRegistry(logger?: Logger): AdapterRegistry {
 	registry.register(new GlmAdapter(), logger);
 	registry.register(new KimiAdapter(), logger);
 	registry.register(new OpenAIAdapter(), logger);
-	// 数据驱动的能力位：优先级低于供应商适配器，因此它看到的是那些适配器改写之后的请求
+	// 数据驱动的能力位：优先级低于供应商适配器，看到的是它们改写之后的请求
 	registry.register(new ModelCapabilityAdapter(), logger);
 
 	return registry;

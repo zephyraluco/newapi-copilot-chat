@@ -2,22 +2,21 @@
  * 思考内容的回放。
  *
  * 稳定 API 里 VS Code 不会把「思考内容」作为可用部件交还给 provider——历史消息里只剩正文与
- * 工具调用，思考过程拿不回来。而 DeepSeek 在**思考态的工具调用历史**里要求助手消息带回
- * `reasoning_content`（缺了这次请求会被拒），所以必须自己留一份。
+ * 工具调用，思考过程拿不回来。而 DeepSeek 在思考态的工具调用历史里要求助手消息带回
+ * `reasoning_content`，所以必须自己留一份。
  *
- * 做法与参考实现一致：响应结束时额外上报一个 **data 部件**，`mimeType` 用 VS Code 约定的
- * `stateful_marker`——宿主不会渲染它，但会把它留在会话历史里、并在后续请求中原样传回。
- * 下次构造请求时再从历史消息里把它取出来，回填成 `reasoning_content`。
+ * 做法：响应结束时额外上报一个 data 部件，`mimeType` 用 VS Code 约定的 `stateful_marker`——
+ * 宿主不渲染它，但会留在会话历史里并在后续请求中原样传回。下次构造请求时再取出来，
+ * 回填成 `reasoning_content`。
  *
- * 载荷格式（自产自销，只为向前兼容留了余地）：
+ * 载荷格式：
  *
  * ```text
  * newapi-copilot\json:<base64url(JSON)>
  * ```
  *
- * 前缀是**写入者标识**，解析时用它确认标记来自本扩展；`\` 之后是载荷，`json:` 表示载荷是
- * base64url 编码的 JSON。任何一步不合预期（前缀不符、base64 非法、JSON 不是对象）都当作
- * 「没有标记」返回 `undefined`，不会抛异常——一个坏标记不该把整次请求弄崩。
+ * 前缀是写入者标识，解析时用它确认标记来自本扩展。任何一步不合预期（前缀不符、base64 非法、
+ * JSON 不是对象）都当作「没有标记」返回 `undefined`，不抛异常。
  */
 
 import * as vscode from 'vscode';

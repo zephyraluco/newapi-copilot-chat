@@ -1,12 +1,13 @@
 /**
  * 连接目标：一次模型发现 / 对话请求所使用的「站点地址 + API Key」。
  *
- * 配置完全由 VS Code 提供：`package.json` 的 `contributes.languageModelChatProviders[].configuration`
- * 声明了一份 JSON Schema，VS Code 据此在「管理模型」界面生成表单（用户可建立多个配置组），
- * 并随调用传入解析好的值——标了 `secret: true` 的 `apiKey` 已从系统钥匙串解析回明文。
+ * 配置由 VS Code 提供：`package.json` 的
+ * `contributes.languageModelChatProviders[].configuration` 声明 JSON Schema，
+ * VS Code 据此生成「管理模型」表单，并随调用传入解析好的值
+ * （标了 `secret: true` 的 `apiKey` 已从系统钥匙串解析回明文）。
  *
- * `apiKey` 在 `ProviderTarget` 里是明文（最终要写进 `Authorization` 头），因此有两条硬性约束：
- * `key` 必须是**指纹**（不包含明文，它会被用作 Map 键并出现在日志里）；日志一律经 `redactSecret`。
+ * 两条约束：`key` 必须是指纹（不含明文，它会被用作 Map 键并出现在日志里）；
+ * 日志一律经 `redactSecret`。
  */
 
 import { isValidBaseUrl, normalizeBaseUrl } from '../config';
@@ -16,9 +17,7 @@ import type { Logger } from '../logger';
 /** 一个连接目标（对应 VS Code 里的一项配置组）。 */
 export interface ProviderTarget {
 	/**
-	 * VS Code 的配置组名。
-	 *
-	 * 未命名时为 `undefined`。同一 vendor 的多个组由 VS Code 分别调用，
+	 * VS Code 的配置组名；未命名时为 `undefined`。同一 vendor 的多个组由 VS Code 分别调用，
 	 * 因此它也是区分会话的依据。
 	 */
 	readonly group: string | undefined;
@@ -45,16 +44,15 @@ export function describeTarget(target: ProviderTarget): string {
 }
 
 /**
- * 计算配置指纹。
+ * 计算配置指纹（变更检测用，不是安全哈希）。
  *
- * 用 FNV-1a 而非直接拼接明文：这个值会作为 Map 键并可能出现在日志里，
- * 而输入包含 API Key。它不是安全哈希，只用于变更检测。
+ * 用 FNV-1a 而非拼接明文：该值会作为 Map 键并可能出现在日志里，而输入包含 API Key。
  */
 function fingerprint(input: string): string {
 	let hash = 0x811c9dc5;
 	for (let i = 0; i < input.length; i++) {
 		hash ^= input.charCodeAt(i);
-		// Math.imul 保证按 32 位整数溢出，与 C 实现一致
+		// Math.imul 保证按 32 位整数溢出
 		hash = Math.imul(hash, 0x01000193);
 	}
 	return (hash >>> 0).toString(16).padStart(8, '0');
@@ -63,8 +61,8 @@ function fingerprint(input: string): string {
 /**
  * 由 VS Code 下发的配置组构造目标。
  *
- * `configuration` 的类型在 stable API 里是 `unknown`——字段名由我们在
- * `package.json` 的 schema 里声明，因此这里按约定取 `baseUrl` 与 `apiKey`。
+ * `configuration` 在 stable API 里类型为 `unknown`，字段名由我们在 `package.json`
+ * 的 schema 里声明，因此这里按约定取 `baseUrl` 与 `apiKey`。
  */
 export function createTarget(
 	group: string | undefined,
@@ -87,7 +85,7 @@ export function createTarget(
 	const trimmedGroup = group === undefined ? undefined : asNonEmptyString(group);
 	const label = trimmedGroup === undefined ? 'New API' : `New API · ${trimmedGroup}`;
 	if (issues.length > 0) {
-		// 不完整时明确说出来，否则用户只能看到「没有模型」
+		// 配置不完整时明确记录，否则用户只能看到「没有模型」
 		logger.warn(`${label} 配置不完整：${issues.join('；')}`);
 	}
 
@@ -104,9 +102,8 @@ export function createTarget(
 /**
  * 从 provider 的 `options` 里读取组名。
  *
- * stable 的 `PrepareLanguageModelChatModelOptions` 目前只声明了 `silent`，
- * `group` / `configuration` 是 VS Code 在提供组配置时才传入的字段，
- * 因此这里做运行时探测。
+ * stable 的 `PrepareLanguageModelChatModelOptions` 只声明了 `silent`，
+ * `group` / `configuration` 由 VS Code 在提供组配置时传入，因此这里做运行时探测。
  */
 export function readOptionsGroup(options: unknown): string | undefined {
 	if (!isRecord(options)) {

@@ -1,16 +1,13 @@
 /**
  * Token 估算。
  *
- * VS Code 用它判断「这段历史能不能塞进上下文」以决定是否裁剪。拿不到目标模型的真实分词器
- * （各家不同、网关也不暴露），只能估算：CJK 按 1 字符 ≈ 1 token，其余按若干字符 ≈ 1 token，
- * 再加消息/工具/图片的固定开销。
+ * VS Code 用它判断「这段历史能不能塞进上下文」以决定是否裁剪。拿不到目标模型的真实分词器，
+ * 只能估算：CJK 按 1 字符 ≈ 1 token，其余按若干字符 ≈ 1 token，再加消息/工具/图片的固定开销。
  *
- * **偏差方向很重要**：宁可高估。高估会让 VS Code 更早裁剪历史，代价只是少一点上下文；
- * 低估则会把超长请求发给上游而被拒绝——后者对用户来说是完全失败。
+ * 宁可高估：高估会让 VS Code 更早裁剪历史，低估则会把超长请求发给上游而被拒绝。
  *
- * 比例本身不是常量：上游返回的真实用量可以用来反推「这次请求大概多少字符对应一个 token」
- * （`calibrateCharsPerToken`），比例因此会随模型、随内容语种缓慢移动。比例由调用方保存并传进来，
- * 这里保持纯函数——估算不该偷偷改全局状态，否则并发请求会互相干扰。
+ * 比例本身不是常量：上游返回的真实用量可以用来反推「多少字符对应一个 token」
+ * （`calibrateCharsPerToken`）。比例由调用方保存并传进来，这里保持纯函数。
  */
 
 import * as vscode from 'vscode';
@@ -19,7 +16,7 @@ import { safeJsonStringify } from '../json';
 import { REPLAY_MARKER_MIME, isReplayMarkerPart, parseReplayMarker } from './replay';
 import { readThinkingText } from './thinking';
 
-/** 校准后的比例允许落在什么区间：上游给出离谱用量时不能让它把估算带偏一个量级。 */
+/** 校准后的比例允许落在什么区间，避免上游的离谱用量把估算带偏。 */
 const CHARS_PER_TOKEN_RANGE = { min: 1, max: 16 } as const;
 
 /** 新观测在指数移动平均里的权重。 */
@@ -29,11 +26,9 @@ const CALIBRATION_WEIGHT = 0.3;
 const CJK_PATTERN = /[\u2e80-\u303f\u3040-\u30ff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/g;
 
 /**
- * 请求文本的字符构成：CJK 与非 CJK **分开数**。
+ * 请求文本的字符构成：CJK 与非 CJK 分开数。
  *
- * 估算器对两者的换算方式本来就不同（CJK 按 1 字符 ≈ 1 token，其余按若干字符 ≈ 1 token），
- * 因此校准必须用同一口径的分子，否则中文一多就会把比例算歪
- * （旧实现把两者混在一起相除，中文比例被压到下限 1，估算因此高出数倍）。
+ * 估算器对两者的换算方式不同，因此校准必须用同一口径的分子。
  */
 export interface RequestTextMeasure {
 	/** CJK 字符数（估算时 1 字符 ≈ 1 token） */
@@ -67,13 +62,11 @@ export function estimateTextTokens(
 /**
  * 用上游返回的真实用量校准「多少字符约等于一个 token」。
  *
- * 用**解方程**而不是直接相除：估算器认为 `promptTokens ≈ cjkChars + otherChars / r`，
- * 因此由观测反解 `r = otherChars / (promptTokens - cjkChars)`。两者口径一致，
- * CJK 不会再被当成「非 CJK 字符」混进分子。
+ * 估算器认为 `promptTokens ≈ cjkChars + otherChars / r`，因此由观测反解
+ * `r = otherChars / (promptTokens - cjkChars)`。
  *
  * 只有双方都为正数时才能算：没有用量（站点关掉了 `stream_options`）或空请求都不能校准。
- * 用指数移动平均而不是直接采用观测值——单次请求的比例会因内容构成（代码 / 中文 / 工具调用
- * 占比）跳动很大，直接跟进会让上下文预算忽大忽小。
+ * 用指数移动平均而不是直接采用观测值，避免单次请求的内容构成让上下文预算忽大忽小。
  */
 export function calibrateCharsPerToken(
 	measure: RequestTextMeasure,
@@ -83,8 +76,7 @@ export function calibrateCharsPerToken(
 	if (promptTokens === undefined || promptTokens <= 0 || measure.otherChars <= 0) {
 		return current;
 	}
-	// CJK 字符本身已经吃满用量：说明该模型对中文的折算比 1 字符 1 token 更省，
-	// 此时反解出来的比例没有意义（分母 ≤ 0），保持原值——高估是安全的方向。
+	// CJK 字符本身已经吃满用量：反解的比例没有意义（分母 ≤ 0），保持原值——高估是安全的方向。
 	const nonCjkTokens = promptTokens - measure.cjkChars;
 	if (nonCjkTokens <= 0) {
 		return current;
@@ -103,13 +95,11 @@ export function calibrateCharsPerToken(
 /**
  * 估算一条 VS Code 消息的 token 数。
  *
- * 内部复用 `messages.ts` 的思路但不做转换——估算不需要构造完整请求体。
+ * 内部复用 `messages.ts` 的思路但不做转换。
  *
- * **思考内容每条消息只算一次**：宿主提供的思考部件与我们的回放标记常常同时存在
- * （两者装的是同一段文本），分别累加会把上下文算成两倍。优先用思考部件，
- * 没有它时用回放标记——用户关掉 `request.includeReasoning` 时只有标记，
- * 而开启 `echoReasoningContent` 的适配器会把标记变成 `reasoning_content` 发给上游，
- * 因此它**必须**计入（否则长会话会一路低估，最终表现为上游返回超长 400）。
+ * 思考内容每条消息只算一次：宿主提供的思考部件与回放标记常常同时存在（两者装的是同一段文本），
+ * 分别累加会把上下文算成两倍。优先用思考部件，没有它时用回放标记——开启 `echoReasoningContent`
+ * 的适配器会把标记变成 `reasoning_content` 发给上游，因此它必须计入。
  */
 export function estimateMessageTokens(
 	message: vscode.LanguageModelChatRequestMessage,

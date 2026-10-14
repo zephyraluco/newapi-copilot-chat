@@ -3,7 +3,7 @@
 /**
  * provider/tokenizer.ts：token 估算与比例校准。
  *
- * 估算会直接决定 VS Code 何时裁剪历史，因此偏差方向（宁可高估）与校准的边界都要有用例。
+ * 估算决定 VS Code 何时裁剪历史。
  */
 
 const { test } = require('node:test');
@@ -66,16 +66,15 @@ test('calibrateCharsPerToken：新观测按 0.3 的权重混进现有比例', ()
 
 test('calibrateCharsPerToken：CJK 字符不参与非 CJK 的折算', () => {
 	// 估算器认为 promptTokens ≈ cjkChars + otherChars / r，因此反解 r = other / (tokens - cjk)。
-	// 中文一多时旧实现会把比例压到下限，估算因此高出数倍。
 	// 这里：1000 = 800 + 1000 / r ⇒ r = 5 ⇒ 4 * 0.7 + 5 * 0.3 = 4.3
 	assert.equal(calibrateCharsPerToken({ cjkChars: 800, otherChars: 1_000 }, 1_000), 4.3);
-	// CJK 已经吃满用量：分母 ≤ 0，不校准（高估是安全方向）
+	// CJK 已吃满用量：分母 ≤ 0，不校准
 	assert.equal(calibrateCharsPerToken({ cjkChars: 1_000, otherChars: 1_000 }, 1_000), 4);
 	assert.equal(calibrateCharsPerToken({ cjkChars: 1_200, otherChars: 1_000 }, 1_000), 4);
 });
 
 test('calibrateCharsPerToken：观测值被夹在 1 ~ 16 之间', () => {
-	// 上游给出离谱用量时不能让它把估算带偏一个量级
+	// 上游给出离谱用量时不能把估算带偏一个量级
 	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 1_000_000 }, 1), 4 * 0.7 + 16 * 0.3);
 	assert.equal(calibrateCharsPerToken({ cjkChars: 0, otherChars: 10 }, 1_000), 4 * 0.7 + 1 * 0.3);
 });
@@ -157,7 +156,7 @@ test('estimateMessageTokens：未透传的数据部件不占用预算', () => {
 });
 
 test('estimateMessageTokens：回放标记的思考内容要计入，且只算一次', () => {
-	// 开启 echoReasoningContent 时，这段文本会作为 reasoning_content 发给上游，因此占上下文
+	// 开启 echoReasoningContent 时，这段文本会作为 reasoning_content 发给上游
 	const markerOnly = { role: 2, content: [createReplayMarkerPart('想想'), text('abcd')] };
 	assert.equal(estimateMessageTokens(markerOnly), 4 + 2 + 1);
 

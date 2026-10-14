@@ -1,24 +1,17 @@
 /**
  * HTTP 400 的自愈阶梯：站点不认某个字段时，去掉那个字段再试一次。
  *
- * 400 的常见成因不是「请求写错了」，而是**我们加了一个站点不认的可选字段**：拿用量的
- * `stream_options`、采样参数 `temperature`、思考强度 `reasoning_effort`、`tool_choice`，
- * 或是用户在 `extraBody` 里填的网关专属参数。这些字段都是可选的——去掉之后请求仍然成立，
- * 用户只是少一项增强，而不是拿到一句「请求失败」。
+ * 400 的常见成因是我们加了一个站点不认的可选字段：`stream_options`、`temperature`、
+ * `reasoning_effort`、`tool_choice`，或用户在 `extraBody` 里填的网关参数。这些字段去掉后请求仍然成立。
  *
  * 四条边界：
  *
- * - **只对 400 生效**。其它 4xx（401/403/404/429）去掉字段也救不回来，重试只会多花一次请求。
- * - **只在白名单里挑，不从响应里"猜"**。响应文本只用来**决定先去白名单里的哪一个**；
- *   能被去掉的字段永远是「我们自己加进去的可选项」（见 `REPAIRABLE_FIELDS` 与调用方传进来的
- *   `extraBody` 键）。这条边界是硬的：早先的实现把响应体里任何带引号、且请求里存在的字段名
- *   都当作「上游不认的字段」，于是 `{"param":"tools"}` 这种「工具 schema 不合法」的错误会把
- *   **整个 `tools` 删掉**——模型突然变笨，而用户看不到任何错误。`tools` 与协议骨架现在受
- *   `PROTECTED_REQUEST_FIELDS` 保护，任何路径都删不到它们。
- * - **每轮的改动必须真的发生**（去重、且必须删掉一个存在的字段），否则返回 `undefined`，
- *   由调用方正常失败。轮数上限由调用方控制（`DEFAULTS.requestRepairRounds`）。
- * - **结果按会话与模型记住**（`RepairMemory`）：某个站点不认 `temperature` 是**稳定事实**，
- *   不该让 Agent 的每一步都先挨一次 400 再重发。
+ * - 只对 400 生效，其它 4xx 去掉字段也救不回来。
+ * - 只从白名单里挑字段（`REPAIRABLE_FIELDS` 与调用方传入的 `extraBody` 键），响应文本只用来决定
+ *   先试白名单里的哪一个；`PROTECTED_REQUEST_FIELDS` 里的协议骨架与 `tools` 任何路径都删不到。
+ * - 每轮必须真的删掉一个存在的字段，否则返回 `undefined`，由调用方正常失败；轮数上限由调用方控制
+ *   （`DEFAULTS.requestRepairRounds`）。
+ * - 结果按会话与模型记住（`RepairMemory`），避免每一步都先挨一次 400 再重发。
  *
  * 本模块是纯函数：不依赖 `vscode`，也不发请求，因此可以被直接单测。
  */
@@ -27,10 +20,9 @@ import { DEFAULT_REASONING_EFFORT_FIELD, DEFAULT_THINKING_FIELD } from '../const
 import type { ChatCompletionRequest } from '../types';
 
 /**
- * 允许被自愈去掉的字段：**只包含我们自己往请求体里加的可选项**。
+ * 允许被自愈去掉的字段：只包含我们自己往请求体里加的可选项。
  *
- * 判断标准是「去掉之后请求仍然成立，用户只是少一项增强」。不满足这条的字段一律不进白名单——
- * 尤其是 `tools`：去掉它不会让请求失败，但会让模型没法干活。
+ * 判断标准是去掉之后请求仍然成立，用户只是少一项增强。
  */
 const REPAIRABLE_FIELDS: readonly string[] = [
 	'temperature',
@@ -45,8 +37,7 @@ const REPAIRABLE_FIELDS: readonly string[] = [
 /**
  * 绝不能去掉的字段：请求体没有它们就不成立，或者去掉之后语义完全变了。
  *
- * `tools` 在这里而不是在白名单里：上游抱怨工具 schema 不合法时，正确的结果是**报错**，
- * 而不是把工具悄悄删掉。
+ * `tools` 在这里而不是在白名单里：上游抱怨工具 schema 不合法时应报错，而不是把工具删掉。
  */
 const PROTECTED_REQUEST_FIELDS: ReadonlySet<string> = new Set(['model', 'messages', 'stream', 'tools']);
 
@@ -93,7 +84,7 @@ function dropFields(request: ChatCompletionRequest, keys: readonly string[]): Ch
 /**
  * 内置的阶梯：字段名出现在响应体里，且请求里确实带着它，就去掉它重试。
  *
- * 这些字段都是**我们自己加的可选项**（拿用量、采样参数、思考强度），去掉之后请求仍然成立。
+ * 这些字段都是我们自己加的可选项（拿用量、采样参数、思考强度），去掉之后请求仍然成立。
  */
 const RULES: readonly RepairRule[] = [
 	{
@@ -147,10 +138,9 @@ const RULES: readonly RepairRule[] = [
 ];
 
 /**
- * 当前请求里「可以被自愈去掉」的字段，按 `REPAIRABLE_FIELDS` 的顺序。
+ * 当前请求里可以被自愈去掉的字段，按 `REPAIRABLE_FIELDS` 的顺序。
  *
- * `optionalFields` 是用户在 `extraBody` 里填的键——它们是用户自己为某个网关加的字段，
- * 同样满足「去掉之后请求仍然成立」，因此也在白名单里。协议骨架与 `tools` 永远不在其中。
+ * `optionalFields` 是用户在 `extraBody` 里填的键，同样满足去掉之后请求仍然成立。
  */
 function repairableFieldsIn(
 	request: ChatCompletionRequest,
@@ -170,14 +160,11 @@ function repairableFieldsIn(
 }
 
 /**
- * 上游在响应体里点名了哪个**白名单字段**。
+ * 上游在响应体里点名了哪个白名单字段。
  *
- * 覆盖实际见到的几种写法：`Unknown parameter: 'temperature'`、`unknown field "stream_options"`、
- * `Unsupported parameter: top_p`、`Unrecognized request argument supplied: foo`。字段名要么被引号
- * 括着（**可能带着反斜杠转义**——错误描述本身常常是 JSON 字符串里的一个值），要么跟在冒号后面。
- *
- * 与早先实现的关键差别：**命中的名字必须落在白名单里**，因此响应体里出现的 `tools`、
- * `read_file`、`model` 之类都不会被当成「可以去掉的字段」。
+ * 覆盖的写法如 `Unknown parameter: 'temperature'`、`unknown field "stream_options"`、
+ * `Unrecognized request argument supplied: foo`。字段名要么被引号括着（可能带反斜杠转义，因为
+ * 错误描述本身常是 JSON 字符串里的一个值），要么跟在冒号后面；命中的名字必须落在候选里。
  */
 function findMentionedField(text: string, candidates: readonly string[]): string | undefined {
 	if (candidates.length === 0) {
@@ -199,8 +186,7 @@ function findMentionedField(text: string, candidates: readonly string[]): string
 /**
  * 判断这次 400 能不能靠去掉一个字段救回来。
  *
- * `tried` 是本次请求已经用过的步骤标识：同一个步骤不会用第二次，否则就会出现
- * 「去掉 → 还是 400 → 再去掉 → 还是 400」这种一眼看不出问题的死循环。
+ * `tried` 是本次请求已经用过的步骤标识，同一个步骤不会用第二次。
  * `sendsStreamOptions` 说明这次请求是否真的带了 `stream_options`（它由客户端按设置加上去，
  * 不在请求体里，因此需要调用方告知）。
  * `optionalFields` 是 `extraBody` 的键，用于把用户自填的网关参数也纳入白名单。
@@ -275,13 +261,10 @@ export interface RememberedRepair {
 const MEMORY_LIMIT = 64;
 
 /**
- * 自愈记忆：按「会话 + 模型」记住已经确认过的不兼容字段。
+ * 自愈记忆：按「会话 + 模型」记住已经确认过的不兼容字段，避免每一步请求都先挨一次 400 再重发。
  *
- * 为什么需要它：某个站点不认 `temperature` 是**稳定事实**，而 Agent 的每一步都是一次请求。
- * 不记住的话，每一步都要先挨一个 400、再重发一次，用户看到的是「每一步都慢一拍」。
- *
- * 键里带 `targetKey`（配置指纹），因此站点地址、密钥或请求设置一变就自然失效，
- * 不需要额外的清理钩子。本类是纯逻辑，不依赖 `vscode`，也不发请求。
+ * 键里带 `targetKey`（配置指纹），站点地址、密钥或请求设置一变就自然失效。
+ * 本类是纯逻辑，不依赖 `vscode`，也不发请求。
  */
 export class RepairMemory {
 	private readonly entries = new Map<string, RememberedRepair>();
@@ -295,7 +278,7 @@ export class RepairMemory {
 		if (entry === undefined) {
 			return undefined;
 		}
-		// 先删再插：Map 的迭代顺序即「最近使用」顺序，淘汰时从最旧的开始
+		// 先删再插，Map 的迭代顺序即最近使用顺序，淘汰时从最旧的开始
 		this.entries.delete(key);
 		this.entries.set(key, entry);
 		return entry;
@@ -317,7 +300,7 @@ export class RepairMemory {
 			}
 		}
 
-		// 先删再插：刷新「最近使用」顺序
+		// 先删再插，刷新最近使用顺序
 		this.entries.delete(key);
 		this.entries.set(key, { fields, includeUsage });
 		this.trim();
@@ -336,8 +319,7 @@ export class RepairMemory {
 	/**
 	 * 淘汰最久未使用的条目。
 	 *
-	 * `Map` 的迭代顺序就是插入顺序，而 `get` / `remember` 都会「先删再插」，
-	 * 因此这里只需要从头开始删。
+	 * `Map` 的迭代顺序就是插入顺序，而 `get` / `remember` 都会先删再插，因此只需从头开始删。
 	 */
 	private trim(): void {
 		while (this.entries.size > this.limit) {
@@ -355,9 +337,7 @@ function memoryKey(targetKey: string, modelId: string): string {
 }
 
 /**
- * 把记忆里的字段从请求体里预先去掉（首次尝试之前调用）。
- *
- * 返回原请求表示「没什么可去的」。
+ * 把记忆里的字段从请求体里预先去掉（首次尝试之前调用）；没有可去字段时返回原请求。
  */
 export function applyRememberedRepair(
 	request: ChatCompletionRequest,

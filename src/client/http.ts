@@ -1,8 +1,6 @@
 /**
- * HTTP 传输层。
- *
- * 只关心四件事：拼接 URL、超时、重试、把各种失败归一化成可判别的错误类型。
- * 不关心业务语义——业务在 `newApiClient.ts` 里。
+ * HTTP 传输层：拼接 URL、超时、重试、把失败归一化成可判别的错误类型。
+ * 不含业务语义（业务在 `newApiClient.ts`）。
  */
 
 import { DEFAULTS } from '../consts';
@@ -24,8 +22,7 @@ import type { ApiErrorBody } from '../types';
 /**
  * 拼接 baseUrl 与端点路径。
  *
- * `baseUrl` 已经由 `config.normalizeBaseUrl` 去掉尾斜杠与 `/v1` 后缀，
- * 这里再兜一次重复斜杠，保证 `https://host//v1/models` 这类拼接不会出现。
+ * `baseUrl` 已由 `config.normalizeBaseUrl` 去掉尾斜杠与 `/v1` 后缀，这里再兜一次重复斜杠。
  */
 export function joinUrl(baseUrl: string, path: string): string {
 	const base = baseUrl.replace(/\/+$/, '');
@@ -40,9 +37,8 @@ export function joinUrl(baseUrl: string, path: string): string {
 /**
  * 传输层失败的种类，便于调用方决定是否重试、如何提示。
  *
- * `aborted` 与 `disposed` 必须分开：前者是**用户取消**（属于正常流程，不该报错），
- * 后者是「客户端被退役/释放」（配置变更、扩展停用）——把它当成用户取消，
- * 用户就会看到一个没有报错的半截回答。
+ * `aborted` 是用户取消（正常流程，不该报错）；`disposed` 是客户端被退役/释放
+ * （配置变更、扩展停用）。两者不能混为一谈。
  */
 export type TransportErrorKind = 'network' | 'timeout' | 'aborted' | 'disposed';
 
@@ -104,7 +100,7 @@ function buildHttpErrorMessage(
 ): string {
 	const detail = apiMessage ?? responseBody;
 	const suffix = detail ? `：${detail}` : '';
-	// 限流时把服务端要求的等待时间写出来：只说「429」会让人以为马上重试就行
+	// 限流时在错误里带上服务端要求的等待时间
 	const wait = retryAfterMs !== undefined && retryAfterMs >= 1_000
 		? `，服务端要求约 ${Math.ceil(retryAfterMs / 1_000)} 秒后重试`
 		: '';
@@ -112,19 +108,17 @@ function buildHttpErrorMessage(
 }
 
 /**
- * VS Code 的 `CancellationError` 用的名字。
+ * VS Code `CancellationError` 的 `name` 取值。
  *
- * 取消信号带 reason 时 `fetch` 会把 reason **原样**抛出，而 `new vscode.CancellationError()`
- * 的 `name` 是 `Canceled` 而不是 `AbortError`（见 microsoft/vscode 的 `base/common/errors.ts`）。
- * 漏认它会把用户主动取消当成网络故障，然后白白重试几次。
+ * 取消信号带 reason 时 `fetch` 会把 reason 原样抛出，其 `name` 是 `Canceled`
+ * 而不是 `AbortError`，需要一并识别。
  */
 const CANCELLATION_ERROR_NAME = 'Canceled';
 
 /**
- * 判断错误是否为「调用方主动取消」。取消不应被当成失败上报，也不该触发重试。
+ * 判断错误是否为「调用方主动取消」；取消不上报失败，也不触发重试。
  *
- * `TransportError` 只有 `kind === 'aborted'` 才算取消：`'disposed'`（客户端被退役/释放，
- * 例如配置变更）**不是**用户取消——把它当成取消，用户就会看到一个没有报错的半截回答。
+ * `TransportError` 只有 `kind === 'aborted'` 才算取消，`'disposed'` 不算。
  */
 export function isAbortError(error: unknown): boolean {
 	if (error instanceof TransportError) {
@@ -158,12 +152,7 @@ function extractApiMessage(text: string | undefined): string | undefined {
 	return undefined;
 }
 
-/**
- * `Retry-After` 的解析上限。
- *
- * 保留真实值（而不是提前夹到退避上限）才能把「服务端要求等多久」如实告诉用户；
- * 真要等到天荒地老的值也没有参考意义，这里只挡掉明显异常的输入。
- */
+/** `Retry-After` 的解析上限，仅用于挡掉明显异常的输入。 */
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60_000;
 
 /** 解析 `Retry-After`，兼容秒数与 HTTP 日期两种格式。 */
@@ -229,9 +218,8 @@ export interface HttpClientOptions {
  * 带超时与重试的 HTTP 客户端。
  *
  * 超时策略：
- * - 非流式请求：整体超时（连接 + 读取）不得超过 `timeoutMs`；
- * - 流式请求：`timeoutMs` 只作为「等响应头」的上限，响应体开始到达后由
- *   `sse.ts` 的静默超时接管——否则一个长回答会被整体超时误杀。
+ * - 非流式请求：整体超时（连接 + 读取）不超过 `timeoutMs`；
+ * - 流式请求：`timeoutMs` 只是等响应头的上限，响应体到达后由 `sse.ts` 的静默超时接管。
  */
 export class HttpClient {
 	private readonly rootController = new AbortController();
@@ -266,18 +254,15 @@ export class HttpClient {
 	/**
 	 * 发送请求并返回未读完的响应体。
 	 *
-	 * 重试只覆盖「拿到响应头」这一步；一旦开始消费 body 就不再重试，
-	 * 因为服务端可能已经开始计费。
+	 * 重试只覆盖「拿到响应头」这一步，开始消费 body 后不再重试。
 	 *
-	 * **在途登记由调用方负责**：响应体由调用方消费，只有它知道这次请求什么时候真正结束。
-	 * 调用方必须用 {@link beginInFlight} 覆盖「取响应头 + 读响应体」的整个过程，
-	 * 否则 `retire()` 会在响应体读到一半时中断连接。
+	 * 在途登记由调用方负责：调用方必须用 {@link beginInFlight} 覆盖
+	 * 「取响应头 + 读响应体」的整个过程，否则 `retire()` 会在读到一半时中断连接。
 	 */
 	async requestStream(options: RequestOptions): Promise<StreamResponse> {
 		const response = await this.fetchWithRetry(options, true);
 		const body = response.body;
 		if (body === null) {
-			// 消息本身就带上该怎么办（与 errors.ts 的分类句子同一个约定）
 			throw new TransportError(
 				'network',
 				`响应没有可读取的流（${response.url}）：通常来自站点或中间的代理异常。`,
@@ -295,8 +280,8 @@ export class HttpClient {
 	/**
 	 * 登记一次在途请求，返回必须调用一次的释放函数。
 	 *
-	 * 存在的理由：`retire()` 要「等在途请求结束再中断」，就必须知道现在到底有没有在途请求。
-	 * 流式请求尤其需要调用方参与——响应体是在 `requestStream` 返回之后才被消费的。
+	 * `retire()` 依靠在途计数判断何时中断；流式请求的响应体在 `requestStream`
+	 * 返回之后才被消费，因此需要调用方参与登记。
 	 */
 	beginInFlight(): () => void {
 		this.inFlight++;
@@ -314,10 +299,9 @@ export class HttpClient {
 	}
 
 	/**
-	 * 优雅退役：不再接受新请求，但**等在途请求跑完再中断**。
+	 * 优雅退役：不再接受新请求，等在途请求跑完再中断。
 	 *
-	 * 与 {@link dispose} 的区别正是「改设置会不会掐断正在生成的回答」：直接中断会让
-	 * provider 收到一个像「用户取消」的错误，于是静默返回半截回答。退役让在途请求自然结束。
+	 * 与 {@link dispose} 的区别：退役让在途请求自然结束，避免正在生成的回答被掐断。
 	 */
 	retire(): void {
 		this.disposed = true;
@@ -332,7 +316,7 @@ export class HttpClient {
 		this.abortRoot();
 	}
 
-	/** 是否已退役/释放。退役后所有新请求立即失败，便于在配置变更时重建客户端。 */
+	/** 是否已退役/释放；退役后所有新请求立即失败。 */
 	get isDisposed(): boolean {
 		return this.disposed;
 	}
@@ -349,7 +333,6 @@ export class HttpClient {
 			throw new TransportError('disposed', DISPOSED_MESSAGE);
 		}
 
-		// 超时与重试都来自客户端级配置：调用方逐个请求地调它们只会让行为变得难以推理
 		const maxRetries = Math.max(0, this.options.maxRetries);
 		const timeoutMs = this.options.timeoutMs;
 		let lastError: unknown;
@@ -362,8 +345,7 @@ export class HttpClient {
 			}
 
 			const guard = createSignalGuard(options.signal, timeoutMs, this.rootController.signal, streaming);
-			// 在 try 里判定「不重试」的错误要靠这个标记带出来：`throw` 会被下面的 catch 接住，
-			// 而 catch 只看 `isRetryable` / `attempt` 时会把它当成可重试的网络故障。
+			// 记录已决定不重试的错误：throw 会被下面的 catch 接住，需要靠它区分
 			let decidedToGiveUp: unknown;
 			try {
 				const response = await this.doFetch(options, guard.signal);
@@ -371,7 +353,7 @@ export class HttpClient {
 					return response;
 				}
 
-				// 非 2xx：把响应体读出来（通常很小），构造可判别的错误
+				// 非 2xx：读出响应体，构造可判别的错误
 				const bodyText = await readBodySafely(response);
 				const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
 				const error = new HttpError(
@@ -383,8 +365,7 @@ export class HttpClient {
 					retryAfter,
 				);
 				lastError = error;
-				// 服务端明确要求等很久的限流不值得重试：等到一半再撞一次 429，
-				// 最后给出的错误还看不出真正原因。直接把带等待时间的错误报出去。
+				// 服务端要求等待超过上限时不重试，直接报出带等待时间的错误
 				const retryAfterTooLong = retryAfter !== undefined && retryAfter > DEFAULTS.retryAfterMaxWaitMs;
 				if (!error.isRetryable || attempt === maxRetries || retryAfterTooLong) {
 					if (retryAfter !== undefined && retryAfterTooLong) {
@@ -433,7 +414,7 @@ export class HttpClient {
 	}
 }
 
-/** 读取响应体，失败时返回空串（错误路径上的兜底，不能因为读 body 失败而丢掉原始错误）。 */
+/** 读取响应体，失败时返回空串（错误路径兜底，不因读 body 失败而丢掉原始错误）。 */
 async function readBodySafely(response: Response): Promise<string> {
 	try {
 		return await response.text();
@@ -442,7 +423,7 @@ async function readBodySafely(response: Response): Promise<string> {
 	}
 }
 
-/** 超时文案：流式请求只等响应头，提示里要说清这一点。 */
+/** 超时文案：流式请求只等响应头。 */
 function timeoutMessage(streaming: boolean): string {
 	return streaming ? '等待 New API 响应头超时' : '请求 New API 超时';
 }
@@ -454,8 +435,7 @@ function timeoutMessage(streaming: boolean): string {
 /**
  * 把任意异常归一化成 TransportError。
  *
- * 消息面向用户：分类句子 + 错误码 + 站点（分类见 `src/errors.ts`）；原因对象挂在 `cause` 上，
- * 供日志打印整条明细。
+ * 消息面向用户：分类句子 + 错误码 + 站点（分类见 `src/errors.ts`）；原始对象挂在 `cause` 上。
  */
 function normalizeTransportError(
 	error: unknown,
@@ -476,7 +456,7 @@ function normalizeTransportError(
 		return new TransportError('aborted', '请求已取消', error);
 	}
 
-	// 分类靠 `cause` 里的码：外壳（`fetch failed`）既没有码也没有信息
+	// 分类依据是 `cause` 里的码：外壳（`fetch failed`）不带码也不带信息
 	const causeInfo = getNetworkErrorCauseInfo(error);
 	const message = getNetworkErrorMessage(getNetworkErrorCode(causeInfo), hostOfUrl(url));
 	return new TransportError('network', message, error);
@@ -489,11 +469,11 @@ function resolveRetryDelay(attempt: number, lastError: unknown): number {
 	}
 	const exponential = DEFAULTS.retryBaseDelayMs * 2 ** (attempt - 1);
 	const capped = Math.min(exponential, DEFAULTS.retryMaxDelayMs);
-	// 抖动：避免多个请求在同一时刻一起重试
+	// 抖动，避免多个请求在同一时刻一起重试
 	return Math.round(capped * (0.5 + Math.random() * 0.5));
 }
 
-/** 可等待的延时。放在这里避免与 Node 全局 `setTimeout` 的返回类型纠缠。 */
+/** 可等待的延时（避免与 Node 全局 `setTimeout` 的返回类型纠缠）。 */
 function delay_(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -517,7 +497,7 @@ function createSignalGuard(
 	const timer = timeoutMs > 0
 		? setTimeout(() => {
 			timedOut = true;
-			// 信号带 reason 时 `fetch` 会把 reason 原样抛出，所以这句话就是用户最终看到的文案
+			// 信号带 reason 时 `fetch` 会原样抛出，这就是用户最终看到的文案
 			controller.abort(new TransportError('timeout', timeoutMessage(streaming)));
 		}, timeoutMs)
 		: undefined;

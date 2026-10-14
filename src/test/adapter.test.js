@@ -3,7 +3,7 @@
 /**
  * adapter 层：适配器选择、请求改写的判据、请求种类识别。
  *
- * 这一层不 import `vscode`，因此不需要替身——直接加载即可。
+ * 这一层不 import `vscode`，直接加载即可。
  */
 
 const { test } = require('node:test');
@@ -94,7 +94,7 @@ test('classifyRequest：终端补充说明看的是最后一条用户消息，�
 });
 
 test('classifyRequest：认不出来时退化，而不是失败', () => {
-	// 有内容但认不出：普通后台请求，适配器不做任何改写
+	// 有内容但认不出：普通后台请求
 	assert.equal(classifyRequest(requestOf('帮我写一个函数')), 'background');
 	// 有工具但认不出：同上
 	assert.equal(classifyRequest({ messages: [], tools: [{ type: 'function', function: { name: 'read_file' } }] }), 'background');
@@ -278,8 +278,7 @@ test('DeepSeek：只改自己的字段，不动消息与工具', () => {
 /* --- 思考内容的回填与补齐 --------------------------------------------------- */
 
 test('DeepSeek：思考态下给缺思考内容的历史助手消息补占位', () => {
-	// 宿主自己插入的助手消息（读取后台终端输出的工具调用就是这样出现的）本来就没有思考可
-	// 回填，而思考态下缺这个字段上游会整次拒掉——包括没有工具调用的普通助手消息
+	// 宿主插入的助手消息本来就没有思考可回填，而思考态下缺这个字段上游会整次拒掉
 	const logger = createLogger();
 	const request = deepseekTransform({
 		messages: [
@@ -390,7 +389,7 @@ test('ModelCapabilityAdapter：samplingParams=never 时总是删掉采样参数'
 test('ModelCapabilityAdapter：when-thinking-off 只在强度为 none 时保留采样参数', () => {
 	const config = { samplingParams: 'when-thinking-off' };
 
-	// 思考已关（reasoning_effort=none）→ 不再是推理请求 → 采样参数合法
+	// 思考已关（reasoning_effort=none）→ 采样参数合法
 	const kept = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		reasoning_effort: 'none',
@@ -409,8 +408,7 @@ test('ModelCapabilityAdapter：when-thinking-off 只在强度为 none 时保留�
 });
 
 test('ModelCapabilityAdapter：没表态强度时采样参数按推理请求处理', () => {
-	// `when-thinking-off` 只看 `reasoning_effort` 的值，不看请求是否带工具：
-	// 没写强度就不等于 none，因此采样参数被删掉
+	// `when-thinking-off` 只看 `reasoning_effort` 的值：没写强度就不等于 none，采样参数被删掉
 	const removed = capabilityTransform({
 		messages: [{ role: 'user', content: 'hi' }],
 		temperature: 0.2,

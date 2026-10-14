@@ -3,7 +3,7 @@
 /**
  * provider/stream.ts：chunk → 中立响应部件的翻译。
  *
- * 这一层最容易出错（分片归并、引用块排版、截断判定），因此用例集中在**排版与归并**上。
+ * 用例集中在分片归并、引用块排版与截断判定。
  */
 
 const { test } = require('node:test');
@@ -12,8 +12,7 @@ const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
 	stream: './src/provider/stream',
-	// 必须与 stream.ts 在同一次加载里：它靠 `instanceof SseTruncatedError` 判截断，
-	// 各拿一份副本的话判定永远不会成立
+	// 必须与 stream.ts 在同一次加载里：它靠 `instanceof SseTruncatedError` 判截断
 	sse: './src/client/sse',
 });
 
@@ -108,7 +107,7 @@ test('没有专用思考部件时，思维链包成 Markdown 引用块', () => {
 	translator.handle(chunk({ reasoning_content: '想想' }));
 	const summary = translator.flush();
 
-	// 第二段是 flush 补的换行（见下面「只有思维链」那条用例）
+	// 第二段是 flush 补的换行
 	assert.equal(parts[0].text, '\n\n> **🧠 思考过程**\n>\n> 想想');
 	assert.equal(summary.reasoningLength, 2);
 	assert.equal(summary.reasoningText, '想想');
@@ -171,7 +170,7 @@ test('关掉回显时思维链不发出去，但原文照样留给回填历史',
 	const summary = translator.flush();
 
 	assert.deepEqual(parts, [{ kind: 'text', text: '答案' }]);
-	// DeepSeek 要求思考态的工具调用历史回填原文，关掉回显也不能把这份原文丢掉
+	// DeepSeek 要求思考态的工具调用历史回填原文
 	assert.equal(summary.reasoningText, '想了很久');
 	assert.equal(summary.reasoningLength, 4);
 });
@@ -309,7 +308,7 @@ test('工具调用：流中断时丢掉参数不完整的调用，正常结束�
 	assert.deepEqual(dropped.parts, []);
 	assert.match(dropped.logger.messages('warn').join(' '), /参数不完整/);
 
-	// 正常结束：上报空对象，让 VS Code 报出参数校验失败，模型能自我修正
+	// 正常结束：上报空对象，让 VS Code 报出参数校验失败
 	const kept = makeTranslator();
 	kept.translator.handle(chunk(incomplete));
 	kept.translator.flush();
@@ -392,7 +391,7 @@ test('tryParseToolArguments：坏 JSON 返回 undefined，由调用方决定怎�
 
 	assert.equal(tryParseToolArguments('{"a":', logger, 'read_file'), undefined);
 	assert.equal(tryParseToolArguments('```json\nnot json\n```', logger, 'read_file'), undefined);
-	// 解析失败本身不记日志：调用方更清楚这次失败意味着「丢弃」还是「空对象上报」
+	// 解析失败本身不记日志：由调用方决定这次失败是「丢弃」还是「空对象上报」
 	assert.equal(logger.lines.length, 0);
 });
 
@@ -413,7 +412,7 @@ test('decideStreamFailure：只有「还没给用户看过内容」的截断才�
 
 	// 什么都没发出：重发
 	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'retry');
-	// 已经流出一部分：冲刷已有内容后报错——半截回答不能当作成功
+	// 已经流出一部分：冲刷已有内容后报错
 	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 1, attempt: 0, maxRetries: 2, cancelled: false }), 'fail-truncated');
 	// 重试次数用尽
 	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 2, maxRetries: 2, cancelled: false }), 'fail');

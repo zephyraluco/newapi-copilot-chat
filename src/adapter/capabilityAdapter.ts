@@ -1,16 +1,10 @@
 /**
  * 数据驱动的适配器：把 `ModelConfig` 里的**能力位**变成请求改写。
  *
- * 与其它适配器的分工是刻意的：
- *
- * - 别的适配器认的是**协议**（某家上游对 OpenAI 协议的实现差异），判据是模型名；
- * - 本适配器认的是**数据**（模型数据表），判据是能力位。
- *
- * 这样「只针对某个模型名的特判」不必写成代码里的正则——那是 `ARCHITECTURE.md §11`
- * 明令该进数据表的东西，写成正则还会散落成 `if (model.id.startsWith(...))`。
+ * 与其它适配器的分工：别的适配器按**协议**（模型名判据）改写，本适配器按**数据**（能力位）改写。
  *
  * `supports` 恒为 `true`：它没有自己的适用模型，改不改写完全由能力位决定。
- * 优先级低于供应商适配器，因此它的判断能看到那些适配器改写之后的请求。
+ * 优先级低于供应商适配器，因此它看到的是那些适配器改写之后的请求。
  */
 
 import { DEFAULT_REASONING_EFFORT_FIELD } from '../consts';
@@ -45,8 +39,7 @@ export class ModelCapabilityAdapter implements ModelAdapter {
 /**
  * 这个模型在当前请求形态下接受采样参数吗。
  *
- * `undefined` 表示「始终接受」——数据表没表态时不动请求（拿不到证据就不改，与适配器层
- * 的通用原则一致）。
+ * `undefined` 表示始终接受：数据表没表态时不动请求。
  */
 function acceptsSamplingParams(model: ModelConfig, request: ChatCompletionRequest): boolean {
 	if (model.samplingParams === 'never') {

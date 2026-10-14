@@ -1,15 +1,8 @@
-/**
- * 展示层格式化工具。
- *
- * 只做「值 → 人类可读字符串」的转换，不含任何 VS Code 依赖，
- * 因此 logger、状态栏、tooltip 可以共用同一套口径。
- */
+/** 展示层格式化工具：值 → 人类可读字符串，不含 VS Code 依赖。 */
 
 /**
- * 把 token 数量格式化成紧凑形式。
- *
- * 例：`128000` → `128K`、`1048576` → `1M`、`999` → `999`。
- * 刻意保留非整数（如 `1.5M`），因为上下文窗口确实存在这种取值。
+ * 把 token 数量格式化成紧凑形式：`128000` → `128K`、`1048576` → `1M`、`999` → `999`。
+ * 保留非整数（如 `1.5M`）。
  */
 export function formatTokens(count: number | undefined): string {
 	if (count === undefined || !Number.isFinite(count) || count <= 0) {
@@ -33,7 +26,7 @@ function trimTrailingZero(value: number): string {
  * 把时间戳格式化成相对时间：`刚刚` / `3 分钟前` / `2 小时前` / `昨天`。
  *
  * @param timestamp 毫秒时间戳；`undefined` 表示从未发生。
- * @param now 当前时间；调用方显式传入，格式化结果因此只取决于入参。
+ * @param now 当前时间
  */
 export function formatRelativeTime(timestamp: number | undefined, now = Date.now()): string {
 	if (timestamp === undefined || !Number.isFinite(timestamp)) {
@@ -60,7 +53,7 @@ export function formatRelativeTime(timestamp: number | undefined, now = Date.now
 }
 
 /**
- * 转义 Markdown 中会被解释为语法的字符（用于 tooltip 里的动态文本）。
+ * 转义 Markdown 中会被解释为语法的字符。
  */
 export function escapeMarkdown(text: string): string {
 	return text.replace(/([\\`*_{}[\]()#+\-.!|>])/g, '\\$1');

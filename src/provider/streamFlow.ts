@@ -1,27 +1,23 @@
 /**
  * 消费一次流式响应，并在上游提前断开时决定怎么办。
  *
- * 上游在给出正常收尾信号之前断开连接（网关掉线、代理重置）时，只要**还没有向上报过任何部件**
- * 就重发整次请求。这个门很关键：provider 抛错时 VS Code 会先冲刷已经流出的部件再显示错误，
- * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
+ * 上游在给出正常收尾信号之前断开连接时，只要还没上报过任何部件就重发整次请求：
+ * 用户看到过内容后再补一段完整回答会把两段回答拼在一起。
  *
- * 每次尝试都重建 `StreamTranslator`——重发只发生在「什么都没上报」时，
- * 因此丢弃上一次的累积不会丢内容。
- *
- * 「能不能重发」的判定本身是纯函数（`decideStreamFailure`），这里只负责循环与日志。
+ * 每次尝试都重建 `StreamTranslator`；重发只发生在「什么都没上报」时，因此不会丢内容。
+ * 「能不能重发」的判定是纯函数（`decideStreamFailure`），这里只负责循环与日志。
  *
  * ## 传输边界
  *
- * 本模块消费的是 `ChatStreamSource`——一个只要求「能吐出一串 chunk」的窄接口，而不是
- * `NewApiClient` 类。因此换一种传输（别的端点形态、别的 chunk 形状）只需要换一个实现：
- * 这个接口就是传输维度的锚点，`chatProvider` 不必知道请求是怎么发出去的。
- * chunk 形状由 `types.ts` 的 `ChatCompletionChunk` 描述，翻译在 `stream.ts`。
+ * 本模块消费的是 `ChatStreamSource`——只要求「能吐出一串 chunk」的窄接口，而不是
+ * `NewApiClient` 类；换一种传输只需要换一个实现。chunk 形状由 `types.ts` 的
+ * `ChatCompletionChunk` 描述，翻译在 `stream.ts`。
  *
  * ## 响应侧的两件收尾事
  *
  * `reportUsagePart` 报用量（Copilot 的「会话信息 → 上下文窗口」靠它显示 token 数），
- * `reportReplayMarker` 留下思考内容（下次请求读回来填 `reasoning_content`）。两者都不参与
- * 回答本身，因此上报失败**不能影响已经流出的内容**：这里兜住异常只记一条警告。
+ * `reportReplayMarker` 留下思考内容（下次请求读回来填 `reasoning_content`）。
+ * 两者都不参与回答本身，上报失败不能影响已经流出的内容，因此这里兜住异常只记一条警告。
  */
 
 import * as vscode from 'vscode';
@@ -43,12 +39,7 @@ export interface StreamRequestOptions {
 	readonly includeUsage?: boolean;
 }
 
-/**
- * provider 对传输层的要求：把请求变成一串 chunk。
- *
- * 刻意只声明这一个方法（而不是整个客户端）：这样重发门可以被喂一个按脚本产出的假实现，
- * 也让「换成另一种传输」成为替换实现而不是改动调用方。
- */
+/** provider 对传输层的要求：把请求变成一串 chunk；只声明这一个方法，便于替换实现。 */
 export interface ChatStreamSource {
 	streamChatCompletion(
 		request: ChatCompletionRequest,
@@ -79,11 +70,8 @@ export interface StreamResponseInput {
 }
 
 /**
- * 把一个中立部件上报给宿主。
- *
- * **这里是流式翻译与 VS Code 之间的唯一边界**：`stream.ts` 只产出中立部件，
- * 由这一处决定它们变成哪种响应部件（`LanguageModelTextPart` / `LanguageModelToolCallPart` /
- * 可选的思考部件）。
+ * 把一个中立部件上报给宿主：这是流式翻译与 VS Code 之间的边界，
+ * 由这里决定中立部件变成哪种响应部件。
  */
 export function reportResponsePart(
 	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
@@ -103,8 +91,7 @@ export function reportResponsePart(
 		case 'reasoning': {
 			const part = createThinkingPart(responsePart.text);
 			if (part === undefined) {
-				// 只有探测到宿主提供思考部件时，翻译层才会发出这种部件；
-				// 这里兜住「探测与实际不符」，宁可少一种渲染方式，不能少内容。
+				// 翻译层只在探测到宿主提供思考部件时才发出这种部件；这里兜住探测与实际不符的情况
 				logger.warn(`${modelId}：无法构造思考部件，思维链按正文回显`);
 				progress.report(new vscode.LanguageModelTextPart(responsePart.text));
 				return;
@@ -114,28 +101,24 @@ export function reportResponsePart(
 	}
 }
 
-/**
- * 消费一次流式响应；上游提前断开且用户还没看到任何内容时重发。
- *
- * 返回值是本次响应的摘要（正文/思考长度、工具调用数、用量、结束原因），供调用方上报与校准。
- */
+/** 消费一次流式响应，上游提前断开且用户还没看到内容时重发；返回本次响应摘要。 */
 export async function streamResponse(input: StreamResponseInput): Promise<StreamSummary> {
 	const { source, modelId, logger, progress } = input;
-	// 渲染路径在整次响应里定死：同一次回答里忽冷忽热地换渲染方式更糟
+	// 渲染路径在整次响应里定死
 	const thinkingParts = supportsThinkingPart();
 	const sink: ResponsePartSink = part => reportResponsePart(progress, part, logger, modelId);
 
-	/** 该会话 + 模型已经确认过的不兼容字段：首次尝试之前就先去掉，省掉一次必然失败的请求 */
+	/** 该会话 + 模型已确认过的不兼容字段：首次尝试前先去掉 */
 	const remembered = input.repairMemory.get(input.targetKey, modelId);
-	/** 当前要发出去的请求体：自愈会把它换成「去掉了那个字段」的版本 */
+	/** 当前要发出去的请求体；自愈会把它换成去掉那个字段的版本 */
 	let request = applyRememberedRepair(input.request, remembered);
-	/** 站点抱怨过 `stream_options` 之后，后续尝试都不能再带上它 */
+	/** 站点抱怨过 `stream_options` 后，后续尝试不再带上它 */
 	let sendsStreamOptions = remembered?.includeUsage === false ? false : input.sendsStreamOptions;
 	/** 已经用过的自愈步骤与轮数 */
 	const repairs: string[] = [];
-	/** 本次请求里真正生效过的自愈步骤；只有整次响应成功之后才写进记忆 */
+	/** 本次请求生效过的自愈步骤；整次响应成功后才写进记忆 */
 	const appliedRepairs: RepairPlan[] = [];
-	/** 已经用掉几次重发额度（自愈不占额度，因此单独计数） */
+	/** 已用掉的重发次数（自愈不占额度，单独计数） */
 	let attempts = 0;
 
 	for (;;) {
@@ -164,7 +147,7 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 
 			const summary = translator.flush();
 			reportUsagePart(progress, summary, logger);
-			// 自愈确实救回来了才记住：这样后续请求（Agent 的每一步都是一次）不必再挨一次 400
+			// 自愈确实成功才记住，后续请求不必再挨一次 400
 			for (const repair of appliedRepairs) {
 				input.repairMemory.remember(input.targetKey, modelId, repair);
 			}
@@ -175,8 +158,7 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 			);
 			return summary;
 		} catch (error) {
-			// 站点不认某个可选字段（400）：去掉它再试一次。用户还什么都没看到，重发是安全的，
-			// 而且这不算「重发额度」——去掉字段之后是一次不同的请求，不是把同一个请求再发一遍。
+			// 站点不认某个可选字段（400）时去掉它再试一次；此时还没上报部件，且这不算重发额度。
 			const repair = translator.emittedParts === 0
 				&& repairs.length < DEFAULTS.requestRepairRounds
 				&& !input.cancelled()
@@ -203,11 +185,10 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 				continue;
 			}
 			if (repairs.length > 0) {
-				// 已经改过请求还是被拒：把「改过什么」写下来，否则用户只会看到一个没道理的 400
+				// 已经改过请求还是被拒：把「改过什么」写下来
 				logger.error(`${modelId}：已尝试去掉 ${repairs.join('、')}，请求仍被拒绝`);
 			}
-			// 诊断用：「上游报了输出 token 但一个部件都没解出来」通常意味着响应格式没被认出来，
-			// 而用户看到的只是一个空回答。
+			// 诊断用：上游报了输出 token 但没解出任何部件，通常意味着响应格式没被认出来。
 			if (translator.emittedParts === 0 && translator.latestUsage?.completion_tokens) {
 				logger.warn(
 					`上游报告了 ${translator.latestUsage.completion_tokens} 个输出 token，` +
@@ -231,9 +212,7 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 				continue;
 			}
 			if (action === 'fail-truncated') {
-				// 内容已经流给用户了，但流没正常收尾。先冲刷已有内容、上报用量，再报错：
-				// 半截回答不能当作成功——用户可能只看到思考块、正文全丢，而 Agent 循环会把
-				// 它当成「本轮已完成」。（VS Code 会先冲刷已上报的部件，再显示错误。）
+				// 内容已流给用户但流没正常收尾：先冲刷已有内容、上报用量，再报错
 				const summary = translator.flush({ dropIncompleteToolCalls: true });
 				reportUsagePart(progress, summary, logger);
 				logger.warn(
@@ -247,8 +226,7 @@ export async function streamResponse(input: StreamResponseInput): Promise<Stream
 
 /**
  * 把用量回传给 Copilot（会话信息里的「上下文窗口」靠它显示 token 数）。
- *
- * 不报这个部件时 Copilot 会自己拼一个 `prompt_tokens: 0` 的兜底值，上下文窗口就一直显示 `0/上限`。
+ * 不报时 Copilot 会兜底成 `prompt_tokens: 0`，上下文窗口一直显示 `0/上限`。
  */
 export function reportUsagePart(
 	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
@@ -268,11 +246,8 @@ export function reportUsagePart(
 }
 
 /**
- * 把本次的思考内容随响应一起留下（回放标记）。
- *
- * 只有需要回填思考内容的上游才需要它：标记的唯一用途就是在下一次请求里
- * 变回 `reasoning_content`（DeepSeek 的思考态工具调用历史要求这个字段）。
- * 是否需要由**适配器链**决定（任一适配器声明 `echoReasoningContent` 即为真）。
+ * 把本次的思考内容随响应一起留下（回放标记）：下一次请求会把它变回 `reasoning_content`。
+ * 是否需要由适配器链决定（任一适配器声明 `echoReasoningContent` 即为真）。
  */
 export function reportReplayMarker(
 	progress: vscode.Progress<vscode.LanguageModelResponsePart>,

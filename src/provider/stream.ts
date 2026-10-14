@@ -5,9 +5,8 @@
  * 思维链字段名各家不同（统一由 `reasoning.ts` 认）；usage 只在最后一个 chunk 出现，
  * 单独记下用于统计；多 choice 时只取 `index === 0`。
  *
- * **本模块不依赖 `vscode`**：产出的是下面 `ResponsePart` 那三种中立部件，翻成宿主认的响应部件
- * 由上报层（`streamFlow.ts`）负责。这一层最容易出错（分片归并、引用块排版、截断判定），
- * 中立之后不必为了碰它而启动扩展宿主；响应怎么渲染也是可以整层替换的事。
+ * 本模块不依赖 `vscode`：产出的是下面 `ResponsePart` 那三种中立部件，翻成宿主认的响应部件
+ * 由上报层（`streamFlow.ts`）负责。
  */
 
 import { SseTruncatedError } from '../client/sse';
@@ -19,8 +18,7 @@ import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types
 /**
  * 一个响应部件：本模块的输出契约。
  *
- * 刻意不做成「一个部件一个类」：这三种形状互不重叠，判别式联合让上报层的一处 `switch`
- * 就能穷尽，新增一种部件时类型检查会指出所有需要处理的地方。
+ * 本模块的输出契约。三种形状互不重叠的判别式联合，上报层用一处 `switch` 即可穷尽。
  */
 export type ResponsePart =
 	/** 正式回答的正文 */
@@ -47,8 +45,7 @@ export interface StreamSummary {
 	/**
 	 * 思维链原文。
 	 *
-	 * 与「是否回显思考」无关：DeepSeek 要求思考态的工具调用历史回填 `reasoning_content`，
-	 * 用户关掉回显也不能把这份原文丢按（见 `replay.ts`）。
+	 * 与「是否回显思考」无关：回填历史要用（见 `replay.ts`）。
 	 */
 	readonly reasoningText: string;
 	/** 上报的工具调用数量 */
@@ -66,7 +63,7 @@ export interface StreamTranslatorOptions {
 	/**
 	 * 宿主是否提供专用思考部件（`LanguageModelThinkingPart`）。
 	 *
-	 * 由上报层探测后传进来——翻译层不碰 `vscode`，也就不能自己问宿主。
+	 * 由上报层探测后传进来——翻译层不碰 `vscode`，不能自己问宿主。
 	 * 为 `false` 时思维链包成 Markdown 引用块当正文发出。
 	 */
 	readonly thinkingParts: boolean;
@@ -98,12 +95,7 @@ export function extractStreamError(chunk: ChatCompletionChunk): string | undefin
 /**
  * 把 chunk 流翻译成中立响应部件。
  *
- * 使用方式：
- * ```ts
- * const translator = new StreamTranslator(sink, options);
- * for await (const chunk of stream) { translator.handle(chunk); }
- * const summary = translator.flush();
- * ```
+ * 用法：循环里调用 `handle`，结束后调用 `flush` 取摘要。
  */
 export class StreamTranslator {
 	private textLength = 0;
@@ -115,7 +107,7 @@ export class StreamTranslator {
 	private readonly toolCalls = new Map<number, ToolCallAccumulator>();
 	/** 最近一次写入的工具调用槽位；网关省略 `index` 时，续传分片要接在它上面 */
 	private lastToolCallIndex: number | undefined;
-	/** 已经上报给 VS Code 的部件数：截断重试的门就卡在这个值上 */
+	/** 已经上报给 VS Code 的部件数 */
 	private emitted = 0;
 	private toolCallCount = 0;
 	private reasoningStarted = false;
@@ -123,7 +115,7 @@ export class StreamTranslator {
 	private reasoningAtLineStart = true;
 	private contentStarted = false;
 	private warnedMultipleChoices = false;
-	/** 走专用思考部件（而不是 Markdown 引用块）；构造时定好，渲染路径才不会变得忽冷忽热 */
+	/** 走专用思考部件（而不是 Markdown 引用块） */
 	private readonly thinkingParts: boolean;
 
 	constructor(
@@ -188,8 +180,7 @@ export class StreamTranslator {
 			}
 		}
 
-		// 上游给出收尾信号时参数已经到齐，立即上报：等到流真正结束再报只会让 agent 循环
-		// 白白多等一个往返。剩下的分片（网关不发 finish_reason）仍在 flush 里补报。
+		// 收尾信号出现说明参数已到齐，立即上报；网关不发 finish_reason 时剩下的分片在 flush 里补报。
 		if (this.finishReason === 'tool_calls' || this.finishReason === 'stop') {
 			this.reportToolCalls({});
 		}
@@ -198,14 +189,13 @@ export class StreamTranslator {
 	/**
 	 * 结束本次流式响应：补报剩下的工具调用并返回统计。
 	 *
-	 * @param options.dropIncompleteToolCalls 参数还没拼完的工具调用直接丢掉。
-	 *   用于「流被中途掐断」的场景：此时参数通常是半截 JSON，上报它只会让 VS Code
-	 *   拿着残缺参数去执行工具。
+	 * @param options.dropIncompleteToolCalls 参数还没拼完的工具调用直接丢掉：
+	 *   例如流被中途掐断，此时参数通常是半截 JSON。
 	 */
 	flush(options: { dropIncompleteToolCalls?: boolean } = {}): StreamSummary {
 		if (!this.thinkingParts && this.reasoningStarted && !this.contentStarted && this.options.includeReasoning) {
-			// 只有思维链、没有正式回答（例如被截断），补一个换行避免格式粘连。
-			// 走专用思考部件时没有这个问题：它不在正文里。
+			// 只有思维链、没有正式回答（例如被截断）时补一个换行，避免格式粘连；
+			// 走专用思考部件时它不在正文里，没有这个问题。
 			this.report('\n');
 		}
 
@@ -236,8 +226,7 @@ export class StreamTranslator {
 	/**
 	 * 上报已累积的工具调用。
 	 *
-	 * 上报条件很关键：只有流结束了才能确定参数已经拼完整。上游给了 `finish_reason`
-	 * 就说明它写完了，那时报一次；没给（网关略过它）才等到 `flush`。
+	 * 只有流结束才能确定参数拼完整：上游给了 `finish_reason` 就报一次，没给才等到 `flush`。
 	 */
 	private reportToolCalls(options: { dropIncomplete?: boolean }): void {
 		const indices = [...this.toolCalls.keys()].sort((a, b) => a - b);
@@ -264,7 +253,7 @@ export class StreamTranslator {
 			this.emitted++;
 			this.toolCallCount++;
 		}
-		// 槽位已清空：下一个不带 index 的分片应该开新槽，而不是接到已上报的那次调用上
+		// 槽位已清空：下一个不带 index 的分片会开新槽，而不是接到已上报的那次调用上
 		this.lastToolCallIndex = undefined;
 	}
 
@@ -275,7 +264,7 @@ export class StreamTranslator {
 		if (!this.contentStarted) {
 			this.contentStarted = true;
 			if (this.reasoningStarted && !this.thinkingParts) {
-				// 与思维链分隔开，避免引用块和正文连在一起（思考部件不在正文里，无需分隔）
+				// 与思维链分隔开，避免引用块和正文连在一起
 				this.report('\n\n');
 			}
 		}
@@ -286,11 +275,8 @@ export class StreamTranslator {
 	/**
 	 * 输出思维链。
 	 *
-	 * `thinkingParts` 为真时只发一个中立部件，交由上报层构造宿主的思考部件（Copilot 会渲染成
-	 * 可折叠的思考块，「思考内容怎么显示」交给用户的外观设置）；为假时退回 Markdown 引用块
-	 * ——把思维链当正文发出去，视觉上只能靠引用块与正式回答区分，因此排版逻辑落在这一层。
-	 *
-	 * 无论回显与否都会累积原文：回填历史要用（见 `replay.ts`）。
+	 * `thinkingParts` 为真时发中立部件，交由上报层构造宿主的思考部件；为假时退回 Markdown
+	 * 引用块（排版逻辑因此落在这一层）。无论回显与否都会累积原文，回填历史要用（见 `replay.ts`）。
 	 */
 	private emitReasoning(text: string): void {
 		this.reasoningBuffer += text;
@@ -335,14 +321,10 @@ export class StreamTranslator {
 	}
 
 	/**
-	 * 判断这个分片应该归到哪个槽位。
+	 * 判断分片归属哪个槽位。
 	 *
-	 * 严格按 OpenAI 规范 `index` 是必填的，但兼容网关可能省略它。这时**不能**退回
-	 * 「已用槽位数」当索引：那个值每开一个槽就 +1，于是参数续传分片会被当成一次新调用，
-	 * 参数落进一个没有函数名的空槽，最后在 flush 时被当作「缺少函数名」丢弃——
-	 * 症状是「工具被执行了，但参数全空」，很难从现象联想到索引。
-	 *
-	 * 判据改用 `id`：只有一次工具调用的首个分片才会带 `id`，续传分片只有 `arguments`。
+	 * 规范里 `index` 必填，但兼容网关可能省略它，此时用最近一次写入的槽位；
+	 * 带 `id` 的分片（一次工具调用的首个分片）则开新槽。
 	 */
 	private resolveToolCallIndex(delta: ChatToolCallDelta): number {
 		if (typeof delta.index === 'number') {
@@ -357,7 +339,7 @@ export class StreamTranslator {
 		return this.lastToolCallIndex;
 	}
 
-	/** 下一个空槽位：取已用索引的最大值 +1，避免稀疏索引（网关只发 `index: 5`）时撞号。 */
+	/** 下一个空槽位：取已用索引最大值 +1，避免稀疏索引（网关只发 `index: 5`）时撞号。 */
 	private nextToolCallIndex(): number {
 		let max = -1;
 		for (const key of this.toolCalls.keys()) {
@@ -377,11 +359,9 @@ export class StreamTranslator {
 /**
  * 解析工具调用参数。
  *
- * 上游偶尔会把 JSON 包在 Markdown 代码块里（尤其是被中转做过格式化的场景），
- * 因此这里会先尝试直接解析，失败后再剥掉围栏重试。
- * 仍然失败时返回 `undefined`，由调用方决定是「丢掉这次调用」（流被截断时）
- * 还是「空对象上报，让 VS Code 报出参数校验失败」（流正常结束时）——后者能让模型自我修正，
- * 比直接丢掉这次工具调用更好。
+ * 上游偶尔把 JSON 包在 Markdown 代码块里，因此直接解析失败后会剥掉围栏重试。
+ * 仍失败时返回 `undefined`，由调用方决定丢掉这次调用还是用空对象上报（让 VS Code
+ * 报出参数校验失败，模型可据此自我修正）。
  */
 export function tryParseToolArguments(raw: string, logger: Logger, toolName: string): object | undefined {
 	const trimmed = raw.trim();
@@ -419,9 +399,8 @@ export function parseToolArguments(raw: string, logger: Logger, toolName: string
 /**
  * 一次流式请求失败后的处置。
  *
- * - `retry`：重发整次请求。只有「还来得及」时才可以——用户什么都还没看到。
- * - `fail-truncated`：内容已经流出一部分，但流在正常收尾前断了。调用方要先把已有内容
- *   冲刷出去，再**抛出错误**——半截回答不能当作成功。
+ * - `retry`：重发整次请求，前提是还没上报过任何部件（用户什么都还没看到）。
+ * - `fail-truncated`：内容已流出一部分但流没正常收尾；调用方先冲刷已有内容再抛错。
  * - `fail`：抛给 VS Code。
  */
 export type StreamFailureAction = 'retry' | 'fail-truncated' | 'fail';
@@ -429,13 +408,11 @@ export type StreamFailureAction = 'retry' | 'fail-truncated' | 'fail';
 /**
  * 决定一次流式失败该怎么处置。
  *
- * 只有「流在正常收尾前结束」才值得重发；其它错误（4xx、取消、上游明确报错）重发也好不了。
- * 而重发的先决条件是 `emittedParts === 0`：provider 抛错时 VS Code 会先冲刷已经流出的部件，
- * 一旦用户看到过内容，再补一段完整回答就会把两段回答拼在一起。
+ * 只有「流在正常收尾前结束」才值得重发，且先决条件是 `emittedParts === 0`：
+ * 用户看到过内容后再补一段完整回答会把两段回答拼在一起。
  *
- * 内容已经流出一部分时不再返回「成功」：那会让 Agent 循环把半截回答当作本轮已完成
- * （用户可能只看到一个思考块、正文全丢）。此时返回 `fail-truncated`，由调用方冲刷已有内容后报错——
- * 用户既看得到已经拿到的部分，也知道它不完整。
+ * 内容已流出一部分时返回 `fail-truncated` 而不是成功，否则 Agent 循环会把半截回答
+ * 当作本轮已完成。
  */
 export function decideStreamFailure(input: {
 	error: unknown;

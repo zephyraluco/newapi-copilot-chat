@@ -1,5 +1,5 @@
 /**
- * 扩展入口：装配模块并注册命令。这里刻意只做接线，不放业务逻辑。
+ * 扩展入口：装配模块并注册命令，只做接线。
  *
  * ```
  *   VS Code 的配置组 ──▶ ProviderTarget（runtime/target.ts）
@@ -33,9 +33,7 @@ function datasetFile(context: vscode.ExtensionContext): string {
 }
 
 /**
- * 读取随包附带的模型数据表。
- *
- * 读取与解析分开报错：文件不存在与文件坏了是两件事，排查方向完全不同。
+ * 读取随包附带的模型数据表；文件不存在与内容不是合法 JSON 分开报错。
  */
 function readModelDataset(logger: Logger, path: string): unknown {
 	let text: string;
@@ -55,10 +53,8 @@ function readModelDataset(logger: Logger, path: string): unknown {
 /**
  * 载入随包附带的模型数据表。
  *
- * 同步读取：文件在几十 KB 量级，而模型发现随时可能发生；同步读能保证「激活完成」
- * 就等于「数据表可用」，不必让 provider 等待一个异步初始化。
- * 文件缺失或损坏时只会让数据表为空（模型配置退回「网关返回值 + 默认值」），
- * 不影响扩展其余部分。数据表是生成产物，因此只在激活时读一次。
+ * 同步读取：文件在几十 KB 量级，激活完成即数据表可用。文件缺失或损坏时数据表为空，
+ * 不影响扩展其余部分。
  */
 function loadModelDataset(context: vscode.ExtensionContext, logger: Logger): void {
 	const raw = readModelDataset(logger, datasetFile(context));
@@ -80,7 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	initRuntimeInfo(String(context.extension.packageJSON.version ?? '0.0.0'));
 
 	// 日志服务必须先于配置服务：读取配置的过程本身就会写日志。
-	// 因此先用原始设置取一个初始级别，拿到完整配置后再校正一次。
+	// 先用原始设置取一个初始级别，拿到完整配置后再校正一次。
 	const bootstrapLevel = parseLogLevelName(
 		vscode.workspace.getConfiguration(CONFIG_SECTION).get('logLevel'),
 	);
@@ -147,8 +143,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (scope.logLevel) {
 			loggerService.setLevel(settings.logLevel);
 		}
-		// 只有会影响模型列表（或连接身份）的变化才值得让宿主重新发现模型。
-		// 早先无条件刷新：改日志级别、改状态栏都会触发一次强制重拉 + 一次模型重新发现。
+		// 只有会影响模型列表（或连接身份）的变化才让宿主重新发现模型。
 		if (scope.models || scope.client) {
 			void refreshAndNotify(commands, true);
 		}
@@ -171,11 +166,8 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 /**
- * 停用扩展。
- *
- * 所有资源都已经挂在 `context.subscriptions` 上，由 VS Code 统一释放，
- * 因此这里没有额外工作。
+ * 停用扩展。所有资源都挂在 `context.subscriptions` 上，由 VS Code 统一释放。
  */
 export function deactivate(): void {
-	// 保留该导出以便 VS Code 明确识别扩展支持停用。
+	// 保留该导出，以便 VS Code 识别扩展支持停用。
 }

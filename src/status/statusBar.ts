@@ -1,14 +1,10 @@
 /**
  * 状态栏 UI：只做渲染，不发请求、不做判断（状态全部来自 `StatusService`）。
  *
- * 状态栏只有一格位置，因此文本必须极短（`$(cloud) 12 模型`）。悬浮提示讲的是**本次会话**：
- * 请求次数、输入输出 token、缓存命中——用户盯的是「刚刚这一下贵不贵」。
+ * 状态栏只有一格位置，因此文本必须极短（`$(cloud) 12 模型`）。悬浮提示讲本次会话：
+ * 请求次数、输入输出 token、缓存命中。
  *
- * 三件刻意的事：
- *
- * - **没有会话数据时不弹提示**。空闲时悬停给出一句「还没有请求」是纯噪声，还容易被当成出错。
- * - 提示里唯一保留的站点信息是「哪里出了问题」，因为状态栏此时已被着色，用户需要一个理由。
- * - **图标不带点击命令**：它只陈述状态，不去猜用户点了想看什么；提示里的文案也因此不提「点击」。
+ * 没有会话数据时不弹提示；提示里只保留「哪里出了问题」这类站点信息。
  */
 
 import * as vscode from 'vscode';
@@ -18,11 +14,7 @@ import type { Logger } from '../logger';
 import type { StatusState, TargetStatus, UsageStats } from './statusService';
 import { describeCacheHit } from '../usage';
 
-/**
- * 状态栏项。
- *
- * 图标本身**不带点击命令**：它只负责显示状态（文本 + 悬浮提示），不去猜用户点它是想看什么。
- */
+/** 状态栏项；不带点击命令，只显示状态（文本 + 悬浮提示）。 */
 export class NewApiStatusBar implements vscode.Disposable {
 	private readonly item: vscode.StatusBarItem;
 	private visible = false;
@@ -30,8 +22,8 @@ export class NewApiStatusBar implements vscode.Disposable {
 	constructor(private readonly logger: Logger) {
 		this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, STATUS_BAR_PRIORITY);
 		this.item.name = 'New API for Copilot Chat';
-		// TODO(待办)：需要时再给状态栏挂点击命令（例如打开设置，或未配置时进「管理模型」）。
-		// 挂命令时记得同步悬浮提示里的说明，否则用户不知道为什么可以点。
+		// TODO(待办)：需要时再给状态栏挂点击命令（例如打开设置，或未配置时进「管理模型」）；
+		// 挂命令时同步更新悬浮提示里的说明。
 	}
 
 	/** 按状态渲染。 */
@@ -41,7 +33,7 @@ export class NewApiStatusBar implements vscode.Disposable {
 			return;
 		}
 
-		// TODO(待办)：这里曾是「随可用性变化」的点击目标，现已移除（见构造函数里的说明）。
+		// TODO(待办)：这里曾是「随可用性变化」的点击目标，现已移除
 		this.item.text = buildText(state);
 		this.item.backgroundColor = needsAttention(state)
 			? new vscode.ThemeColor('statusBarItem.warningBackground')
@@ -79,8 +71,7 @@ function needsAttention(state: StatusState): boolean {
 	if (!state.anyUsable) {
 		return true;
 	}
-	// 有可用目标时，只有在「所有目标都连不上」的情况下才告警：
-	// 配了多个站点时，其中一个临时挂掉不该让状态栏常亮。
+	// 有可用目标时，只有全部目标都连不上才告警：其中一个站点临时挂掉不该让状态栏常亮。
 	const attempted = state.targets.filter(target => target.usable);
 	return attempted.length > 0 && attempted.every(target => target.models.error !== undefined);
 }
@@ -103,11 +94,10 @@ function isRefreshing(state: StatusState): boolean {
 /**
  * 悬浮提示：只讲本次会话的消耗，外加需要用户动手的问题。
  *
- * **没有会话数据、也没有问题时返回 `undefined`**——那样悬停不该弹出任何东西。空壳提示
- * （一句「还没有请求」）既没信息量，又让人以为扩展在报错；状态栏文本自己就说明了可用性。
+ * 没有会话数据也没有问题时返回 `undefined`；状态栏文本自己就说明了可用性。
  */
 function buildTooltip(state: StatusState): vscode.MarkdownString | undefined {
-	// 还没配置站点是唯一「悬停就该知道怎么办」的场景：状态栏本身只有「New API」两个字
+	// 还没配置站点是唯一「悬停就该知道怎么办」的场景
 	if (state.targets.length === 0) {
 		const tooltip = createTooltip();
 		tooltip.appendMarkdown('$(warning) **尚未配置任何站点**\n\n');
@@ -132,7 +122,7 @@ function buildTooltip(state: StatusState): vscode.MarkdownString | undefined {
 	return tooltip;
 }
 
-/** 空提示：带标题与主题图标支持。图标（`$(warning)` 等）没有这个开关会按字面显示。 */
+/** 空提示：带标题与主题图标支持（图标没有这个开关会按字面显示）。 */
 function createTooltip(): vscode.MarkdownString {
 	const tooltip = new vscode.MarkdownString();
 	tooltip.supportThemeIcons = true;
@@ -143,7 +133,7 @@ function createTooltip(): vscode.MarkdownString {
 /**
  * 本次会话的消耗。
  *
- * 全程用**空行**分段（Markdown 里单个 `\n` 只是软换行，渲染时会并成一行）。
+ * 用空行分段（Markdown 里单个 `\n` 只是软换行，渲染时会并成一行）。
  */
 function describeUsage(usage: UsageStats): string {
 	const counts = [`${usage.requests} 次请求`];
@@ -152,7 +142,7 @@ function describeUsage(usage: UsageStats): string {
 	}
 
 	const lines = [`**本次会话**：${counts.join(' · ')}`, ''];
-	// 上游没返回 usage 时不要显示一排 0：那看起来像是真的没消耗
+	// 上游没返回 usage 时不要显示一排 0
 	if (usage.totalTokens === 0) {
 		lines.push('- 上游未返回 token 用量');
 	} else {
@@ -177,24 +167,19 @@ function describeUsage(usage: UsageStats): string {
 /**
  * 缓存命中一行；不该显示时返回 `undefined`。
  *
- * 「命中 0」与「上游不报缓存」是两件事：前者说明缓存没帮上忙（可能有价值，比如上下文每次都在变），
- * 后者说明这个数字根本不存在。前者值得显示，后者显示出来只会让人怀疑扩展坏了。
+ * `cacheReported` 区分「缓存命中 0」与「上游不报缓存」：前者值得显示，后者显示会让人怀疑扩展坏了。
  */
 function describeCache(usage: UsageStats): string | undefined {
 	if (!usage.cacheReported) {
 		return undefined;
 	}
-	// 命中数已经大于 0 却拿不到输入量时，`describeCacheHit` 会只给数量不编比例
+	// 命中数大于 0 却拿不到输入量时，`describeCacheHit` 只给数量不编比例
 	return usage.cachedTokens === 0
 		? '无'
 		: describeCacheHit(usage.cachedTokens, usage.promptTokens);
 }
 
-/**
- * 只列需要用户动手的问题。
- *
- * 健康的站点不在这里出现——只有需要用户动手的问题才值得占一行。
- */
+/** 只列需要用户动手的问题；健康的站点不在这里出现。 */
 function describeProblems(target: TargetStatus): string[] {
 	if (!target.usable) {
 		return [`$(warning) ${target.label} 配置不完整：${target.issues.join('；')}`];
