@@ -176,13 +176,11 @@ export class NewApiClient {
 	async *streamChatCompletion(
 		request: ChatCompletionRequest,
 		signal?: AbortSignal,
-		/**
-		 * 单次请求的传输覆盖：站点不认 `stream_options` 时本次不再要求上游返回用量。
-		 */
-		options?: { readonly includeUsage?: boolean },
+		/** 已为本次调用解析好的自定义请求头。 */
+		options?: { readonly headers?: Readonly<Record<string, string>> },
 	): AsyncGenerator<ChatCompletionChunk> {
 		const url = joinUrl(this.options.baseUrl, ENDPOINTS.chatCompletions);
-		const includeUsage = options?.includeUsage ?? this.options.includeUsage;
+		const includeUsage = this.options.includeUsage;
 		const body = safeJsonStringify({
 			...request,
 			stream: true,
@@ -201,9 +199,10 @@ export class NewApiClient {
 
 		try {
 			const response = await this.http.requestStream({
+				maxRetries: 0,
 				url,
 				method: 'POST',
-				headers: this.authHeaders(),
+				headers: this.authHeaders(options?.headers),
 				body,
 				signal: controller.signal,
 			});
@@ -270,6 +269,7 @@ export class NewApiClient {
 		const response = await this.http.requestText({
 			url,
 			method: 'POST',
+			maxRetries: 0,
 			headers: this.authHeaders(),
 			body,
 			signal,
@@ -303,12 +303,15 @@ export class NewApiClient {
 	/* ---------------------------------------------------------------------- */
 
 	/** 构造鉴权头。 */
-	private authHeaders(): Record<string, string> {
-		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	private authHeaders(extra: Readonly<Record<string, string>> = {}): Record<string, string> {
+		const headers = new Headers({ 'Content-Type': 'application/json' });
 		if (this.options.apiKey) {
-			headers['Authorization'] = `Bearer ${this.options.apiKey}`;
+			headers.set('Authorization', `Bearer ${this.options.apiKey}`);
 		}
-		return headers;
+		for (const [name, value] of Object.entries(extra)) {
+			headers.set(name, value);
+		}
+		return Object.fromEntries(headers.entries());
 	}
 }
 

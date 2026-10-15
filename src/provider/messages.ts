@@ -24,7 +24,6 @@ import type {
 	ChatRequestMessage,
 	ChatRequestToolCall,
 	ChatToolDefinition,
-	ChatToolChoice,
 } from '../types';
 import { isReplayMarkerPart, readReplayedReasoning } from './replay';
 import { readThinkingText } from './thinking';
@@ -42,6 +41,7 @@ export interface ConvertedMessages {
 
 /** 转换选项。 */
 export interface ConvertMessagesOptions {
+	readonly nativeImageInput?: boolean;
 	/**
 	 * 是否把历史里的思考内容回填成上一轮的思维链字段（`REASONING_ECHO_FIELD`）。
 	 *
@@ -57,6 +57,7 @@ export function convertMessages(
 	options: ConvertMessagesOptions = {},
 ): ConvertedMessages {
 	const echoReasoning = options.echoReasoningContent ?? false;
+	const nativeImageInput = options.nativeImageInput ?? true;
 	const result: ChatRequestMessage[] = [];
 	const warnings: string[] = [];
 	let skipped = 0;
@@ -66,7 +67,7 @@ export function convertMessages(
 		const isAssistant = message.role === vscode.LanguageModelChatMessageRole.Assistant;
 
 		if (isAssistant) {
-			const converted = convertAssistantMessage(message, parts, warnings, echoReasoning);
+			const converted = convertAssistantMessage(message, parts, warnings, echoReasoning, nativeImageInput);
 			if (converted === undefined) {
 				skipped++;
 				continue;
@@ -85,12 +86,13 @@ export function convertMessages(
 				toolMessages.push({
 					role: 'tool',
 					tool_call_id: part.callId,
-					content: convertToolResultContent(part, warnings),
+					content: convertToolResultContent(part, warnings, nativeImageInput),
 				});
 				continue;
 			}
 			if (part instanceof vscode.LanguageModelTextPart) {
 				textBuffer += part.value;
+				contentParts.push({ type: 'text', text: part.value });
 				continue;
 			}
 			if (part instanceof vscode.LanguageModelDataPart) {
@@ -98,7 +100,7 @@ export function convertMessages(
 				if (isReplayMarkerPart(part)) {
 					continue;
 				}
-				const image = dataPartToImage(part, warnings);
+				const image = nativeImageInput ? dataPartToImage(part, warnings) : undefined;
 				if (image !== undefined) {
 					contentParts.push(image);
 				}
@@ -108,13 +110,14 @@ export function convertMessages(
 			const fallback = partToText(part);
 			if (fallback !== undefined && fallback.length > 0) {
 				textBuffer += fallback;
+				contentParts.push({ type: 'text', text: fallback });
 			}
 		}
 
 		result.push(...toolMessages);
 
 		const hasText = textBuffer.length > 0;
-		const hasImages = contentParts.length > 0;
+		const hasImages = contentParts.some(part => part.type === 'image_url');
 		if (!hasText && !hasImages) {
 			if (toolMessages.length === 0) {
 				skipped++;
@@ -127,7 +130,7 @@ export function convertMessages(
 		const name = normalizeName(message.name);
 		const role = name === 'system' ? 'system' : 'user';
 		const content: ChatRequestMessage['content'] = hasImages
-			? buildMultimodalContent(textBuffer, contentParts)
+			? contentParts
 			: textBuffer;
 
 		result.push(role === 'system'
@@ -156,6 +159,7 @@ function convertAssistantMessage(
 	parts: readonly unknown[],
 	warnings: string[],
 	echoReasoningContent: boolean,
+	nativeImageInput: boolean,
 ): ChatRequestMessage | undefined {
 	let text = '';
 	let thinking = '';
@@ -182,7 +186,7 @@ function convertAssistantMessage(
 			if (isReplayMarkerPart(part)) {
 				continue;
 			}
-			const image = dataPartToImage(part, warnings);
+			const image = nativeImageInput ? dataPartToImage(part, warnings) : undefined;
 			if (image !== undefined) {
 				images.push(image);
 			}
@@ -203,10 +207,10 @@ function convertAssistantMessage(
 		return undefined;
 	}
 
-	// OpenAI 约定：带 tool_calls 时 content 必须为 null（部分上游对空字符串也会报错）
+	// Thinking providers replay assistant content as a string, including tool-only turns.
 	const content: ChatRequestMessage['content'] = images.length > 0
 		? buildMultimodalContent(text, images)
-		: (text.length > 0 ? text : null);
+		: (text.length > 0 || echoReasoningContent ? text : null);
 
 	const name = normalizeName(message.name);
 	const reasoning = echoReasoningContent
@@ -217,7 +221,7 @@ function convertAssistantMessage(
 		content,
 		...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 		...(name !== undefined && name !== 'system' ? { name } : {}),
-		...(reasoning.length > 0 ? { [REASONING_ECHO_FIELD]: reasoning } : {}),
+		...(echoReasoningContent ? { [REASONING_ECHO_FIELD]: reasoning } : {}),
 	};
 }
 
@@ -298,6 +302,7 @@ function dataPartToImage(part: vscode.LanguageModelDataPart, warnings: string[])
 function convertToolResultContent(
 	part: vscode.LanguageModelToolResultPart,
 	warnings: string[],
+	nativeImageInput: boolean,
 ): ChatRequestMessage['content'] {
 	const chunks: string[] = [];
 	const images: ChatContentPart[] = [];
@@ -307,7 +312,7 @@ function convertToolResultContent(
 			continue;
 		}
 		if (item instanceof vscode.LanguageModelDataPart) {
-			const image = dataPartToImage(item, warnings);
+			const image = nativeImageInput ? dataPartToImage(item, warnings) : undefined;
 			if (image !== undefined) {
 				images.push(image);
 			}
@@ -393,16 +398,4 @@ export function convertTools(
 		});
 	}
 	return result.length > 0 ? result : undefined;
-}
-
-/** 把 VS Code 的工具选择模式转换成上游的 `tool_choice`。 */
-export function convertToolChoice(
-	mode: vscode.LanguageModelChatToolMode,
-	hasTools: boolean,
-): ChatToolChoice | undefined {
-	if (!hasTools) {
-		// 没有工具时下发 tool_choice 会被部分上游拒绝
-		return undefined;
-	}
-	return mode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto';
 }

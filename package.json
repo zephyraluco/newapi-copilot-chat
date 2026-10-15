@@ -156,7 +156,7 @@
           "default": 2,
           "minimum": 0,
           "maximum": 5,
-          "markdownDescription": "失败重试次数（不含首次尝试）。只对网络错误、超时、429 与 5xx 生效，4xx 业务错误不会重试。\n\n服务端 `Retry-After` 要求的等待超过 30 秒时不再重试，而是直接把限流错误报出来。",
+          "markdownDescription": "模型发现与站点状态请求的失败重试次数（不含首次）。聊天请求只发送一次，不会自动重试或删除参数后重发。",
           "order": 23
         },
         "newapi-copilot-chat.request.temperature": {
@@ -183,8 +183,8 @@
         },
         "newapi-copilot-chat.request.includeReasoning": {
           "type": "boolean",
-          "default": false,
-          "markdownDescription": "是否把思维链（DeepSeek 的 `reasoning_content` 等）回显给用户。\n\n回显时思维链以 Markdown 引用块的形式出现在回答前面。\n\n关闭它不影响向 DeepSeek 回填 `reasoning_content`：那是上游要求的请求字段，与是否展示无关。",
+          "default": true,
+          "markdownDescription": "是否显示上游返回的思考内容。优先使用宿主的原生思考部件；旧宿主使用 Markdown 引用块。关闭展示不影响历史 reasoning_content 的回填。",
           "order": 26
         },
         "newapi-copilot-chat.request.stabilizeToolList": {
@@ -192,6 +192,13 @@
           "default": false,
           "markdownDescription": "是否在请求上游之前先把 `activate_*` 工具组「预激活」一遍。\n\n宿主把 MCP 工具组（GitKraken、Pylance 等）以 `activate_<组名>` 的虚拟工具给出，模型调用后宿主才把组里的真实工具展开。预激活让每轮的工具列表保持一致，能提高上游前缀缓存的命中率（含 DeepSeek 的上下文缓存）。\n\n代价是每轮多带一批工具定义的输入 token，工具不多（几十个以内）时收益有限，默认关闭。预激活的伪调用与它们的结果不会发给上游。",
           "order": 28
+        },
+        "newapi-copilot-chat.request.headers": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "markdownDescription": "聊天请求的自定义 HTTP 请求头，可覆盖默认头。值中的 `${conversationId}` 按会话 ID、工作区 ID、请求关联 ID 的顺序解析，无可用 ID 时生成随机 ID。每次请求只解析一次。",
+          "order": 29
         },
         "newapi-copilot-chat.request.extraBody": {
           "type": "object",

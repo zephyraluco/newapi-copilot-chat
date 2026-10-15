@@ -90,12 +90,15 @@ Settings live under `newapi-copilot-chat.*`; search for `New API` in the Setting
 | `request.timeoutMs` | `60000` | A whole-request timeout when not streaming; when streaming, the limit on **waiting for the response headers** |
 | `request.streamIdleTimeoutMs` | `60000` | Idle timeout **between two chunks** of a streaming response; raise it for models that think for a long time |
 | `request.includeUsage` | `true` | Whether to send `stream_options`; a few sites reject the field with a 400, so turn it off there (the upstream then reports no usage and the session info shows no token counts) |
-| `request.maxRetries` | `2` | Retry attempts excluding the first one; applies to network errors, timeouts, 429 and 5xx only, and a rate limit asking for more than 30 seconds fails right away |
+| `request.maxRetries` | `2` | Retries for model discovery and site status only. Chat requests are sent once, without parameter-removal retries or stream replay. |
 | `request.temperature` | `null` | Left empty, the field is not sent |
 | `request.topP` | `null` | Left empty, the field is not sent |
-| `request.includeReasoning` | `false` | Whether to echo the reasoning to the user (quote block or thinking block); does not affect the `reasoning_content` echoed back to DeepSeek |
+| `request.includeReasoning` | `true` | Show reasoning using native thinking parts (quote blocks on older hosts); independent of historical reasoning replay. |
+| `request.headers` | `{}` | Custom chat request headers, overriding defaults. Supports `${conversationId}` templates, resolved once per call: Copilot conversation ID → workspace ID → request correlation ID → random ID. |
 | `request.stabilizeToolList` | `false` | Activate the `activate_*` tool groups before sending, keeping the tool list identical every round (good for the upstream prefix cache) at the cost of carrying the tool definitions every round |
 | `request.extraBody` | `{}` | Extra request body fields passed through for every model |
+
+The chat pipeline follows `deepseek-v4-for-copilot`: prepare the request once, POST to `/v1/chat/completions`, and stream text, thinking and tool calls over SSE. DeepSeek helper requests on custom gateways keep the configured thinking effort. Historical reasoning is restored from replay markers, using an empty string when unavailable. Native-image requests are excluded from adaptive text-token calibration.
 
 ### Status
 

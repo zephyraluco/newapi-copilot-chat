@@ -105,6 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	});
 
 	const provider = new NewApiChatProvider({
+		storageUri: context.storageUri,
 		logger: logger.child('provider'),
 		sessions,
 		adapters,

@@ -94,13 +94,14 @@ test('client 的构造参数变化才算连接变化', () => {
 });
 
 test('每次请求现读的设置不需要重建任何东西', () => {
-	// 采样参数、思考回显、工具组预激活、extraBody 都由 buildRequest 每次现读
+	// 请求准备阶段读取的设置无需重建连接。
 	for (const patch of [
 		{ temperature: 0.5 },
 		{ topP: 0.9 },
 		{ includeReasoning: true },
 		{ stabilizeToolList: true },
 		{ extraBody: { foo: 1 } },
+		{ headers: { 'X-Conversation-Id': '${conversationId}' } },
 	]) {
 		assert.deepEqual(changeRequest(patch), {
 			client: false, models: false, status: false, logLevel: false,

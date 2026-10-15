@@ -64,7 +64,7 @@ flowchart TD
 
 1. **发现模型**：从 `options` 解析配置组 → 会话 → `catalog`（缓存或 `/v1/models`）→ `models/`
    整合成 `ModelConfig` → 映射成 VS Code 的模型信息。响应阶段靠模型信息里挂的目标指纹找回同一个会话。
-2. **处理请求**：转换消息 → 组装请求体（含模型配置里的思考强度）→ 适配器改写 → 发往网关 →
+2. **处理请求**：`request.ts` 转换消息、工具与思考参数 → 适配器改写 → `headers.ts` 解析请求头 → 单次发往网关 →
    流式 chunk 翻成中立部件 → 上报给宿主。
 3. **收尾**：回传用量部件、留下思考内容回放标记，然后写状态栏与日志。
 
@@ -77,37 +77,32 @@ flowchart TD
   chunk 里回来；输出上限必须显式发出去，否则由各渠道的默认值决定（见 §12）。
 - **工具调用在收尾时才上报**：参数分片到达，中途无法解析，因此统一在 `StreamTranslator.flush()` 里上报
   （上游给出 `finish_reason` 时提前上报）——这就是工具部件在时序上晚于所有正文片段的原因。
-- **流被掐断时看「用户是否已看到内容」**：没看到且还有额度就重发整次请求（最多 2 次）；已经看到内容时
-  冲刷已有内容后报错。判定抽成纯函数 `decideStreamFailure`（见 §8）。
+- **聊天请求只发送一次**：HTTP 拒绝、网络失败与断流都直接报错，不自动删除字段或重放请求。
 
 关键判定点（细节见各层小节）：
 
 | 判定 | 落点 | 行为 |
 | --- | --- | --- |
 | 找不到模型所属的会话 | `chatProvider.ts` | 抛错提示在模型选择器中重新选择（配置组已变更） |
-| 转换后没有可发送的消息 | `chatProvider.ts` | 抛错，不发请求 |
+| 转换后没有可发送的消息 | `request.ts` | 抛错，不发请求 |
 | 用户取消（token 已取消，或 `isAbortError`） | `chatProvider.ts` | 静默返回，不算失败 |
 | 客户端被退役/释放（配置变更、扩展停用） | `chatProvider.ts` | 照常报错（`disposed` 不是用户取消） |
 | 模型具备思考能力且属于 DeepSeek / GLM / Kimi(K2.x) | `adapter/<supplier>/` | 写入原生思考开关（`thinking` 或 `enable_thinking`） |
-| 辅助请求（起标题、提交信息等） | `adapter/<supplier>/` | 能关掉思考的厂商写 `disabled` 并去掉 `reasoning_effort`；关不掉的只保留强度 |
+| 辅助请求（起标题、提交信息等） | `adapter/<supplier>/` | DeepSeek 保留所选强度；Kimi K2.x / 可关闭的 GLM 使用各自关闭策略 |
 | 模型不具备思考能力 | `adapter/<supplier>/` | 不写原生开关，只清掉 `reasoning_effort` |
 | 数据表能力位说「不接受采样参数」 | `adapter/capabilityAdapter.ts` | 按能力位改写请求（数据驱动，不写模型名正则） |
 | HTTP 非 2xx | `client/http.ts` | `HttpError`，按 `isAuthError` / `isNotFound` / `isRetryable` 分流 |
-| 可重试的错误 | `client/http.ts` | `Retry-After` 优先，否则指数退避 + 抖动 |
+| 模型发现与站点状态的可重试错误 | `client/http.ts` | `Retry-After` 优先，否则指数退避 + 抖动；聊天 POST 禁用重试 |
 | `Retry-After` 超过 30 秒 | `client/http.ts` | 不重试，把带等待时间的 429 直接报出来 |
 | `content-type` 不是 SSE | `client/newApiClient.ts` | 降级为单块 JSON |
 | 静默超时（长时间没有新字节） | `client/sse.ts` | `SseIdleTimeoutError`，与用户取消区分 |
 | 流量正常结束但缺 `[DONE]` 与 `finish_reason` | `client/newApiClient.ts` | `SseTruncatedError` |
-| 流被掐断、还没上报过任何部件 | `provider/streamFlow.ts` | 重发整次请求（最多 2 次），逐次重建 translator |
-| 流被掐断、但已上报过内容 | `provider/streamFlow.ts` | 冲刷已收到的内容后报错 |
-| 站点以 400 拒绝并点名了白名单里的可选字段 | `provider/requestRepair.ts` | 去掉那个字段重发（最多 2 轮），成功的结果按会话 + 模型记住 |
-| 站点以 400 拒绝但白名单里挑不出对应字段 | `provider/requestRepair.ts` | 不修，把上游原话交给用户 |
-| 自愈改过请求仍被 400 拒绝 | `provider/streamFlow.ts` | 记下「去掉过什么」后照常失败 |
+| 流被掐断或 HTTP 拒绝 | `provider/streamFlow.ts` | 直接传播错误，未完成工具不再冲刷 |
 | 响应正常结束且带用量 | `provider/chatProvider.ts` | 回传 `usage` 数据部件 |
 | chunk 带 `error` 字段 | `provider/stream.ts` | 视为失败抛出（上游会把错误塞进 200 响应） |
 | 工具调用缺少函数名 | `provider/stream.ts` | 记警告并跳过 |
 | 工具分片不带 `index` | `provider/stream.ts` | 按有无 `id` 判断是否开新槽 |
-| 工具参数不是合法 JSON | `provider/stream.ts` | 先直解，再剥 Markdown 围栏；正常结束退化为 `{}`，流被掐断则丢弃这次调用 |
+| 工具参数不是合法 JSON | `provider/stream.ts` | 先直解，再剥 Markdown 围栏；正常结束退化为 `{}` |
 | `finish_reason === 'length'` | `provider/stream.ts` | 记警告（响应被截断） |
 | 其它错误 | `chatProvider.ts` | `toLanguageModelError` 把面向用户的消息交给 VS Code |
 
@@ -143,12 +138,13 @@ flowchart TD
 | `target.ts` | 解析 VS Code 下发的配置组 + 配置指纹 |
 | `session.ts` | 按「会话签名」缓存 client + catalog；丢缓存与优雅退役是两条不同的路 |
 | **`provider/`** 与 Copilot 交互 | |
-| `chatProvider.ts` | 实现 `LanguageModelChatProvider`：编排与生命周期，外加三件只服务本文件的辅助（模型信息映射、请求体组装、错误交还） |
+| `chatProvider.ts` | 实现 `LanguageModelChatProvider`：模型发现、请求编排、token 估算与错误交还 |
+| `request.ts` | 一次性准备消息、工具、输出上限、采样与思考参数，并执行协议适配 |
+| `headers.ts` | 自定义请求头的 `${conversationId}` 模板解析；同一次调用共享一个 ID |
 | `modelConfiguration.ts` | 模型级配置（思考强度）：schema 生成、取值解析、写进请求体 |
 | `messages.ts` | VS Code ⇄ OpenAI 兼容的消息转换（含思考内容回填） |
 | `stream.ts` | 流式 chunk → 中立响应部件的翻译；不依赖 `vscode` |
-| `streamFlow.ts` | 流的消费、重发门与 400 自愈循环；`ChatStreamSource` 是传输维度的锚点；中立部件 → 宿主部件 |
-| `requestRepair.ts` | HTTP 400 的自愈阶梯与自愈记忆，纯函数 |
+| `streamFlow.ts` | 单次流消费、取消检查、用量回传；中立部件 → 宿主部件 |
 | `tokenizer.ts` | token 估算（宁可高估，按真实用量校准比例） |
 | `thinking.ts` | 思考内容部件的探测、构造与读取（宿主提供时才存在） |
 | `replay.ts` | 思考内容的回放标记：随响应留下、下次请求读回 |
@@ -157,7 +153,7 @@ flowchart TD
 | **`adapter/`** 差异出口 | |
 | `adapter.ts` / `registry.ts` / `requestKind.ts` | 框架层：钩子接口与上下文、注册与「取全部命中项」、适配链执行；请求种类识别（与厂商无关） |
 | `capabilityAdapter.ts` / `samplingParams.ts` | 数据驱动：按 `ModelConfig` 的能力位改写请求；采样参数字段与删除逻辑的唯一实现 |
-| `deepseek/` | DeepSeek：思考开关、辅助请求改写、思考历史占位 |
+| `deepseek/` | DeepSeek：显式思考开关、关闭时去掉强度字段；自定义端点辅助请求保留配置 |
 | `openai/` | OpenAI 推理模型（o 系列与 GPT-5 之后）：移除采样参数、`max_tokens` → `max_completion_tokens` |
 | `qwen/` / `glm/` / `kimi/` | 厂商原生思考开关与强度字段适配；均使用共享思考回放与辅助请求判据 |
 | `thinkingMode.ts` | 思考选择读取与关闭语义，供厂商与能力位适配器共享 |
@@ -253,12 +249,12 @@ flowchart TD
 **超时**：非流式是整体超时；流式的 `timeoutMs` 只作为「等响应头」的上限，响应体开始到达后交给
 `request.streamIdleTimeoutMs` 的静默超时。两个旋钮分开是因为合理取值差得很远——长思考的模型可能长时间
 不吐字节，而把「等响应头」一起放宽会掩盖真正连不上的情况。超时与重试只在客户端级配置
-（`HttpClientOptions`），单次请求不能覆盖。`createSignalGuard` 把「调用方信号 + 超时 + 客户端释放」
+（`HttpClientOptions`），聊天 POST 按次禁用重试。`createSignalGuard` 把「调用方信号 + 超时 + 客户端释放」
 合并成一个 `AbortSignal` 并记录是否由超时触发，其中断理由会原样成为 `fetch` 抛出的错误。
 
-**重试**：只重试网络错误、超时与 `408` / `409` / `425` / `429` / `5xx`；退避指数增长 + 抖动，
+**重试**：仅模型发现与站点状态请求可重试网络错误、超时与 `408` / `409` / `425` / `429` / `5xx`；退避指数增长 + 抖动，
 并尊重 `Retry-After`。一旦开始消费响应体就不再重试（服务端可能已开始计费）。`Retry-After`
-超过 30 秒不再重试。
+超过 30 秒不再重试。聊天 POST 显式使用 `maxRetries: 0`，响应处理层也不重发。
 
 **取消**：`vscode.CancellationError` 的 `name` 是 `Canceled` 而不是 `AbortError`，`isAbortError` 两个都认。
 
@@ -350,9 +346,9 @@ flowchart TD
 | 模块 | 消费者 | 变化原因 |
 | --- | --- | --- |
 | `stream.ts` | `streamFlow.ts` | 上游 chunk 的形状 |
-| `messages.ts` | `chatProvider.ts` | Copilot 消息模型变了 |
-| `modelConfiguration.ts` | `chatProvider.ts` | 模型级控件方案变了 |
-| `requestRepair.ts` | `streamFlow.ts` | 自愈策略变了 |
+| `messages.ts` | `request.ts` | Copilot 消息模型变了 |
+| `modelConfiguration.ts` | `chatProvider.ts` / `request.ts` | 模型级控件方案变了 |
+| `request.ts` / `headers.ts` | `chatProvider.ts` | 请求体与请求头准备方式变了 |
 | `toolFlow.ts` | `chatProvider.ts` | 预激活机制变了 |
 | `streamFlow.ts` | 只有 `chatProvider.ts` | 体积已超出「就地写」的限度 |
 
@@ -397,28 +393,17 @@ VS Code 据此生成表单并把解析好的值随调用传进来。`createTarge
 （属于正常流程，静默返回）；`disposed` 是客户端被退役/释放（配置变更、扩展停用）——把它当成用户取消，
 用户就会看到一个没有报错的半截回答。因此 `isAbortError()` 只认 `aborted`。
 
-### 400 自愈（`requestRepair.ts`）
+### 请求准备与单次发送
 
-400 的常见成因不是「请求写错了」，而是我们加了一个站点不认的可选字段（`stream_options`、
-`temperature`、`reasoning_effort`、`tool_choice`、`max_tokens`、DeepSeek 的 `thinking`、`extraBody`），
-这些字段去掉后请求仍然成立。规则：
+请求方式参考 `deepseek-v4-for-copilot`。`prepareChatRequest` 在发送前一次性生成最终消息和工具，
+思考模型的默认档位与用户选择一并解析。`extraBody` 不能覆盖协议骨架字段；工具按模型能力提供，
+统一使用 `tool_choice: 'auto'`，无参数工具补空对象 schema。图片只发给声明原生图片能力的模型。
 
-- **只对 400 生效**：401/403/404/429 去掉字段也救不回来。
-- **只在白名单里挑，不从响应里「猜」**：能被去掉的字段永远是我们自己加进去的可选项
-  （`REPAIRABLE_FIELDS` + 调用方传进来的 `extraBody` 键）。响应文本只用来决定先去白名单里的哪一个。
-  这条边界是硬的：从响应体里「猜」字段名会让 `{"param":"tools"}` 这种「工具 schema 不合法」
-  的错误把整个 `tools` 删掉，模型突然变笨而用户看不到任何错误。
-- **骨架与 `tools` 不动**：`PROTECTED_REQUEST_FIELDS`（`model` / `messages` / `stream` / `tools`）
-  在任何路径上都删不到。
-- **能精确就不连带**：上游说「不认 `temperature`」时只去掉它，`top_p` 留着。
-- **有界且不重复**：每个步骤一轮只用一次，总轮数由 `DEFAULTS.requestRepairRounds` 卡住；
-  改不动时不返回计划。自愈不占截断重发的额度。
-- **改过什么必须留痕**：每轮写一条 warn，最终仍失败时再写一条 error 汇总。
-- **结果按会话 + 模型记住**（`RepairMemory`）：站点不认某个字段是稳定事实，记忆让整个会话
-  只挨一次 400。键里带 `targetKey`，因此站点地址、密钥或请求设置一变就自然失效。
+`headers.ts` 按「Copilot 会话 ID → 工作区 ID → 请求关联 ID → 随机 ID」解析 `${conversationId}`，
+同一次调用中的多个模板共享一个值。请求头在默认 JSON 类型与 Bearer 鉴权之后合并，大小写不敏感。
 
-`stream_options` 是这里唯一不由请求体承载的字段（客户端按 `request.includeUsage` 加上去），
-因此去掉它走的是传输层的按次覆盖，而不是删请求体的键。
+HTTP 拒绝、网络失败和流中断直接传给宿主，不根据错误内容改写字段，也不缓存修复结果。
+取消后不冲刷待完成工具、不上报最终用量与回放标记。
 
 ### 模型配置：思考强度（`modelConfiguration.ts`）
 
@@ -431,16 +416,16 @@ provider 可以随模型信息下发 `configurationSchema`，VS Code 据此渲�
 数据表 supportsReasoningEffort ─▶ ModelConfig.reasoningEfforts
 数据表 defaultReasoningEffort  ─▶ ModelConfig.defaultReasoningEffort ─▶ schema 的 default
 ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configurationSchema
-用户选择 ─▶ selectReasoningEffort() ─▶ buildRequest() ─▶ 请求体
+用户选择 ─▶ selectReasoningEffort() ─▶ prepareChatRequest() ─▶ 请求体
 ```
 
 - **属性必须带 `enum`** 才会被渲染成控件；`group: 'navigation'` 决定它落在模型卡片主控件区。
-- **`default` 只是让界面反映现状**，因此 `selectReasoningEffort` 把等于默认档位当作「未修改」、
-  不发送该字段。默认值还必须落在 `enum` 里（这条不变量由 `resolveModelConfig` 守住）。
+- **默认档位显式生效**：`selectReasoningEffort` 校验用户选择，`prepareChatRequest` 使用选择或数据表默认值。
+  默认值必须落在 `enum` 里（这条不变量由 `resolveModelConfig` 守住）。
 - **档位逐模型且没有兜底**：列表为空时不声明控件；凭空造一组值只会发出站点不认的请求。
 - **选项不经翻译**：只声明 `enum`，控件里显示数据表原值。
 - **取值按当前模型校验**，不在 `reasoningEfforts` 里的选择会被拒绝并记警告。
-- **字段名是常量 `reasoning_effort`**，由 `buildRequest` 在额外字段之后写入；需要别的叫法或嵌套形态时
+- **字段名是常量 `reasoning_effort`**，由 `prepareChatRequest` 在额外字段之后写入；需要别的叫法或嵌套形态时
   交给适配器改写。`modelOptions` 与 `modelConfiguration` 都不是稳定 typings 的字段，因此做运行时探测；
   通过扩展 API 直接调用模型的调用方写的是前者，且优先级更高。
 
@@ -454,23 +439,21 @@ ModelConfig.reasoning ─▶ buildModelConfigurationSchema() ─▶ configuratio
 | 图片 | `LanguageModelDataPart` | `image_url`，URL 为 `data:` 形式 |
 
 因此一个 VS Code 消息可能被拆成多条上游消息，且顺序敏感。其他细节：仅有 `tool_calls` 时
-`content` 为 `null`；`system` 角色由「用户消息 + `name === 'system'`」启发式识别。工具结果中的图片
+思考回填模型的 `content` 为空字符串，其余模型为 `null`；`system` 角色由「用户消息 + `name === 'system'`」启发式识别。工具结果中的图片
 转换为 `image_url`，与工具文本组成多模态数组；非图片数据部件和未知对象直接忽略，避免 `cache_control`
 等宿主元数据污染上下文。回放标记仍由专用路径读取。token 估算同样忽略未透传的数据部件。
 
 ### 流式翻译（`stream.ts`）
 
-- **工具调用分片到达**：按 `index` 归并、按到达顺序拼接。上游给出 `finish_reason` 时立即上报，
+- **工具调用分片到达**：按 `index` 归并、按到达顺序拼接。上游给出 `stop` / `tool_calls` 收尾时立即上报，
   否则在 `flush` 里补报。省略 `index` 时按有没有 `id` 判断是否开新槽（退回「槽位数量」当索引
   会把参数送进没有函数名的空槽，症状是「工具被执行了但参数全空」）。解析失败时：正常结束返回空对象
   让 VS Code 报参数校验失败（模型可自我修正），流被掐断则丢弃这次调用。
 - **思维链字段名由 `reasoning.ts` 统一认**，流式与非流式降级走同一个读取器。原文无论是否回显都会累积
   ——回填历史要用。
-- **usage 只在最后一个 chunk**；多 choice 时只取 `index === 0`（并警告）。
-- **`emittedParts` 是重发门的输入**，只统计真正上报出去的东西。
-- **半截回答不能当作成功**（`streamFlow.ts` 的收尾）：流在正常收尾信号之前断开、而内容已经流出一部分时，
-  先冲刷已有内容并上报用量，再抛出错误。抛错让 VS Code 显示错误与重试入口；只有「什么都还没上报」时
-  才是安全的——那时才重发整次请求，否则会把两段回答拼在一起。
+- **usage 取最后一次有效快照**：可出现在任意 chunk，`null` 不覆盖已有值；结束时只上报一次。
+- 多 choice 时只取第一个（并警告）。
+- **半截回答不能当作成功**：缺少正常收尾信号时直接报错，保留已经流出的内容，未完成工具不再冲刷。
 
 ### 回传用量（会话信息里的上下文窗口）
 
@@ -492,15 +475,13 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 - **渲染**：宿主提供 `LanguageModelThinkingPart` 时走专用部件（Copilot 渲染成可折叠思考块）；
   宿主没提供时回退到 Markdown 引用块；用户关掉 `request.includeReasoning` 时完全不输出思考内容。
   三种情况都在 `emitReasoning` 里收敛，探测按构造时定好一次处理：同一次响应里忽冷忽热地换渲染路径更糟。
-  该部件属提案 API，扩展不声明 `enabledApiProposals`，因此引用块是常规路径，专用部件是例外。
+   该部件按宿主实际能力探测，扩展不声明 `enabledApiProposals`。
 - **回填**：DeepSeek 在思考态要求历史里的助手消息都带回 `reasoning_content`——缺席这个字段会被上游
   整次拒掉，不只是工具调用那几条，宿主自己插入的助手消息（例如读取后台终端输出的工具调用）同样算数。
   而稳定 API 不会把思考内容交还给 provider，因此响应结束时额外上报一个 `mimeType` 为
   `stateful_marker` 的 data 部件（宿主不渲染，但会留在历史里原样回传），下次构造请求时读出来填进
   `reasoning_content`。是否打开由适配器的 `echoReasoningContent` 决定；provider 只管已知的原文，
-  缺口由声明这个要求的适配器补——DeepSeek 在开启思考时给缺字段的助手消息写一个空格占位
-  （`REASONING_PLACEHOLDER`），因为「谁都拿不到原文」的历史真实存在（宿主插入的工具调用、
-  会话重启后不再带回思考的历史），省略字段的代价是整次请求被拒。标记格式自产自销，
+   缺口由消息转换层写入空字符串，不编造占位推理。标记格式自产自销，
   但任何一步不合预期都当作「没有标记」。
 
 ### 工具组预激活（`toolFlow.ts`）
@@ -529,7 +510,7 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
   `promptTokens ≈ cjkChars + otherChars / r`，因此由观测反解 `r = otherChars / (promptTokens − cjkChars)`。
 - **比例按模型分别维护**：不同模型的分词器差别很大，共用一个比例会让估算来回摆。
 
-没人报用量、请求为空、或 CJK 已经吃满用量时不校准；单个离谱的观测值会被夹在合理区间内。
+没人报用量、请求为空、含原生图片、或 CJK 已经吃满用量时不校准；单个离谱的观测值会被夹在合理区间内。
 比例由 provider 持有并传进纯函数——估算不偷偷改全局状态。
 
 **思考内容每条消息只算一次**：宿主提供的思考部件与回放标记常常同时存在（装的是同一段文本），
@@ -593,15 +574,15 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 | 写入 / 删除 | 条件 | 理由 |
 | --- | --- | --- |
 | `thinking: { type: 'enabled' }` | 模型具备思考能力 | 一律显式写入，不依赖上游对「没给这个字段」的默认理解 |
-| `thinking: { type: 'disabled' }` | 思考模型且是辅助请求或有效选择为 `none` / `off` | 尊重关闭思考的选择；辅助请求只需短文本 |
+| `thinking: { type: 'disabled' }` | 思考模型且有效选择为 `none` / `off` | 尊重关闭思考的选择 |
 | 删除 `reasoning_effort` | 关掉思考时，或模型不具备思考能力时 | 强度只在开启思考时才成立 |
-| 写入 `reasoning_content: ' '`（占位） | 开启思考且历史里的助手消息缺这个字段 | 思考态下上游要求每条助手消息都带回思考内容，缺了整次请求被拒 |
+| `reasoning_content` | 思考模型的历史助手消息 | 消息转换层优先回放原文，其次宿主思考部件，缺失为空字符串 |
 
 **辅助请求**由 `adapter/requestKind.ts` 按首条消息的前缀识别，少数内部请求还可以靠「只带一个工具」认出来。
 识别用的是特征而不是协议：宿主改了措辞只会退化成 `background`（不触发任何改写），不会把请求改坏。
-改写结果带上请求种类写进 debug 日志。这个判据是**框架层**的，DeepSeek / Kimi(K2.x) / GLM 共用它。
+这个判据是**框架层**的，由 Kimi(K2.x) / GLM 使用；DeepSeek 自定义端点的辅助请求保留用户配置。
 
-适配器还声明了 `echoReasoningContent`（由 provider 用回放标记完成），并自己补上 provider 拿不到原文的缺口。
+适配器声明 `echoReasoningContent`，由请求准备和消息转换层统一恢复推理历史。
 
 ### 其余厂商（`adapter/kimi/`、`adapter/glm/`、`adapter/qwen/`、`adapter/openai/`）
 
@@ -610,8 +591,8 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 | 契约 | DeepSeek | GLM | Kimi | Qwen | OpenAI |
 | --- | --- | --- | --- | --- | --- |
 | 显式写开关 | `thinking` | `thinking` | K2.x `thinking` | `enable_thinking`（无档位型号） | 无 |
-| 辅助请求关闭思考 | 是 | 是（可关的型号） | 仅 K2.x | 否 | 不适用 |
-| 回填思考原文 | 是（补占位） | 是 | 是 | 是 | 否 |
+| 辅助请求关闭思考 | 否（自定义端点） | 是（可关的型号） | 仅 K2.x | 否 | 不适用 |
+| 回填思考原文 | 是（缺失为空串） | 是 | 是 | 是 | 否 |
 | 非思考模型清强度 | 是 | 是 | 是 | 是 | 是 |
 
 分叉只在**有官方依据**时发生：
@@ -668,12 +649,12 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
     `models/modelConfig.ts` 并进 `ModelConfig` → `src/adapter/capabilityAdapter.ts` 消费它。
 - **新增设置项**：`package.json` 的 `contributes.configuration.properties` → `src/config.ts` 的
   `readSettings()` 读取并收敛 → 在对应 `Settings` 接口加字段 → 影响模型配置改 `models/modelConfig.ts`，
-  影响请求体改 `provider/chatProvider.ts` 的 `buildRequest`，影响传输行为经 `runtime/session.ts` 传给
+  影响请求体改 `provider/request.ts` 的 `prepareChatRequest`，影响传输行为经 `runtime/session.ts` 传给
   `NewApiClient`。同时在 `classifySettingsChange` 里说明它属于哪一类变化：影响 client 构造参数的才需要
   重建连接，每次请求现读的不需要。改完同步 README 的设置表。
 - **新增模型级配置项（选择器里的控件）**：`models/modelConfig.ts` 把能力纳入 `ModelConfig` →
   `provider/modelConfiguration.ts` 在 `buildModelConfigurationSchema()` 里声明 `enum` →
-  在 `selectReasoningEffort`（或同类的解析函数）里校验取值 → 在 `buildRequest` 里写进请求体。
+  在 `selectReasoningEffort`（或同类的解析函数）里校验取值 → 在 `prepareChatRequest` 里写进请求体。
 - **新增配置组字段（站点 / 密钥类）**：声明在 `contributes.languageModelChatProviders[].configuration` 里
   ——`package.json` 加字段（密钥类 `secret: true`）→ `src/runtime/target.ts` 的 `createTarget()`
   读取校验，写入 `ProviderTarget` 与 `issues` → 若影响连接身份还要纳入 `key` 指纹 → 需要时经
@@ -696,11 +677,11 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 | 约束 / 取舍 | 代价 |
 | --- | --- |
 | 不声明 `enabledApiProposals` | 可折叠思考块只在宿主恰好提供该部件时可用，其余退化成 Markdown 引用块 |
-| 思考内容靠 `stateful_marker` 数据部件回环 | 宿主不回传时退化成占位空格；要求回填的上游把字段缺席当协议错误 |
-| 思考强度默认「不指定」，用户选过才发 | VS Code 会把 schema 的 `default` 带进每次请求，不能替用户改请求 |
+| 思考内容靠 `stateful_marker` 数据部件回环 | 宿主不回传时尝试思考部件，再退回空字符串 |
+| 思考强度取用户选择或数据表默认值 | 有默认档位时显式发送，关闭思考时按厂商协议去掉强度字段 |
 | 思考档位逐模型且不经翻译 | 出现新档位时显示上游原值，界面上没有本地化名称 |
 | 思考强度字段名固定 `reasoning_effort` | 别的字段名或嵌套形态需经适配器改写 |
-| 适配器对 DeepSeek 思考模型一律写入 `thinking` | 第三方托管的 DeepSeek 可能不认它，靠 400 自愈兜住 |
+| 适配器对 DeepSeek 思考模型一律写入 `thinking` | 上游不接受时直接返回错误 |
 | 适配器接口只保留 `supports` + `transformRequest` + `echoReasoningContent` | 响应侧差异不能在这里承接，只能走传输层（`ChatStreamSource` + `stream.ts`） |
 | 供应商差异进 `adapter/`，通用容错进基础层 | 共性容错（如思维链字段名）不进适配器，供应商无法按需覆盖 |
 | 远端字段提取只认通用的整字段名 | 叫别的名字（如 `model_info.context_length`）拿不到值 |
@@ -719,11 +700,8 @@ Copilot 的「上下文窗口」读响应上的 `usage`，这个值不会自己�
 | 关掉 `request.includeUsage` 后上下文窗口不会有 token 数 | 上游不再返回 `usage`，而我们不会编一个数字 |
 | 网关忽略 `stream: true` 时没有逐字输出 | 只能按单块响应处理 |
 | 流被掐断时保留已流出的内容，但同时报错 | 用户可能在一个本来还能用的回答上看到重试按钮 |
-| 自动重发时丢弃已收到的思考链 | 一次正常往来不该出现两段推理 |
-| 400 自愈只在白名单里挑字段，且硬性保护 `tools` 与协议骨架 | 站点真的不认骨架字段时只能失败，无法自动修 |
-| 400 自愈的结果按会话 + 模型记住 | 记忆可能对一个刚换过上游的站点过时（`targetKey` 变化即失效） |
-| 400 自愈有轮数上限，且每轮必须真的改动请求体 | 站点一直不满意时不再继续重试 |
-| 请求体总是带 `max_tokens` | 少数不认这个字段的渠道要靠 400 自愈兜住 |
+| 聊天只发送一次 | 网络错误、HTTP 拒绝与截断需由调用方显式重试 |
+| 请求体总是带输出上限 | 字段名由厂商适配器改写，不接受时直接报错 |
 | token 校准比例按模型分别维护 | 比例表需要淘汰策略（上限 32 个模型） |
 | 模型列表快照没变时不触发 `onDidChange` | 「元数据变了但 id 没变」依赖快照签名覆盖到那些字段 |
 | 会话按「签名」复用，连接变更时优雅退役 | 退役的 client 会多存活到在途请求结束 |

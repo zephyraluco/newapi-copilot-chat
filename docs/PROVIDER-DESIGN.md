@@ -4,7 +4,7 @@
 
 - [VS Code Language Model Chat Provider API](https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider)：以模型发现、响应、token 估算三个方法为入口，通过 `lm.registerLanguageModelChatProvider` 注册。Agent 工具调用交回 VS Code 执行。
 - [opencode-copilot-chat 架构](https://github.com/ltmoerdani/opencode-copilot-chat/blob/main/ARCHITECTURE-MAP.md)：借鉴薄 provider、共享流式引擎、模型元数据与协议策略分离的设计。
-- [deepseek-v4-for-copilot 请求准备](https://github.com/Vizards/deepseek-v4-for-copilot/blob/main/src/provider/request.ts)：借鉴厂商原生思考开关、辅助请求分类、思考历史回放等适配思路。
+- [deepseek-v4-for-copilot 请求准备](https://github.com/Vizards/deepseek-v4-for-copilot/blob/main/src/provider/request.ts)：整体请求链路参考其单次发送、请求头模板、原生思考开关与历史推理回放方式。
 - [DeepSeek 官方思考接口](https://api-docs.deepseek.com/guides/thinking_mode)：Chat Completions 的开关是 `thinking.type`；关闭时不发送 `reasoning_effort`；带工具的思考请求需要回传历史 `reasoning_content`。
 
 厂商规则以本项目中实际实现的适配器和测试为准。
@@ -16,13 +16,14 @@ VS Code / Copilot
   └─ NewApiChatProvider
        ├─ SessionRegistry → 配置组隔离、连接生命周期
        ├─ ModelCatalog → 网关模型列表、数据表、缓存与能力整合
-       ├─ messages / modelConfiguration → 宿主消息和模型选择
+       ├─ request → messages / modelConfiguration → 完整请求准备
+       ├─ headers → 每次调用解析自定义请求头模板
        ├─ AdapterRegistry → 厂商请求改写 → 元数据能力位改写
        └─ streamResponse → ChatStreamSource → HTTP / SSE
                             └─ 中立部件 → VS Code 响应部件
 ```
 
-通用层负责配置、凭据引用、模型列表、消息/工具转换、取消、重试、超时、用量、响应流和错误。模型 ID 保持网关原值；模型元数据只携带目标指纹，不携带密钥。
+通用层负责配置、凭据引用、模型列表、消息/工具转换、取消、超时、用量、响应流和错误。模型 ID 保持网关原值；模型元数据只携带目标指纹，不携带密钥。聊天只发送一次，不自动删字段重试；重试设置仅用于模型发现与站点状态。
 
 官方 API 是接入契约。模型级 `configurationSchema`、上下文窗口扩展元数据和思考/回放部件依赖额外宿主能力。已有思考渲染代码负责运行时探测与回退。
 
@@ -34,7 +35,7 @@ VS Code / Copilot
 
 思考配置分成两个概念：
 
-- 请求体中的 `reasoning_effort`：与 schema 默认相同则省略。
+- 请求体中的 `reasoning_effort`：使用有效选择或数据表默认值，有默认档位时显式发送。
 - 上下文中的有效选择：包含默认档位，使原生开关正确解释 `none` / `off`。
 
 请求里的显式强度字段优先于上下文兜底。在没有有效模型选择时，厂商原生字段继续透传。
@@ -43,7 +44,7 @@ VS Code / Copilot
 
 | 厂商 | 请求适配 | 思考历史 |
 | --- | --- | --- |
-| DeepSeek | `thinking.type` 一律显式写入；`none` / `off` 与辅助请求关闭；关闭或非思考模型时删除强度字段 | 通用回放，开启时补齐缺失历史字段 |
+| DeepSeek | `thinking.type` 一律显式写入；`none` / `off` 关闭；自定义端点辅助请求保留配置；关闭或非思考模型时删除强度字段 | 通用回放，缺失原文为空字符串 |
 | OpenAI 推理模型（o 系列与 GPT-5 之后） | `max_tokens` → `max_completion_tokens`；移除不支持的采样字段；非思考形态清掉强度字段 | 不要求额外回填 |
 | Qwen | 无强度档位的型号把选择转为 `enable_thinking`；有档位的型号保留 `reasoning_effort`；`auto` 不新增开关；非思考模型清掉强度字段 | 通用回放 |
 | GLM | `thinking.type` 一律显式写入；`none` / `off` 与辅助请求转为 `disabled`；强制思考的型号（`glm-5.3`、`glm-4.7`）关不了则写 `enabled`；非思考模型清掉强度字段 | 通用回放（Preserved Thinking 要求回传未修改的原文） |
@@ -57,7 +58,7 @@ K3 的顶层 `reasoning_effort` 正是强度字段本身，适配器因此原样
 
 - `echoReasoningContent`：DeepSeek / Kimi / GLM / Qwen 都要求把历史助手消息的思考原文原样带回，
   因此四家都打开它；OpenAI 不要求。
-- **辅助请求关闭思考**：判据放在框架层 `requestKind.ts`（与厂商无关），由 DeepSeek / Kimi(K2.x) / GLM 使用。
+- **辅助请求关闭思考**：判据放在框架层 `requestKind.ts`，由 Kimi(K2.x) / GLM 使用；DeepSeek 自定义端点沿用所选强度。
   **只对能真正关掉思考的厂商开启**——Kimi K3、Qwen 没有可靠的关闭手段，写一个不生效的「关闭」
   反而误导，因此它们只做强度清理，不假装关闭。
 

@@ -20,16 +20,6 @@ export const REASONING_TEXT_FIELDS: readonly string[] = ['reasoning_content', 'r
 export const REASONING_ECHO_FIELD = 'reasoning_content';
 
 /**
- * 上游要求回填思考内容、而我们手上没有原文时写进 `reasoning_content` 的占位。
- *
- * 要求回填的上游（DeepSeek 思考态）把字段缺席当成协议错误。拿不到原文的情形真实存在：
- * 宿主自己插入的工具调用、重启后不再带回思考内容的历史。
- *
- * 取值是一个空格：满足「字段在且非空」的校验，又不会把编造的思维链喂给模型。
- */
-export const REASONING_PLACEHOLDER = ' ';
-
-/**
  * 从任意对象（流式 chunk 的 `delta`、非流式响应的 `message`）里读出思维链文本。
  * 空字符串按「没有思维链」处理。
  */

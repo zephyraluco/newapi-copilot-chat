@@ -26,7 +26,7 @@ const { DEFAULT_THINKING_FIELD: THINKING_FIELD } = modules.consts;
 const { classifyRequest, shouldDisableThinking } = modules.requestKind;
 const { ModelCapabilityAdapter } = modules.capability;
 const { OpenAIAdapter } = modules.openaiReasoning;
-const { REASONING_ECHO_FIELD, REASONING_PLACEHOLDER } = modules.reasoning;
+const { REASONING_ECHO_FIELD } = modules.reasoning;
 
 /** 造一个够用的模型配置：只有 `id` 与 `meta.vendor` 会被适配器读。 */
 function model(id, vendor) {
@@ -226,15 +226,14 @@ test('DeepSeek：思考态主对话显式开启思考，保留思考强度', () 
 	assert.equal(request.reasoning_effort, 'high');
 });
 
-test('DeepSeek：辅助请求强制关闭思考，并去掉思考强度', () => {
+test('DeepSeek：自定义端点的辅助请求保留所选思考强度', () => {
 	const request = deepseekTransform({
 		messages: [{ role: 'user', content: 'You are an expert in crafting pithy titles for chat sessions' }],
 		reasoning_effort: 'high',
 	});
 
-	assert.deepEqual(request[THINKING_FIELD], { type: 'disabled' });
-	// 强度只与「开启思考」共存，留着它只会撞上不认该字段的实现
-	assert.equal('reasoning_effort' in request, false);
+	assert.deepEqual(request[THINKING_FIELD], { type: 'enabled' });
+	assert.equal(request.reasoning_effort, 'high');
 });
 
 test('DeepSeek：模型不具备思考能力时不写 thinking，只清掉强度字段', () => {
@@ -277,8 +276,7 @@ test('DeepSeek：只改自己的字段，不动消息与工具', () => {
 
 /* --- 思考内容的回填与补齐 --------------------------------------------------- */
 
-test('DeepSeek：思考态下给缺思考内容的历史助手消息补占位', () => {
-	// 宿主插入的助手消息本来就没有思考可回填，而思考态下缺这个字段上游会整次拒掉
+test('DeepSeek：参数适配器不再编造历史思考占位', () => {
 	const logger = createLogger();
 	const request = deepseekTransform({
 		messages: [
@@ -293,16 +291,15 @@ test('DeepSeek：思考态下给缺思考内容的历史助手消息补占位', 
 		],
 	}, { logger });
 
-	assert.equal(request.messages[1][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
-	assert.equal(request.messages[3][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
-	// 占位只补字段，正文与工具调用照旧
+	assert.equal(request.messages[1][REASONING_ECHO_FIELD], undefined);
+	assert.equal(request.messages[3][REASONING_ECHO_FIELD], undefined);
 	assert.equal(request.messages[1].content, null);
 	assert.equal(request.messages[1].tool_calls.length, 1);
 	assert.equal(request.messages[3].content, '答案');
-	assert.match(logger.messages('debug').join(' '), /2 条/);
+	assert.doesNotMatch(logger.messages('debug').join(' '), /占位/);
 });
 
-test('DeepSeek：已经带回的思考内容不动，只补缺的', () => {
+test('DeepSeek：已经带回的思考内容保持不变', () => {
 	const request = deepseekTransform({
 		messages: [
 			{ role: 'user', content: MAIN_AGENT_PROMPT },
@@ -313,8 +310,7 @@ test('DeepSeek：已经带回的思考内容不动，只补缺的', () => {
 	assert.equal(request.messages[1][REASONING_ECHO_FIELD], '回放里的思考');
 });
 
-test('DeepSeek：空字符串的思考内容同样是缺，补占位', () => {
-	// 空串过不了上游的「非空」校验，与字段缺席同义
+test('DeepSeek：空字符串的思考内容保持为空字符串', () => {
 	const request = deepseekTransform({
 		messages: [
 			{ role: 'user', content: MAIN_AGENT_PROMPT },
@@ -322,7 +318,7 @@ test('DeepSeek：空字符串的思考内容同样是缺，补占位', () => {
 		],
 	});
 
-	assert.equal(request.messages[1][REASONING_ECHO_FIELD], REASONING_PLACEHOLDER);
+	assert.equal(request.messages[1][REASONING_ECHO_FIELD], '');
 });
 
 test('DeepSeek：关掉思考的辅助请求不补占位', () => {
@@ -615,10 +611,10 @@ test('厂商适配器：思考模型一律显式写入开关，不由上游的�
 	assert.equal(qwen.enable_thinking, true);
 });
 
-test('厂商适配器：辅助请求关闭思考（能关掉的厂商）', async () => {
+test('厂商适配器：Kimi 与 GLM 保留各自的辅助请求协议策略', async () => {
 	const registry = createDefaultAdapterRegistry();
 	const helper = [{ role: 'user', content: 'You are an expert in crafting pithy titles for chat sessions' }];
-	for (const id of ['deepseek-v4-pro', 'kimi-k2.6', 'glm-5']) {
+	for (const id of ['kimi-k2.6', 'glm-5']) {
 		const result = await registry.transformRequest(
 			{ model: id, messages: helper, reasoning_effort: 'high' },
 			{ model: { ...model(id), reasoning: true }, logger: createLogger() },

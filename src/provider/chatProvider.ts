@@ -5,31 +5,28 @@
  * 本类按顺序串起各模块：网络交互在 `client`，模型信息在 `models`，格式转换在
  * `messages.ts` / `stream.ts`，差异处理在 `adapter`，会话与连接目标在 `target.ts` / `session.ts`。
  * 流的消费与收尾在 `streamFlow.ts`，工具组预激活在 `preflight.ts`；只服务本文件的
- * 模型信息映射、请求体组装与错误转换写在本文件末尾。
+ * 请求体组装在 `request.ts`，模型信息映射与错误转换写在本文件末尾。
  *
  * VS Code 为每个配置组分别调用本 provider：发现模型时从 `options` 解析连接目标，
  * 处理请求时靠 `model` 上带的指纹找回同一会话。
  */
 
 import * as vscode from 'vscode';
-import type { AdapterContext } from '../adapter/adapter';
 import type { AdapterRegistry } from '../adapter/registry';
 import { fromCancellationToken } from '../cancellation';
 import { HttpError, isAbortError } from '../client/http';
 import { describeError } from '../client/newApiClient';
-import { DEFAULT_REASONING_EFFORT_FIELD, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION } from '../consts';
+import { MANAGE_MODELS_COMMAND, TOKEN_ESTIMATION } from '../consts';
 import type { NewApiSettings } from '../config';
 import type { Logger } from '../logger';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
-import { convertMessages, convertToolChoice, convertTools, measureRequestText } from './messages';
-import {
-	buildModelConfigurationSchema,
-	selectReasoningEffort,
-} from './modelConfiguration';
+import type { ChatCompletionRequest, ChatUsage } from '../types';
+import { measureRequestText } from './messages';
+import { prepareChatRequest } from './request';
+import { resolveRequestHeaders } from './headers';
+import { buildModelConfigurationSchema } from './modelConfiguration';
 import type { ModelConfigurationSchema } from './modelConfiguration';
 import { runToolGroupPreflight } from './preflight';
-import { RepairMemory } from './requestRepair';
 import type { ProviderSession, SessionRegistry } from '../runtime/session';
 import { reportReplayMarker, streamResponse } from './streamFlow';
 import type { StreamSummary } from './stream';
@@ -79,6 +76,7 @@ export interface NewApiModelInformation extends vscode.LanguageModelChatInformat
 
 /** provider 的依赖。 */
 export interface ChatProviderDeps {
+	readonly storageUri?: vscode.Uri;
 	readonly logger: Logger;
 	/** 按连接目标分配会话（client + 模型目录） */
 	readonly sessions: SessionRegistry;
@@ -102,8 +100,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 	 * （见 `tokenizer.calibrateCharsPerToken`）；不同模型的分词器差别大，不能共用一个比例。
 	 */
 	private readonly charsPerToken = new Map<string, number>();
-	/** 自愈结果记忆：站点不认某个字段是稳定事实，不必每次请求都先失败一次。 */
-	private readonly repairMemory = new RepairMemory();
 
 	/** 模型集合变化时通知 VS Code 重新拉取（不触发时选择器不会刷新）。 */
 	readonly onDidChangeLanguageModelChatInformation = this.infoChanged.event;
@@ -220,69 +216,32 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		}
 
 		const abort = fromCancellationToken(token, `chat:${config.id}`);
-		// 一个模型可能同时命中多个适配器（协议差异 + 数据能力位），因此取全部并依次串接
-		const adapters = this.deps.adapters.resolveAll(config);
-		// 任一适配器要求回填思考内容就得回填（DeepSeek 在思考态的工具调用历史里要求该字段）
-		const echoReasoningContent = adapters.some(adapter => adapter.echoReasoningContent === true);
-		// 模型选择器里的「思考强度」（未选择时为空，此时不往请求体里写任何额外字段）
-		const effort = selectReasoningEffort(options, config);
-		if (effort.ignored !== undefined) {
-			logger.warn(`${config.id}：${effort.ignored}`);
-		}
-		const adapterContext: AdapterContext = {
-			model: config,
-			logger,
-			reasoningEffort: effort.effort ?? config.defaultReasoningEffort,
-		};
-
 		try {
-			const converted = convertMessages(flowMessages, logger, { echoReasoningContent });
-			for (const warning of converted.warnings) {
-				logger.warn(warning);
-			}
-			if (converted.messages.length === 0) {
-				throw new Error('本次请求没有任何可发送的内容');
-			}
-
-			const tools = convertTools(options.tools, logger);
-			const request = buildRequest({
+			const prepared = await prepareChatRequest({
 				config,
 				settings,
-				messages: converted.messages,
-				tools,
-				toolMode: options.toolMode,
-				reasoningEffort: effort.effort,
+				messages: flowMessages,
+				options,
+				adapters: this.deps.adapters,
+				logger,
 			});
-
-			// debug 级：确认本轮用没用上模型配置（日志里不写密钥）
-			const effortNote = effort.effort === undefined ? '思考强度未指定' : `思考强度 ${effort.effort}`;
-			// 只列会改写的适配器：兜底适配器恒为命中，写进日志没有信息量
-			const applied = adapters.filter(item => item.transformRequest !== undefined);
-			logger.debug(
-				`→ ${config.id}：${converted.messages.length} 条消息，` +
-				`${tools?.length ?? 0} 个工具，适配器 ${applied.map(item => item.id).join('+') || '无'}，${effortNote}，` +
-				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
-			);
-
-			const transformed = await this.deps.adapters.transformRequest(request, adapterContext, adapters);
 
 			const summary = await streamResponse({
 				source: this.resolveSession(model).client,
-				request: transformed,
+				request: prepared.request,
 				modelId: config.id,
 				includeReasoning: settings.request.includeReasoning,
-				sendsStreamOptions: settings.request.includeUsage,
+				headers: resolveRequestHeaders(settings.request.headers ?? {}, options, this.deps.storageUri),
 				progress,
 				signal: abort.signal,
 				cancelled: () => token.isCancellationRequested,
 				logger,
-				targetKey: model.targetKey,
-				repairMemory: this.repairMemory,
-				optionalFields: Object.keys(settings.request.extraBody),
 			});
 			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
-			reportReplayMarker(progress, summary, echoReasoningContent, config.id, logger);
-			this.calibrateCharsPerTokenFor(config.id, transformed, summary.usage?.prompt_tokens);
+			reportReplayMarker(progress, summary, prepared.echoReasoningContent, config.id, logger);
+			if (!prepared.hasImages) {
+				this.calibrateCharsPerTokenFor(config.id, prepared.request, summary.usage?.prompt_tokens);
+			}
 		} catch (error) {
 			// 取消是正常流程：用户点「停止」时 VS Code 会取消 token
 			if (isAbortError(error) || token.isCancellationRequested) {
@@ -362,7 +321,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 }
 
 /* -------------------------------------------------------------------------- */
-/* 下面的三件事只服务本文件                                                    */
+/* 模型信息与错误映射                                                          */
 /* -------------------------------------------------------------------------- */
 
 /** 把内部配置映射成 VS Code 需要的模型信息。 */
@@ -390,63 +349,6 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 		targetKey: target.key,
 		targetLabel: target.label,
 	};
-}
-
-/**
- * 组装请求体。
- *
- * 写入顺序是语义的一部分（后面的可以盖过前面的）：
- * ```
- *   model + messages
- *   → temperature / top_p / tools（来自设置）
- *   → extraBody 里的额外字段
- *   → 思考强度（最具体，最后写）
- * ```
- */
-function buildRequest(input: {
-	config: ModelConfig;
-	settings: NewApiSettings;
-	messages: ChatCompletionRequest['messages'];
-	tools: ChatToolDefinition[] | undefined;
-	toolMode: vscode.LanguageModelChatToolMode;
-	reasoningEffort: string | undefined;
-}): ChatCompletionRequest {
-	const { config, settings, messages, tools, toolMode, reasoningEffort } = input;
-	const request: ChatCompletionRequest = {
-		model: config.id,
-		messages,
-		// 输出上限必须显式发给上游，否则由渠道默认值决定；字段名由适配器按上游要求改写。
-		max_tokens: config.maxOutputTokens,
-	};
-
-	const { temperature, topP } = settings.request;
-	if (temperature !== undefined) {
-		request.temperature = temperature;
-	}
-	if (topP !== undefined) {
-		request.top_p = topP;
-	}
-	if (tools !== undefined) {
-		request.tools = tools;
-		const choice = convertToolChoice(toolMode, true);
-		if (choice !== undefined) {
-			request.tool_choice = choice;
-		}
-	}
-
-	// 额外字段；结构化字段（`messages`、`tools` 等）被排除在外
-	for (const [key, value] of Object.entries(settings.request.extraBody)) {
-		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {
-			request[key] = value;
-		}
-	}
-
-	// 比静态设置更具体，因此写在额外字段之后以便覆盖它们
-	if (reasoningEffort !== undefined) {
-		request[DEFAULT_REASONING_EFFORT_FIELD] = reasoningEffort;
-	}
-
-	return request;
 }
 
 /**

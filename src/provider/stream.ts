@@ -9,8 +9,7 @@
  * 由上报层（`streamFlow.ts`）负责。
  */
 
-import { SseTruncatedError } from '../client/sse';
-import { safeJsonParse } from '../json';
+import { isRecord, safeJsonParse } from '../json';
 import type { Logger } from '../logger';
 import { readReasoningText } from '../reasoning';
 import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../types';
@@ -137,7 +136,7 @@ export class StreamTranslator {
 
 	/** 处理一个 chunk。 */
 	handle(chunk: ChatCompletionChunk): void {
-		if (chunk.usage !== undefined) {
+		if (isRecord(chunk.usage)) {
 			// 部分网关每个 chunk 都带 usage，取最后一个即可
 			this.usage = chunk.usage;
 		}
@@ -394,43 +393,4 @@ export function parseToolArguments(raw: string, logger: Logger, toolName: string
 		return {};
 	}
 	return parsed;
-}
-
-/**
- * 一次流式请求失败后的处置。
- *
- * - `retry`：重发整次请求，前提是还没上报过任何部件（用户什么都还没看到）。
- * - `fail-truncated`：内容已流出一部分但流没正常收尾；调用方先冲刷已有内容再抛错。
- * - `fail`：抛给 VS Code。
- */
-export type StreamFailureAction = 'retry' | 'fail-truncated' | 'fail';
-
-/**
- * 决定一次流式失败该怎么处置。
- *
- * 只有「流在正常收尾前结束」才值得重发，且先决条件是 `emittedParts === 0`：
- * 用户看到过内容后再补一段完整回答会把两段回答拼在一起。
- *
- * 内容已流出一部分时返回 `fail-truncated` 而不是成功，否则 Agent 循环会把半截回答
- * 当作本轮已完成。
- */
-export function decideStreamFailure(input: {
-	error: unknown;
-	/** 已经上报给 VS Code 的部件数 */
-	emittedParts: number;
-	/** 这是第几次尝试（从 0 开始） */
-	attempt: number;
-	maxRetries: number;
-	cancelled: boolean;
-}): StreamFailureAction {
-	if (input.cancelled) {
-		return 'fail';
-	}
-	if (!(input.error instanceof SseTruncatedError)) {
-		return 'fail';
-	}
-	if (input.emittedParts > 0) {
-		return 'fail-truncated';
-	}
-	return input.attempt < input.maxRetries ? 'retry' : 'fail';
 }

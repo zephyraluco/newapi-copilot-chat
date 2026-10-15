@@ -85,15 +85,30 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 
 ### 请求
 
+聊天链路参考 `deepseek-v4-for-copilot`：请求准备完成后一次发送到 `/v1/chat/completions`，通过 SSE 回传正文、思考和工具调用。DeepSeek 的自定义端点不会因标题等辅助请求而强制关闭思考；历史推理优先从回放标记恢复，缺失时发送空字符串。
+
+自定义请求头示例：
+
+```json
+{
+  "newapi-copilot-chat.request.headers": {
+    "X-Conversation-Id": "${conversationId}"
+  }
+}
+```
+
+`${conversationId}` 优先使用 Copilot 会话 ID，其次使用工作区 ID、请求关联 ID，最后生成随机 ID。同一次请求中所有模板共享同一个 ID。原生图片请求不会参与文本 token 估算比例的校准。
+
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `request.timeoutMs` | `60000` | 非流式是整体超时；流式是**等响应头**的上限 |
 | `request.streamIdleTimeoutMs` | `60000` | 流式响应**两个数据块之间**的静默超时；长思考的模型可以放宽 |
 | `request.includeUsage` | `true` | 是否下发 `stream_options`；少数站点不认这个字段并返回 400，关掉它即可（关掉后上游不返回用量，「会话信息」里也就没有 token 数） |
-| `request.maxRetries` | `2` | 失败重试次数（不含首次）；只对网络错误、超时、429、5xx 生效，服务端要求等超过 30 秒的限流直接报错 |
+| `request.maxRetries` | `2` | 仅用于模型发现与站点状态请求。聊天只发送一次，不自动删参数重试，也不在断流后重发。 |
 | `request.temperature` | `null` | 留空则不发送该字段 |
 | `request.topP` | `null` | 留空则不发送该字段 |
-| `request.includeReasoning` | `false` | 是否把思维链回显给用户（引用块或思考块）；不影响向 DeepSeek 回填 `reasoning_content` |
+| `request.includeReasoning` | `true` | 默认通过原生思考部件展示推理，旧宿主退回引用块；与历史推理回填独立。 |
+| `request.headers` | `{}` | 聊天请求的自定义 HTTP 请求头，可覆盖默认头，支持 `${conversationId}` 模板。 |
 | `request.stabilizeToolList` | `false` | 发请求前先把 `activate_*` 工具组激活完，让每轮工具列表一致（利于上游前缀缓存），代价是每轮多带工具定义 |
 | `request.extraBody` | `{}` | 透传给所有模型的额外请求体字段 |
 

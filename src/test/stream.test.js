@@ -3,7 +3,7 @@
 /**
  * provider/stream.ts：chunk → 中立响应部件的翻译。
  *
- * 用例集中在分片归并、引用块排版与截断判定。
+ * 用例集中在分片归并、思考展示与最终用量。
  */
 
 const { test } = require('node:test');
@@ -12,8 +12,6 @@ const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
 	stream: './src/provider/stream',
-	// 必须与 stream.ts 在同一次加载里：它靠 `instanceof SseTruncatedError` 判截断
-	sse: './src/client/sse',
 });
 
 const {
@@ -21,9 +19,7 @@ const {
 	extractStreamError,
 	tryParseToolArguments,
 	parseToolArguments,
-	decideStreamFailure,
 } = modules.stream;
-const { SseTruncatedError, SseIdleTimeoutError } = modules.sse;
 
 /** 造一个翻译器，并收集它发出的中立部件。 */
 function makeTranslator(options = {}) {
@@ -403,25 +399,12 @@ test('parseToolArguments：解析失败时返回空对象并记错误', () => {
 	assert.equal(logger.messages('error').length, 1);
 });
 
-/* -------------------------------------------------------------------------- */
-/* 失败处置                                                                    */
-/* -------------------------------------------------------------------------- */
-
-test('decideStreamFailure：只有「还没给用户看过内容」的截断才值得重发', () => {
-	const truncated = () => new SseTruncatedError(3);
-
-	// 什么都没发出：重发
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'retry');
-	// 已经流出一部分：冲刷已有内容后报错
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 1, attempt: 0, maxRetries: 2, cancelled: false }), 'fail-truncated');
-	// 重试次数用尽
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 2, maxRetries: 2, cancelled: false }), 'fail');
-});
-
-test('decideStreamFailure：取消与非截断错误一律直接失败', () => {
-	const truncated = new SseTruncatedError(3);
-
-	assert.equal(decideStreamFailure({ error: truncated, emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: true }), 'fail');
-	assert.equal(decideStreamFailure({ error: new SseIdleTimeoutError(1_000), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'fail');
-	assert.equal(decideStreamFailure({ error: new Error('HTTP 400'), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'fail');
+test('usage:null 不是有效用量，不覆盖最后一次有效快照', () => {
+	const { translator } = makeTranslator();
+	translator.handle({ choices: [], usage: { prompt_tokens: 10 } });
+	translator.handle({ choices: [], usage: null });
+	assert.equal(translator.flush().usage.prompt_tokens, 10);
+	const empty = makeTranslator();
+	empty.translator.handle({ choices: [], usage: null });
+	assert.equal(empty.translator.flush().usage, undefined);
 });

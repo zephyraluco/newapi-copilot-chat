@@ -7,7 +7,7 @@
  * 三条硬性约束（依据 VS Code 实现）：
  * - 属性必须带 `enum` 才会被渲染；`group` 用 `navigation`（模型卡片主控件区）。
  * - 属性的 `default` 会被合并进模型配置，每次请求都带上它。
- * - 因此发请求时值等于默认档位就不发（见 `selectReasoningEffort`）。
+ * - `selectReasoningEffort` 解析改变后的选择，请求准备层将其与模型默认档位合并。
  *
  * 档位取自数据表的 `supportsReasoningEffort`，没有兜底列表：没给出档位时不声明控件。
  * 选项文字就是上游原值，不翻译不缩写。请求体字段名是 `reasoning_effort`；
@@ -106,7 +106,7 @@ export function readModelConfiguration(options: unknown): Record<string, unknown
 
 /** 一次思考强度选择的结果。 */
 export interface ReasoningEffortSelection {
-	/** 要写进请求体的强度；`undefined` 表示本次不发送该字段 */
+	/** 用户改变后的强度；`undefined` 时请求准备层使用模型默认档位 */
 	readonly effort?: string;
 	/** 被忽略的取值及原因，供调用方写日志 */
 	readonly ignored?: string;
@@ -115,8 +115,8 @@ export interface ReasoningEffortSelection {
 /**
  * 解析本次请求该用的思考强度。
  *
- * 以下情况都返回「不发送」：模型不支持思考、数据表没给出可选档位、用户没选过，
- * 以及选中的就是该模型的默认档位——那个值本来就是站点自己在用的，显式发出去没有意义。
+ * 模型不支持思考、没有可选档位、用户未修改或选中默认档位时返回空选择。
+ * 请求准备层负责合并数据表默认值，按协议显式发送有效档位。
  */
 export function selectReasoningEffort(options: unknown, config: ModelConfig): ReasoningEffortSelection {
 	if (!config.reasoning || config.reasoningEfforts.length === 0) {

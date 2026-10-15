@@ -178,6 +178,8 @@ function parseRetryAfter(header: string | null): number | undefined {
 
 /** 一次 HTTP 调用的参数。 */
 export interface RequestOptions {
+	/** Per-request override: chat POSTs must never be silently replayed. */
+	maxRetries?: number;
 	/** 完整 URL（由调用方用 {@link joinUrl} 拼好） */
 	url: string;
 	method?: 'GET' | 'POST';
@@ -333,7 +335,7 @@ export class HttpClient {
 			throw new TransportError('disposed', DISPOSED_MESSAGE);
 		}
 
-		const maxRetries = Math.max(0, this.options.maxRetries);
+		const maxRetries = Math.max(0, options.maxRetries ?? this.options.maxRetries);
 		const timeoutMs = this.options.timeoutMs;
 		let lastError: unknown;
 
@@ -409,7 +411,13 @@ export class HttpClient {
 				...(options.headers ?? {}),
 			},
 			body: options.body,
-			signal,
+			// Header timeout guards are cleaned up after fetch resolves. Keep caller and
+			// lifetime cancellation connected while the response body is being read.
+			signal: AbortSignal.any([
+				signal,
+				this.rootController.signal,
+				...(options.signal === undefined ? [] : [options.signal]),
+			]),
 		});
 	}
 }
