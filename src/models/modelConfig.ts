@@ -6,7 +6,7 @@
  *   ② 随包的模型数据表（按模型 ID 查表）
  *   ③ 设置里的兜底默认值
  *            ↓
- *      ModelConfig（含 tooltip 与每个字段的来源标注）
+ *      ModelConfig（纯模型事实与每个字段的来源标注）
  * ```
  *
  * 优先级：网关返回值 > 数据表 > 默认值。两者显著不一致时以网关为准，
@@ -18,16 +18,15 @@
  * 「数值被谁覆盖、被怎么校正」的出口是日志（debug 级）与 `meta.provenance`，不放进模型信息。
  */
 
-import { formatTokens } from '../format';
-import { asNonEmptyString } from '../json';
-import type { Logger } from '../logger';
-import type { ModelSettings } from '../config';
-import type { NewApiModel } from '../types';
+import { formatTokens } from '../utils/format';
+import { asNonEmptyString } from '../utils/json';
+import type { Logger } from '../utils/log';
+import type { ModelSettings } from '../utils/settings';
+import type { NewApiModel } from '../utils/types';
 import { matchModelDataset } from './dataset';
 import type { ModelSamplingParams } from './dataset';
 import { isSignificantlyDifferent, reconcileLimits } from './limits';
 import { extractRemoteHints } from './remoteHints';
-import { buildModelDetail, buildModelTooltip } from './tooltip';
 
 /** 单个字段的取值来源。 */
 export type ModelConfigSource = 'dataset' | 'remote' | 'default';
@@ -48,7 +47,7 @@ export interface ModelConfigMeta {
  * 一个模型的完整配置。
  *
  * 不依赖 `vscode` 类型：本模块是纯数据转换，便于单测；
- * 到 `LanguageModelChatInformation` 的映射放在 provider 层。
+ * 到 LanguageModelChatInformation 的映射与 tooltip 生成放在 host 层。
  */
 export interface ModelConfig {
 	/** 模型 ID，必须原样回传给 `/v1/chat/completions` */
@@ -59,14 +58,10 @@ export interface ModelConfig {
 	 * ID 不会丢：悬浮提示的第一行带着它。
 	 */
 	readonly name: string;
-	/** 模型选择器里的副标题 */
-	readonly detail: string;
 	/** family：影响 VS Code 的模型归类 */
 	readonly family: string;
 	/** 版本字符串 */
 	readonly version: string;
-	/** 悬浮窗 Markdown */
-	readonly tooltip: string;
 	/** 校正后的上下文窗口 */
 	readonly contextWindow: number;
 	/** 同步给 VS Code 的输入上限 */
@@ -275,10 +270,8 @@ export function resolveModelConfig(model: NewApiModel, options: BuildModelConfig
 	return {
 		id: model.id,
 		name: displayName ?? model.id,
-		detail: buildModelDetail({ vendor, ownedBy: meta.ownedBy, contextWindow: facts.contextWindow, toolCalling }),
 		family,
 		version: remote.version ?? '1',
-		tooltip: buildModelTooltip(facts),
 		contextWindow: facts.contextWindow,
 		maxInputTokens: facts.maxInputTokens,
 		maxOutputTokens: facts.maxOutputTokens,

@@ -2,47 +2,43 @@
  * 聊天模型供应商：实现 VS Code 的 `LanguageModelChatProvider`（三个方法：发现模型、
  * 处理请求并流式回传、估算 token）。
  *
- * 本类按顺序串起各模块：网络交互在 `client`，模型信息在 `models`，格式转换在
- * `messages.ts` / `stream.ts`，差异处理在 `adapter`，会话与连接目标在 `target.ts` / `session.ts`。
- * 流的消费与收尾在 `streamFlow.ts`，工具组预激活在 `preflight.ts`；只服务本文件的
- * 模型信息映射、请求体组装与错误转换写在本文件末尾。
+ * 本类负责宿主侧编排：会话与缓存归 application，模型事实归 models，协议准备与翻译归 protocol，
+ * 网络归 transport；本目录只处理宿主消息、配置和响应部件。
+ * 流的消费与收尾在 `streamFlow.ts`；只服务本文件的
+ * 请求体组装在 `request.ts`，模型信息映射与错误转换写在本文件末尾。
  *
  * VS Code 为每个配置组分别调用本 provider：发现模型时从 `options` 解析连接目标，
  * 处理请求时靠 `model` 上带的指纹找回同一会话。
  */
 
 import * as vscode from 'vscode';
-import type { AdapterContext } from '../adapter/adapter';
-import type { AdapterRegistry } from '../adapter/registry';
-import { fromCancellationToken } from '../cancellation';
-import { HttpError, isAbortError } from '../client/http';
-import { describeError } from '../client/newApiClient';
-import { DEFAULT_REASONING_EFFORT_FIELD, MANAGE_MODELS_COMMAND, PROTECTED_REQUEST_KEYS, TOKEN_ESTIMATION } from '../consts';
-import type { NewApiSettings } from '../config';
-import type { Logger } from '../logger';
+import type { AdapterRegistry } from '../protocol/registry';
+import { fromCancellationToken } from './cancellation';
+import { HttpError, isAbortError } from '../transport/http';
+import { describeError } from '../transport/newApiClient';
+import { MANAGE_MODELS_COMMAND, TOKEN_ESTIMATION } from '../utils/consts';
+import type { NewApiSettings } from '../utils/settings';
+import type { Logger } from '../utils/log';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionRequest, ChatToolDefinition, ChatUsage } from '../types';
-import { convertMessages, convertToolChoice, convertTools, measureRequestText } from './messages';
-import {
-	buildModelConfigurationSchema,
-	selectReasoningEffort,
-} from './modelConfiguration';
-import type { ModelConfigurationSchema } from './modelConfiguration';
-import { runToolGroupPreflight } from './preflight';
-import { RepairMemory } from './requestRepair';
-import type { ProviderSession, SessionRegistry } from '../runtime/session';
+import type { ChatCompletionRequest, ChatUsage } from '../utils/types';
+import { measureRequestText } from '../protocol/messages';
+import { prepareChatRequest } from './request';
+import { resolveRequestHeaders } from './headers';
+import { buildModelConfigurationSchema } from '../protocol/modelConfiguration';
+import type { ModelConfigurationSchema } from '../protocol/modelConfiguration';
+import type { ProviderSession, SessionRegistry } from '../application/session';
 import { reportReplayMarker, streamResponse } from './streamFlow';
-import type { StreamSummary } from './stream';
 import {
 	createTarget,
 	describeTarget,
 	isTargetUsable,
 	readOptionsConfiguration,
 	readOptionsGroup,
-} from '../runtime/target';
-import type { ProviderTarget } from '../runtime/target';
-import { calibrateCharsPerToken, estimateTokens } from './tokenizer';
-import { filterPreflightMessages } from './toolFlow';
+} from '../application/target';
+import type { ProviderTarget } from '../application/target';
+import { estimateTokens } from './tokenizer';
+import { calibrateCharsPerToken } from '../protocol/tokenizer';
+import { buildModelDetail, buildModelTooltip } from './tooltip';
 
 /**
  * 提供给 VS Code 的模型信息。
@@ -79,14 +75,15 @@ export interface NewApiModelInformation extends vscode.LanguageModelChatInformat
 
 /** provider 的依赖。 */
 export interface ChatProviderDeps {
+	readonly storageUri?: vscode.Uri;
 	readonly logger: Logger;
 	/** 按连接目标分配会话（client + 模型目录） */
 	readonly sessions: SessionRegistry;
 	readonly adapters: AdapterRegistry;
 	/** 取当前设置 */
 	getSettings(): NewApiSettings;
-	/** 上报用量，供状态栏悬浮提示统计 */
-	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, summary: StreamSummary): void;
+	/** Record successful responses for the status-bar totals. */
+	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, toolCalls: number): void;
 }
 
 /** 最多为多少个模型保留校准后的估算比例（每模型一个，且不能无限增长）。 */
@@ -102,8 +99,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 	 * （见 `tokenizer.calibrateCharsPerToken`）；不同模型的分词器差别大，不能共用一个比例。
 	 */
 	private readonly charsPerToken = new Map<string, number>();
-	/** 自愈结果记忆：站点不认某个字段是稳定事实，不必每次请求都先失败一次。 */
-	private readonly repairMemory = new RepairMemory();
 
 	/** 模型集合变化时通知 VS Code 重新拉取（不触发时选择器不会刷新）。 */
 	readonly onDidChangeLanguageModelChatInformation = this.infoChanged.event;
@@ -142,6 +137,8 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			return [];
 		}
 
+		// Keep invalid configurations visible to the passive status view as well.
+		const session = this.deps.sessions.resolve(target);
 		if (!isTargetUsable(target)) {
 			logger.warn(`配置不完整，暂不提供模型：${target.issues.join('；')}`);
 			if (!options.silent) {
@@ -150,8 +147,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			return [];
 		}
 
-		// 会话按目标缓存：同一目标的配置未变就直接复用，变了则重建
-		const session = this.deps.sessions.resolve(target);
 		try {
 			// 不把 CancellationToken 传给模型列表拉取：VS Code 会在 UI 更新后立即取消该 token，
 			// 而模型列表是共享且带缓存的资源，一次取消会连带取消其他调用方的请求。
@@ -163,7 +158,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			logger.debug(`向 VS Code 提供 ${snapshot.models.length} 个模型（${describeTarget(target)}）`);
 			return snapshot.models.map(config => toModelInformation(config, target));
 		} catch (error) {
-			// 不向外抛异常：加载失败表现为「没有模型」，原因由状态栏告诉用户。
+			// 加载失败返回空列表，详情记入日志，状态栏通过黄色提示发现错误。
 			logger.error('获取模型列表失败', error);
 			return [];
 		}
@@ -211,78 +206,33 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		const settings = this.deps.getSettings();
 		const config = model.config;
 
-		// 预激活控制流（伪调用与它们的结果）不能发给上游，无论设置是否开启都要过滤掉
-		const flowMessages = filterPreflightMessages(messages);
-		if (settings.request.stabilizeToolList
-			&& runToolGroupPreflight({ messages, tools: options.tools, progress, logger })) {
-			// 伪调用已上报：宿主执行后会带着展开完的工具列表重新发起
-			return;
-		}
-
-		const abort = fromCancellationToken(token, `chat:${config.id}`);
-		// 一个模型可能同时命中多个适配器（协议差异 + 数据能力位），因此取全部并依次串接
-		const adapters = this.deps.adapters.resolveAll(config);
-		// 任一适配器要求回填思考内容就得回填（DeepSeek 在思考态的工具调用历史里要求该字段）
-		const echoReasoningContent = adapters.some(adapter => adapter.echoReasoningContent === true);
-		// 模型选择器里的「思考强度」（未选择时为空，此时不往请求体里写任何额外字段）
-		const effort = selectReasoningEffort(options, config);
-		if (effort.ignored !== undefined) {
-			logger.warn(`${config.id}：${effort.ignored}`);
-		}
-		const adapterContext: AdapterContext = {
-			model: config,
-			logger,
-			reasoningEffort: effort.effort ?? config.defaultReasoningEffort,
-		};
-
+		const abort = fromCancellationToken(token);
 		try {
-			const converted = convertMessages(flowMessages, logger, { echoReasoningContent });
-			for (const warning of converted.warnings) {
-				logger.warn(warning);
-			}
-			if (converted.messages.length === 0) {
-				throw new Error('本次请求没有任何可发送的内容');
-			}
-
-			const tools = convertTools(options.tools, logger);
-			const request = buildRequest({
+			const prepared = prepareChatRequest({
 				config,
 				settings,
-				messages: converted.messages,
-				tools,
-				toolMode: options.toolMode,
-				reasoningEffort: effort.effort,
+				messages,
+				options,
+				adapters: this.deps.adapters,
+				logger,
 			});
-
-			// debug 级：确认本轮用没用上模型配置（日志里不写密钥）
-			const effortNote = effort.effort === undefined ? '思考强度未指定' : `思考强度 ${effort.effort}`;
-			// 只列会改写的适配器：兜底适配器恒为命中，写进日志没有信息量
-			const applied = adapters.filter(item => item.transformRequest !== undefined);
-			logger.debug(
-				`→ ${config.id}：${converted.messages.length} 条消息，` +
-				`${tools?.length ?? 0} 个工具，适配器 ${applied.map(item => item.id).join('+') || '无'}，${effortNote}，` +
-				`思考内容${settings.request.includeReasoning ? '会' : '不会'}回显`,
-			);
-
-			const transformed = await this.deps.adapters.transformRequest(request, adapterContext, adapters);
 
 			const summary = await streamResponse({
 				source: this.resolveSession(model).client,
-				request: transformed,
+				request: prepared.request,
 				modelId: config.id,
 				includeReasoning: settings.request.includeReasoning,
-				sendsStreamOptions: settings.request.includeUsage,
+				headers: resolveRequestHeaders(settings.request.headers ?? {}, options, this.deps.storageUri),
 				progress,
 				signal: abort.signal,
 				cancelled: () => token.isCancellationRequested,
 				logger,
-				targetKey: model.targetKey,
-				repairMemory: this.repairMemory,
-				optionalFields: Object.keys(settings.request.extraBody),
 			});
-			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
-			reportReplayMarker(progress, summary, echoReasoningContent, config.id, logger);
-			this.calibrateCharsPerTokenFor(config.id, transformed, summary.usage?.prompt_tokens);
+			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary.toolCallCount);
+			reportReplayMarker(progress, summary, prepared.echoReasoningContent, config.id, logger);
+			if (!prepared.hasImages) {
+				this.calibrateCharsPerTokenFor(config.id, prepared.request, summary.usage?.prompt_tokens);
+			}
 		} catch (error) {
 			// 取消是正常流程：用户点「停止」时 VS Code 会取消 token
 			if (isAbortError(error) || token.isCancellationRequested) {
@@ -362,7 +312,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 }
 
 /* -------------------------------------------------------------------------- */
-/* 下面的三件事只服务本文件                                                    */
+/* 模型信息与错误映射                                                          */
 /* -------------------------------------------------------------------------- */
 
 /** 把内部配置映射成 VS Code 需要的模型信息。 */
@@ -372,8 +322,8 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 		name: config.name,
 		family: config.family,
 		version: config.version,
-		detail: config.detail,
-		tooltip: config.tooltip,
+		detail: buildModelDetail({ ...config, vendor: config.meta.vendor, ownedBy: config.meta.ownedBy }),
+		tooltip: buildModelTooltip({ ...config, vendor: config.meta.vendor }),
 		maxInputTokens: config.maxInputTokens,
 		maxOutputTokens: config.maxOutputTokens,
 		// 真实窗口单独声明，否则宿主只能按「输入上限 + 输出上限」兜底
@@ -390,63 +340,6 @@ function toModelInformation(config: ModelConfig, target: ProviderTarget): NewApi
 		targetKey: target.key,
 		targetLabel: target.label,
 	};
-}
-
-/**
- * 组装请求体。
- *
- * 写入顺序是语义的一部分（后面的可以盖过前面的）：
- * ```
- *   model + messages
- *   → temperature / top_p / tools（来自设置）
- *   → extraBody 里的额外字段
- *   → 思考强度（最具体，最后写）
- * ```
- */
-function buildRequest(input: {
-	config: ModelConfig;
-	settings: NewApiSettings;
-	messages: ChatCompletionRequest['messages'];
-	tools: ChatToolDefinition[] | undefined;
-	toolMode: vscode.LanguageModelChatToolMode;
-	reasoningEffort: string | undefined;
-}): ChatCompletionRequest {
-	const { config, settings, messages, tools, toolMode, reasoningEffort } = input;
-	const request: ChatCompletionRequest = {
-		model: config.id,
-		messages,
-		// 输出上限必须显式发给上游，否则由渠道默认值决定；字段名由适配器按上游要求改写。
-		max_tokens: config.maxOutputTokens,
-	};
-
-	const { temperature, topP } = settings.request;
-	if (temperature !== undefined) {
-		request.temperature = temperature;
-	}
-	if (topP !== undefined) {
-		request.top_p = topP;
-	}
-	if (tools !== undefined) {
-		request.tools = tools;
-		const choice = convertToolChoice(toolMode, true);
-		if (choice !== undefined) {
-			request.tool_choice = choice;
-		}
-	}
-
-	// 额外字段；结构化字段（`messages`、`tools` 等）被排除在外
-	for (const [key, value] of Object.entries(settings.request.extraBody)) {
-		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {
-			request[key] = value;
-		}
-	}
-
-	// 比静态设置更具体，因此写在额外字段之后以便覆盖它们
-	if (reasoningEffort !== undefined) {
-		request[DEFAULT_REASONING_EFFORT_FIELD] = reasoningEffort;
-	}
-
-	return request;
 }
 
 /**

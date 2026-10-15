@@ -49,22 +49,6 @@ export function isReplayMarkerPart(part: unknown): part is vscode.LanguageModelD
 	return part instanceof vscode.LanguageModelDataPart && part.mimeType === REPLAY_MARKER_MIME;
 }
 
-/** 从一条消息里取出回放的思考文本；没有标记或标记不可用时返回 `undefined`。 */
-export function readReplayedReasoning(
-	message: vscode.LanguageModelChatRequestMessage,
-): string | undefined {
-	for (const part of message.content ?? []) {
-		if (!isReplayMarkerPart(part)) {
-			continue;
-		}
-		const text = parseReplayMarker(part.data);
-		if (text !== undefined) {
-			return text;
-		}
-	}
-	return undefined;
-}
-
 /** 解析标记载荷里的思考文本；任何一步不合预期都返回 `undefined`。 */
 export function parseReplayMarker(data: Uint8Array): string | undefined {
 	const decoded = new TextDecoder().decode(data);

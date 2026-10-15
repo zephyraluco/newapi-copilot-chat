@@ -22,7 +22,7 @@
 - **可读的模型信息**：选择器显示展示名而非回传给站点的模型 ID；悬浮提示列出规模与能力
 - **原生流式与思考**：正文逐块输出，思维链可选回显；思考强度按模型可调
 - **继承 Copilot 的整套能力**：Agent 模式、工具调用、Instructions 与 MCP、上下文窗口用量——接入的是原生 provider API
-- **状态栏**：显示连接状态与模型总数，悬停给出本次会话的用量
+- **状态栏**：正常时悬停查看站点延迟、时间和累计用量；发现或探活失败时变黄、隐藏浮窗，详情写入日志
 
 ## 快速开始
 
@@ -69,11 +69,9 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 本扩展的设置位于 `newapi-copilot-chat.*` 之下，可在设置界面搜索 `New API` 找到
 **站点地址与 API Key 不是设置项** —— 它们在 VS Code 的「管理模型」界面里配置
 
-### 常规
+### 日志
 
-| 设置 | 默认值 | 说明 |
-| --- | --- | --- |
-| `logLevel` | `info` | 日志级别（`off`/`error`/`warn`/`info`/`debug`/`trace`） |
+日志输出到 **New API for Copilot Chat** 通道，级别通过 VS Code 输出面板的原生日志级别控件调整，不再提供独立的扩展日志级别设置。
 
 ### 模型
 
@@ -85,24 +83,40 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 
 ### 请求
 
+聊天链路参考 `deepseek-v4-for-copilot`：请求准备完成后一次发送到 `/v1/chat/completions`，通过 SSE 回传正文、思考和工具调用。DeepSeek 的自定义端点不会因标题等辅助请求而强制关闭思考；历史推理优先从回放标记恢复，缺失时发送空字符串。
+
+自定义请求头示例：
+
+```json
+{
+  "newapi-copilot-chat.request.headers": {
+    "X-Conversation-Id": "${conversationId}"
+  }
+}
+```
+
+`${conversationId}` 优先使用 Copilot 会话 ID，其次使用工作区 ID、请求关联 ID，最后生成随机 ID。同一次请求中所有模板共享同一个 ID。原生图片请求不会参与文本 token 估算比例的校准。
+
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `request.timeoutMs` | `60000` | 非流式是整体超时；流式是**等响应头**的上限 |
 | `request.streamIdleTimeoutMs` | `60000` | 流式响应**两个数据块之间**的静默超时；长思考的模型可以放宽 |
 | `request.includeUsage` | `true` | 是否下发 `stream_options`；少数站点不认这个字段并返回 400，关掉它即可（关掉后上游不返回用量，「会话信息」里也就没有 token 数） |
-| `request.maxRetries` | `2` | 失败重试次数（不含首次）；只对网络错误、超时、429、5xx 生效，服务端要求等超过 30 秒的限流直接报错 |
-| `request.temperature` | `null` | 留空则不发送该字段 |
-| `request.topP` | `null` | 留空则不发送该字段 |
-| `request.includeReasoning` | `false` | 是否把思维链回显给用户（引用块或思考块）；不影响向 DeepSeek 回填 `reasoning_content` |
-| `request.stabilizeToolList` | `false` | 发请求前先把 `activate_*` 工具组激活完，让每轮工具列表一致（利于上游前缀缓存），代价是每轮多带工具定义 |
-| `request.extraBody` | `{}` | 透传给所有模型的额外请求体字段 |
+| `request.maxRetries` | `2` | 用于模型列表拉取和站点探活。聊天只发送一次，不自动删参数重试，也不在断流后重发。 |
+| `request.includeReasoning` | `true` | 默认通过原生思考部件展示推理，旧宿主退回引用块；与历史推理回填独立。 |
+| `request.headers` | `{}` | 聊天请求的自定义 HTTP 请求头，可覆盖默认头，支持 `${conversationId}` 模板。 |
+| `request.extraBody` | `{}` | 额外请求体字段，包括 `temperature`、`top_p`；发送前仍应用模型能力约束 |
 
 ### 状态
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `status.showStatusBar` | `true` | 是否在状态栏显示状态项 |
-| `status.refreshInterval` | `60000` | 状态自动刷新间隔（毫秒），最小 `10000` |
+| `status.showStatusBar` | `true` | 显示模型数及正常状态浮窗；出错时变黄且无浮窗，详情见日志；隐藏状态栏不停止探活 |
+| `status.refreshInterval` | `60000` | 站点 `/api/status` 探活间隔（毫秒），最小 `10000`；不会刷新模型列表 |
+
+模型列表仍按需拉取：VS Code 请求模型发现、相关配置变化触发重新发现，或执行「刷新模型列表」命令。站点新增或连接配置变化时单独探活，此后按 `status.refreshInterval` 周期检查状态接口。模型发现或探活失败时状态栏变黄并隐藏整个浮窗，详细错误写入扩展输出日志；恢复正常后重新显示浮窗。
+
+状态栏用量汇总本次扩展宿主会话中所有配置组的成功响应，包括请求/工具次数、输入输出 token、缓存命中和思考 token，重载窗口后清零。上游未返回 usage 的请求只累计请求和工具次数，不虚构 token 数。单次 usage 仍回传到 Copilot 的会话信息。
 
 **思考强度不是设置项**——它在 Copilot Chat 的模型选择器里按模型配置；其余设置可以直接写进
 `settings.json`（键名整体是一个带点号的字符串，**不要**写成嵌套对象）：
@@ -110,26 +124,31 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 ```json
 {
   "newapi-copilot-chat.models.cacheTtl": 600000,
-  "newapi-copilot-chat.request.temperature": 0.7,
+  "newapi-copilot-chat.request.extraBody": {
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
   "newapi-copilot-chat.request.streamIdleTimeoutMs": 180000
 }
 ```
+
+采样参数未在 `request.extraBody` 中指定时不发送；其中核采样使用 API 原始字段名 `top_p`。
 
 ## 思考强度
 
 支持思考的模型会在模型选择器里出现**思考强度**控件，选择后扩展把 `reasoning_effort` 写进请求体：
 
-- **默认不发送**：控件预选数据表里的 `defaultReasoningEffort`，但这个值不会被发出去（站点本来就在用它），只有改成别的档位才加 `reasoning_effort`
-- 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由适配器层改写——见 `src/adapter/`
+- **显式使用有效档位**：控件预选数据表里的 `defaultReasoningEffort`，请求准备使用用户选择或该默认值；厂商策略负责转换思考开关，关闭思考时按协议省略强度字段。
+- 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由协议层改写——见 `src/protocol/`
 - **有些模型不显示这个控件**：带工具调用时强度会被上游强制成某个固定值（例如 GPT-6 Sol/Luna 只能是 `none`），而 Agent 模式的请求总是带工具——显示一个选得了却不起作用的选项比不显示更糟
 
 ## 厂商适配
 
-通用层统一处理模型发现、配置组、消息/工具转换、流式响应、取消与用量；厂商差异集中在 `src/adapter/`：
+通用层统一处理模型发现、配置组、消息/工具转换、流式响应、取消与用量；厂商差异集中在 `src/protocol/`：
 
 | 厂商 | 适配行为 |
 | --- | --- |
-| DeepSeek | 原生思考开关、辅助请求关闭思考、思考历史回填；`none` / `off` 真正关闭思考 |
+| DeepSeek | 原生思考开关、思考历史回填；自定义端点的辅助请求保留配置强度；`none` / `off` 真正关闭思考 |
 | OpenAI 推理模型 | o 系列与 GPT-5 之后：输出上限改为 `max_completion_tokens`，移除不支持的采样字段 |
 | Qwen | 无档位型号的思考选择转为 `enable_thinking`；有档位型号保留 `reasoning_effort`；`auto` 不新增开关；思考历史回填 |
 | GLM | 显式写入 `thinking.type`；具体强度透传；强制思考的 `glm-5.3` / `glm-4.7` 关不了则写 `enabled`；思考历史回填 |
@@ -149,17 +168,15 @@ VS Code 据此在「管理模型」界面生成本扩展的配置表单：
 | API Key | 必填，声明为 `secret`，由 VS Code 存入系统钥匙串 |
 
 **模型按配置组隔离**（每组有独立的 HTTP 客户端与模型缓存，A 站的模型不会跑到 B 站去请求）、
-**配置变更自动生效**（改完地址或密钥后，下一次模型发现就会重建对应会话，旧连接会被中断）、
-**状态按组汇总**（状态栏显示合计的模型数，悬浮提示里逐组列出配置不完整或连不上的原因）
+**配置变更自动生效**（改完地址或密钥后，下一次模型发现就会重建对应会话，旧连接完成在途请求后释放）、
+**状态按组汇总**（正常时逐组展示延迟与时间，并汇总会话用量；任何组出错时状态栏变黄，错误详情见日志）
 
 ## 命令
 
 | 命令 | 说明 |
 | --- | --- |
-| New API: 测试连接 | 重新探测所有配置组，并报告延迟与模型数量 |
 | New API: 刷新模型列表 | 忽略缓存强制重新拉取所有配置组 |
 | New API: 打开设置 | 定位到本扩展的设置页（请求参数、状态栏等） |
-| New API: 重置用量统计 | 把状态栏悬浮提示里的会话用量归零 |
 
 配置站点与密钥请用模型选择器里的 **管理模型**，或命令面板的 **Manage Language Models**
 

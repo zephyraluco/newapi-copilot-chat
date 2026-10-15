@@ -10,26 +10,22 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers');
 
-const { modules } = load({ config: './src/config' });
+const { modules } = load({ config: './src/utils/settings' });
 const { classifySettingsChange } = modules.config;
 
 /** 一份完整的设置。 */
 function settings(overrides = {}) {
 	return {
-		logLevel: 'info',
 		models: { cacheTtlMs: 300_000, defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 },
 		request: {
 			timeoutMs: 60_000,
 			streamIdleTimeoutMs: 60_000,
 			includeUsage: true,
 			maxRetries: 2,
-			temperature: undefined,
-			topP: undefined,
 			includeReasoning: false,
-			stabilizeToolList: false,
 			extraBody: {},
 		},
-		status: { showStatusBar: true, refreshIntervalMs: 60_000 },
+		status: { showStatusBar: true, refreshIntervalMs: 60000 },
 		...overrides,
 	};
 }
@@ -42,29 +38,20 @@ function changeRequest(patch) {
 
 /* -------------------------------------------------------------------------- */
 
-test('什么都没变时四项都是 false', () => {
+test('什么都没变时三项都是 false', () => {
 	assert.deepEqual(classifySettingsChange(settings(), settings()), {
-		client: false, models: false, status: false, logLevel: false,
-	});
-});
-
-test('日志级别变化不影响连接、模型与状态栏', () => {
-	const base = settings();
-	assert.deepEqual(classifySettingsChange(base, { ...base, logLevel: 'debug' }), {
-		client: false, models: false, status: false, logLevel: true,
+		client: false, models: false, status: false,
 	});
 });
 
 test('状态栏设置只影响 status', () => {
-	for (const status of [
-		{ showStatusBar: false, refreshIntervalMs: 60_000 },
-		{ showStatusBar: true, refreshIntervalMs: 30_000 },
-	]) {
-		const base = settings();
-		assert.deepEqual(classifySettingsChange(base, { ...base, status }), {
-			client: false, models: false, status: true, logLevel: false,
-		});
-	}
+	const base = settings();
+	assert.deepEqual(classifySettingsChange(base, { ...base, status: { ...base.status, showStatusBar: false } }), {
+		client: false, models: false, status: true,
+	});
+	assert.deepEqual(classifySettingsChange(base, { ...base, status: { ...base.status, refreshIntervalMs: 30000 } }), {
+		client: false, models: false, status: true,
+	});
 });
 
 test('模型设置只影响 models', () => {
@@ -75,7 +62,7 @@ test('模型设置只影响 models', () => {
 	]) {
 		const base = settings();
 		assert.deepEqual(classifySettingsChange(base, { ...base, models }), {
-			client: false, models: true, status: false, logLevel: false,
+			client: false, models: true, status: false,
 		});
 	}
 });
@@ -88,22 +75,39 @@ test('client 的构造参数变化才算连接变化', () => {
 		{ maxRetries: 0 },
 	]) {
 		assert.deepEqual(changeRequest(patch), {
-			client: true, models: false, status: false, logLevel: false,
+			client: true, models: false, status: false,
 		}, JSON.stringify(patch));
 	}
 });
 
 test('每次请求现读的设置不需要重建任何东西', () => {
-	// 采样参数、思考回显、工具组预激活、extraBody 都由 buildRequest 每次现读
+	// 请求准备阶段读取的设置无需重建连接。
 	for (const patch of [
-		{ temperature: 0.5 },
-		{ topP: 0.9 },
 		{ includeReasoning: true },
-		{ stabilizeToolList: true },
 		{ extraBody: { foo: 1 } },
+		{ headers: { 'X-Conversation-Id': '${conversationId}' } },
 	]) {
 		assert.deepEqual(changeRequest(patch), {
-			client: false, models: false, status: false, logLevel: false,
+			client: false, models: false, status: false,
 		}, JSON.stringify(patch));
 	}
+});
+
+test('配置读取不再访问旧日志及采样设置，extraBody 保留采样参数', () => {
+	const { createVscodeStub } = require('./fakes');
+	const vscode = createVscodeStub();
+	const reads = [];
+	vscode.workspace = { getConfiguration: () => ({ get(key) {
+		reads.push(key);
+		return key === 'request.extraBody' ? { temperature: 0.7, top_p: 0.9 } : undefined;
+	} }) };
+	const loaded = load({ hostConfig: './src/provider/config' }, { vscode });
+	const value = loaded.modules.hostConfig.readSettings();
+	assert.equal('logLevel' in value, false);
+	assert.equal('temperature' in value.request, false);
+	assert.equal('topP' in value.request, false);
+	assert.deepEqual(value.request.extraBody, { temperature: 0.7, top_p: 0.9 });
+	for (const key of ['logLevel', 'request.temperature', 'request.topP']) { assert.equal(reads.includes(key), false); }
+	assert.equal(value.models.cacheTtlMs, 300000);
+	assert.equal(value.status.refreshIntervalMs, 60000);
 });

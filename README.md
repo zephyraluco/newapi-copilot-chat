@@ -22,7 +22,7 @@ Wire an OpenAI-compatible gateway such as [New API](https://github.com/QuantumNo
 - **Readable model information**: the picker shows display names instead of the model IDs sent back to the site; the hover tooltip lists size and capabilities
 - **Native streaming and reasoning**: the answer streams chunk by chunk and the reasoning can be echoed; reasoning effort is adjustable per model
 - **Inherits the full Copilot feature set**: agent mode, tool calling, instructions and MCP, context window usage — this is the native provider API, so none of it is reimplemented here
-- **Status bar**: connection state and model count, with this session's usage on hover
+- **Status bar**: model counts, latency, check time and usage totals; discovery/probe errors turn the item yellow and hide its tooltip, with details in the logs
 
 ## Getting started
 
@@ -69,11 +69,9 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 Settings live under `newapi-copilot-chat.*`; search for `New API` in the Settings UI.
 **The site URL and the API key are not settings** — they are configured in VS Code's *Manage Models* UI.
 
-### General
+### Logging
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| `logLevel` | `info` | Log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) |
+Logs use the **New API for Copilot Chat** output channel. Adjust its log level using VS Code's native log-level control in the Output panel; there is no separate extension log-level setting.
 
 ### Models
 
@@ -90,36 +88,43 @@ Settings live under `newapi-copilot-chat.*`; search for `New API` in the Setting
 | `request.timeoutMs` | `60000` | A whole-request timeout when not streaming; when streaming, the limit on **waiting for the response headers** |
 | `request.streamIdleTimeoutMs` | `60000` | Idle timeout **between two chunks** of a streaming response; raise it for models that think for a long time |
 | `request.includeUsage` | `true` | Whether to send `stream_options`; a few sites reject the field with a 400, so turn it off there (the upstream then reports no usage and the session info shows no token counts) |
-| `request.maxRetries` | `2` | Retry attempts excluding the first one; applies to network errors, timeouts, 429 and 5xx only, and a rate limit asking for more than 30 seconds fails right away |
-| `request.temperature` | `null` | Left empty, the field is not sent |
-| `request.topP` | `null` | Left empty, the field is not sent |
-| `request.includeReasoning` | `false` | Whether to echo the reasoning to the user (quote block or thinking block); does not affect the `reasoning_content` echoed back to DeepSeek |
-| `request.stabilizeToolList` | `false` | Activate the `activate_*` tool groups before sending, keeping the tool list identical every round (good for the upstream prefix cache) at the cost of carrying the tool definitions every round |
-| `request.extraBody` | `{}` | Extra request body fields passed through for every model |
+| `request.maxRetries` | `2` | Retries for model discovery and site-health probes. Chat requests are sent once, without parameter-removal retries or stream replay. |
+| `request.includeReasoning` | `true` | Show reasoning using native thinking parts (quote blocks on older hosts); independent of historical reasoning replay. |
+| `request.headers` | `{}` | Custom chat request headers, overriding defaults. Supports `${conversationId}` templates, resolved once per call: Copilot conversation ID → workspace ID → request correlation ID → random ID. |
+| `request.extraBody` | `{}` | Extra request fields, including `temperature` and `top_p`; model capability constraints still apply |
+
+The chat pipeline follows `deepseek-v4-for-copilot`: prepare the request once, POST to `/v1/chat/completions`, and stream text, thinking and tool calls over SSE. DeepSeek helper requests on custom gateways keep the configured thinking effort. Historical reasoning is restored from replay markers, using an empty string when unavailable. Native-image requests are excluded from adaptive text-token calibration.
 
 ### Status
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `status.showStatusBar` | `true` | Whether to show the status bar item |
-| `status.refreshInterval` | `60000` | Status refresh interval (ms), minimum `10000` |
+| `status.showStatusBar` | `true` | Show model counts and the normal-state tooltip; errors turn the item yellow and hide its tooltip, with details in the logs; hiding the item does not stop probes |
+| `status.refreshInterval` | `60000` | Site `/api/status` probe interval (ms), minimum `10000`; does not refresh the model list |
+
+Models are fetched on demand when VS Code discovers them, after relevant configuration changes trigger rediscovery, or when you run **Refresh Models**. Cache expiry is checked on access. Site probes run separately on new/changed connections and then at `status.refreshInterval`. Discovery or probe failures turn the status bar yellow and hide the entire tooltip; details go to the extension output log. The tooltip returns after recovery. Usage totals cover successful responses across groups during the current extension-host session and reset on reload. Responses without usage add to request/tool counts without inventing token counts. Per-response token usage still appears in Copilot's session info.
 
 **Reasoning effort is not a setting** — it is configured per model in the Copilot Chat model picker. The other settings can be written into `settings.json` directly (the whole key is one dotted string, **do not** nest it):
 
 ```json
 {
   "newapi-copilot-chat.models.cacheTtl": 600000,
-  "newapi-copilot-chat.request.temperature": 0.7,
+  "newapi-copilot-chat.request.extraBody": {
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
   "newapi-copilot-chat.request.streamIdleTimeoutMs": 180000
 }
 ```
+
+Sampling parameters are omitted unless provided in `request.extraBody`. Use the API field name `top_p` in that object.
 
 ## Reasoning effort
 
 Models that support reasoning get a **reasoning effort** control in the model picker; the choice is written into the request body as `reasoning_effort`:
 
-- **Not sent by default**: the control pre-selects the dataset's `defaultReasoningEffort`, but that value is never sent (the site is already using it); only a different choice adds `reasoning_effort`
-- The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the adapter layer — see `src/adapter/`
+- **Explicit effective effort**: the control pre-selects the dataset's `defaultReasoningEffort`; request preparation uses the user selection or that default. Vendor rules translate the thinking switch and omit the effort field when thinking is disabled.
+- The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the protocol layer — see `src/protocol/`
 - **Some models do not show the control**: with tool calls present the upstream forces a fixed value (GPT-6 Sol/Luna only accept `none`), and agent-mode requests always carry tools — showing an option that can never take effect is worse than not showing it
 
 ## Where the configuration comes from
@@ -131,7 +136,7 @@ Configuration is provided entirely by VS Code's provider groups: the extension d
 | Site URL | Required, the root URL of the New API site; `/v1` and the concrete endpoints are appended by the extension |
 | API Key | Required, declared `secret`, stored in the OS keychain by VS Code |
 
-**Models are isolated per group** (each group has its own HTTP client and model cache, so site A's models are never requested from site B), **configuration changes take effect automatically** (after the URL or key changes, the next model discovery rebuilds that session and the old connections are aborted), and **status is aggregated per group** (the status bar shows the combined model count; the tooltip lists, group by group, why one is incomplete or unreachable).
+**Models are isolated per group** (each group has its own HTTP client and model cache, so site A's models are never requested from site B). Configuration changes trigger rediscovery, and retired connections finish in-flight requests. The normal tooltip shows per-group latency/time and session usage totals. Errors in any group turn the item yellow, with details in the logs.
 
 ## Commands
 
@@ -139,10 +144,8 @@ Command titles currently ship in Chinese; the palette shows them as listed below
 
 | Command | Description |
 | --- | --- |
-| `New API: 测试连接` | Probe every group again and report latency and model count |
 | `New API: 刷新模型列表` | Ignore the cache and re-fetch every group |
 | `New API: 打开设置` | Open this extension's settings page (request parameters, status bar, and so on) |
-| `New API: 重置用量统计` | Reset the session usage shown in the status bar tooltip |
 
 To configure a site and its key, use **Manage Models** in the model picker, or **Manage Language Models** from the Command Palette.
 
@@ -175,11 +178,11 @@ The design and implementation borrow from two similar extensions:
 
 ## Provider adaptation design
 
-Model discovery, configuration groups, message/tool conversion, streaming, cancellation, and usage share one provider pipeline. Vendor-specific request rules live in `src/adapter/`:
+Model discovery, configuration groups, message/tool conversion, streaming, cancellation, and usage share one provider pipeline. Vendor-specific request rules live in `src/protocol/`:
 
 | Vendor | Adaptation |
 | --- | --- |
-| DeepSeek | Native thinking toggle, helper-request optimization, reasoning replay; `none` / `off` disables thinking |
+| DeepSeek | Native thinking toggle and reasoning replay; custom gateways keep the configured effort for helper requests; `none` / `off` disables thinking |
 | OpenAI reasoning models | o-series and GPT-5 onward: `max_completion_tokens` and unsupported sampling-field removal |
 | Qwen | Models without effort levels map the choice to `enable_thinking`; models with levels keep `reasoning_effort`; `auto` adds no toggle; reasoning replay |
 | GLM | Explicit `thinking.type`; concrete effort passes through; forced-thinking `glm-5.3` / `glm-4.7` become an explicit enable; reasoning replay |

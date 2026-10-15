@@ -11,9 +11,9 @@ const assert = require('node:assert/strict');
 const { load, createLogger, streamOf, collect } = require('./helpers');
 
 const { modules } = load({
-	http: './src/client/http',
-	sse: './src/client/sse',
-	newApiClient: './src/client/newApiClient',
+	http: './src/transport/http',
+	sse: './src/transport/sse',
+	newApiClient: './src/transport/newApiClient',
 });
 
 const {
@@ -439,6 +439,20 @@ test('HttpClient：整体超时抛 kind=timeout', async () => {
 	);
 });
 
+test('HttpClient：响应头已返回但响应体静默时，整体超时仍然有效', async () => {
+	const client = makeClient({ timeoutMs: 30 });
+	try {
+		await withFetch(async (_url, init) => new Response(new ReadableStream({
+			start(controller) {
+				init.signal.addEventListener('abort', () => controller.error(init.signal.reason), { once: true });
+			},
+		})), async () => {
+			await assert.rejects(client.requestText({ url: 'https://api.example.com/v1/models' }),
+				error => error instanceof TransportError && error.kind === 'timeout');
+		});
+	} finally { client.dispose(); }
+});
+
 test('HttpClient：调用方取消抛 kind=aborted，且不重试', async () => {
 	const client = makeClient({ maxRetries: 2 });
 	const controller = new AbortController();
@@ -517,10 +531,8 @@ test('HttpClient：流式响应正常返回未读完的 body', async () => {
 
 test('HttpClient：dispose 之后所有请求立刻失败（且不算用户取消）', async () => {
 	const client = makeClient();
-	assert.equal(client.isDisposed, false);
 
 	client.dispose();
-	assert.equal(client.isDisposed, true);
 
 	await assert.rejects(
 		client.requestText({ url: 'https://api.example.com/v1/models' }),

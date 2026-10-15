@@ -13,10 +13,12 @@ const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
 	tokenizer: './src/provider/tokenizer',
+	math: './src/protocol/tokenizer',
 	replay: './src/provider/replay',
 });
 
-const { estimateTextTokens, calibrateCharsPerToken, estimateMessageTokens, estimateTokens } = modules.tokenizer;
+const { estimateMessageTokens, estimateTokens } = modules.tokenizer;
+const { estimateTextTokens, calibrateCharsPerToken } = modules.math;
 const { createReplayMarkerPart } = modules.replay;
 
 const text = value => new vscode.LanguageModelTextPart(value);
@@ -173,6 +175,12 @@ test('estimateMessageTokens：回放标记的思考内容要计入，且只算�
 		],
 	};
 	assert.equal(withThinking.modules.tokenizer.estimateMessageTokens(both), 4 + 2);
+	const different = {
+		role: 2,
+		content: [new withThinking.vscode.LanguageModelThinkingPart('短'),
+			withThinking.modules.replay.createReplayMarkerPart('实际回填的推理')],
+	};
+	assert.equal(withThinking.modules.tokenizer.estimateMessageTokens(different), 4 + 7);
 });
 
 test('estimateMessageTokens：字符串部件与认不出的部件都有兜底', () => {

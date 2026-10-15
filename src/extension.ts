@@ -2,30 +2,32 @@
  * 扩展入口：装配模块并注册命令，只做接线。
  *
  * ```
- *   VS Code 的配置组 ──▶ ProviderTarget（runtime/target.ts）
+ *   VS Code 的配置组 ──▶ ProviderTarget（application/target.ts）
  *                             │
  *                             ▼
  *   SessionRegistry ──▶ ModelCatalog ──拉取并整合──▶ ModelConfig[]
  *         │                        │
  *         │                        └──▶ NewApiChatProvider ──▶ Copilot Chat
- *         └──▶ StatusService ──▶ 状态栏 ──┐
- *                                          └──▶ 命令（测试连接 / 刷新 / 设置）
+ *         └──▶ 模型快照 ──▶ 轻量状态栏与刷新命令
  * ```
  */
 
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
-import { createDefaultAdapterRegistry } from './adapter/registry';
-import { refreshAndNotify, registerCommands, type CommandDeps } from './commands';
-import { ConfigService, classifySettingsChange } from './config';
-import { CONFIG_SECTION, VENDOR_ID, initRuntimeInfo, runtimeInfo } from './consts';
-import { safeJsonParse } from './json';
-import { Logger, LoggerService, parseLogLevelName } from './logger';
+import { createDefaultAdapterRegistry } from './protocol/registry';
+import { registerCommands, type CommandDeps } from './provider/commands';
+import { ConfigService } from './provider/config';
+import { classifySettingsChange } from './utils/settings';
+import { VENDOR_ID, initRuntimeInfo, runtimeInfo } from './utils/consts';
+import { safeJsonParse } from './utils/json';
+import { Logger, LoggerService } from './provider/logger';
 import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, installModelDataset } from './models/dataset';
 import { NewApiChatProvider } from './provider/chatProvider';
-import { SessionRegistry } from './runtime/session';
-import { NewApiStatusBar } from './status/statusBar';
-import { StatusService } from './status/statusService';
+import { SessionRegistry } from './application/session';
+import { NewApiStatusBar } from './provider/statusBar';
+import { readModelStatus } from './application/modelStatus';
+import { SiteHealthService } from './application/siteHealth';
+import { UsageTracker } from './application/usage';
 
 /** 模型数据表文件的绝对路径。 */
 function datasetFile(context: vscode.ExtensionContext): string {
@@ -75,42 +77,31 @@ function loadModelDataset(context: vscode.ExtensionContext, logger: Logger): voi
 export function activate(context: vscode.ExtensionContext): void {
 	initRuntimeInfo(String(context.extension.packageJSON.version ?? '0.0.0'));
 
-	// 日志服务必须先于配置服务：读取配置的过程本身就会写日志。
-	// 先用原始设置取一个初始级别，拿到完整配置后再校正一次。
-	const bootstrapLevel = parseLogLevelName(
-		vscode.workspace.getConfiguration(CONFIG_SECTION).get('logLevel'),
-	);
-	const loggerService = new LoggerService(bootstrapLevel);
+	const loggerService = new LoggerService();
 	const logger = new Logger(loggerService, 'ext');
 	logger.info(`激活 New API for Copilot Chat v${runtimeInfo.extensionVersion}`);
 
 	const config = new ConfigService(logger.child('config'));
-	loggerService.setLevel(config.settings.logLevel);
-	loggerService.warnIfChannelLevelBlocks();
 	logger.debug('初始配置', config.summary());
 
 	loadModelDataset(context, logger);
 
-	const adapters = createDefaultAdapterRegistry(logger.child('adapter'));
+	const adapters = createDefaultAdapterRegistry();
 	const sessions = new SessionRegistry({
 		logger: logger.child('session'),
 		getModelSettings: () => config.settings.models,
 		getRequestSettings: () => config.settings.request,
 	});
-
-	const statusService = new StatusService({
-		logger: logger.child('status'),
-		config,
-		sessions,
-	});
+	const siteHealth = new SiteHealthService(sessions, logger.child('site-health'));
+	const usage = new UsageTracker();
 
 	const provider = new NewApiChatProvider({
+		storageUri: context.storageUri,
 		logger: logger.child('provider'),
 		sessions,
 		adapters,
 		getSettings: () => config.settings,
-		reportUsage: (targetLabel, modelId, usage, summary) =>
-			statusService.recordUsage(targetLabel, modelId, usage, summary),
+		reportUsage: (targetLabel, modelId, responseUsage, toolCalls) => usage.record(targetLabel, modelId, responseUsage, toolCalls),
 	});
 
 	const statusBar = new NewApiStatusBar(logger.child('statusbar'));
@@ -118,11 +109,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	const commands: CommandDeps = {
 		logger: logger.child('commands'),
 		extensionId: context.extension.id,
-		getState: () => statusService.state,
-		hasTargets: () => sessions.list().length > 0,
-		refresh: options => statusService.refresh(options),
+		getState: () => readModelStatus(sessions.list()),
+		refreshModels: () => sessions.refreshModels(),
 		notifyModelsChanged: () => provider.notifyModelsChanged(),
-		resetUsage: () => statusService.resetUsage(),
 	};
 
 	// ---------------------------------------------------------------------
@@ -134,18 +123,24 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------------------------------------------------------------------
 	// 渲染与联动
 	// ---------------------------------------------------------------------
-	const statusListener = statusService.onDidChange(state => statusBar.render(state));
+	const renderStatus = () => statusBar.render(readModelStatus(sessions.list()), config.settings.status.showStatusBar,
+		usage.snapshot, siteHealth.snapshot);
+	const statusListener = sessions.onDidChange(renderStatus);
+	const probeListener = siteHealth.onDidChange(renderStatus);
+	const usageListener = usage.onDidChange(renderStatus);
 
 	let previousSettings = config.settings;
 	const configListener = config.onDidChange(settings => {
 		const scope = classifySettingsChange(previousSettings, settings);
 		previousSettings = settings;
-		if (scope.logLevel) {
-			loggerService.setLevel(settings.logLevel);
+		sessions.configure(scope.client, scope.models);
+		if (scope.status) {
+			siteHealth.configure(settings.status.refreshIntervalMs);
+			renderStatus();
 		}
 		// 只有会影响模型列表（或连接身份）的变化才让宿主重新发现模型。
 		if (scope.models || scope.client) {
-			void refreshAndNotify(commands, true);
+			provider.notifyModelsChanged();
 		}
 	});
 
@@ -153,16 +148,20 @@ export function activate(context: vscode.ExtensionContext): void {
 		loggerService,
 		config,
 		sessions,
-		statusService,
+		siteHealth,
+		usage,
 		provider,
 		statusBar,
 		providerRegistration,
 		statusListener,
+		probeListener,
+		usageListener,
 		configListener,
 		...registerCommands(commands),
 	);
 
-	statusService.start();
+	renderStatus();
+	siteHealth.start(config.settings.status.refreshIntervalMs);
 }
 
 /**

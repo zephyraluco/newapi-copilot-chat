@@ -1,100 +1,93 @@
-/**
- * 校验分层约束：**只有明确列出的文件可以依赖 VS Code 运行时**。
- *
- * 文档里写着「`client` 不 import vscode」「翻译层不碰 vscode」，但这类约定靠人守不住：
- * 一次顺手 `import * as vscode` 就会把纯逻辑模块变成必须在扩展宿主里才能加载。
- * 因此把「谁可以与宿主有关」写成一张显式的名单，其余文件一旦出现运行时依赖（非 `import type`）
- * 就报错并退出码 1。
- *
- * 用法：`npm run check-layering`。
- */
-
+/** Check real module edges (including type imports) and cycles using the TypeScript AST. */
 const fs = require('node:fs');
 const path = require('node:path');
+const ts = require('typescript');
 
-const ROOT = path.resolve(__dirname, '..');
-const SRC = path.join(ROOT, 'src');
+const allowed = {
+	provider: ['provider', 'application', 'protocol', 'models', 'transport', 'utils'],
+	application: ['application', 'models', 'transport', 'protocol', 'utils'],
+	transport: ['transport', 'protocol', 'utils'],
+	protocol: ['protocol', 'models', 'utils'],
+	models: ['models', 'utils'],
+	utils: ['utils'],
+};
 
-/**
- * 允许依赖 VS Code 运行时的文件（相对 `src/`）。
- *
- * 划进来的理由只有两类：**它就是与宿主对话的那一层**（provider 的上报/编排、status 的界面、
- * extension 的装配、logger 的输出通道），或者**它读设置与取消信号**（config、cancellation）。
- * 其余模块应当是纯逻辑——不需要扩展宿主就能加载，也就不必为了碰它们而启动一个 VS Code。
- */
-const HOST_DEPENDENT = [
-	'extension.ts',
-	'commands.ts',
-	'config.ts',
-	'cancellation.ts',
-	'logger.ts',
-	'models/catalog.ts',
-	'provider/chatProvider.ts',
-	'provider/messages.ts',
-	'provider/preflight.ts',
-	'provider/replay.ts',
-	'provider/streamFlow.ts',
-	'provider/thinking.ts',
-	'provider/tokenizer.ts',
-	'provider/toolFlow.ts',
-	'runtime/session.ts',
-	'status/statusBar.ts',
-	'status/statusService.ts',
-];
-
-/** 运行时依赖 vscode 的 import（`import type` 不算）。 */
-const RUNTIME_IMPORT = /^\s*import\s+(?!type\b)[^;]*?from\s+'vscode'/m;
-
-function listSourceFiles(dir) {
-	const out = [];
-	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			out.push(...listSourceFiles(full));
-		} else if (entry.name.endsWith('.ts')) {
-			out.push(full);
+function dependencies(source, file) {
+	const imports = [];
+	const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+	function visit(node) {
+		if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+			if (ts.isStringLiteral(node.moduleSpecifier)) { imports.push(node.moduleSpecifier.text); }
+		} else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+			const expression = node.moduleReference.expression;
+			if (expression && ts.isStringLiteral(expression)) { imports.push(expression.text); }
+		} else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+			|| (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+			if (node.arguments[0] && ts.isStringLiteral(node.arguments[0])) { imports.push(node.arguments[0].text); }
+		} else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
+			imports.push(node.argument.literal.text);
 		}
+		ts.forEachChild(node, visit);
 	}
-	return out.sort();
+	visit(tree);
+	return imports;
+}
+
+/** Paths are POSIX-relative to src; taking source strings also makes the rules testable. */
+function checkArchitecture(files) {
+	const errors = [];
+	const graph = new Map();
+	for (const [file, source] of files) {
+		const layer = file.split('/')[0];
+		const entry = file === 'extension.ts';
+		if (!entry && !allowed[layer]) { errors.push(`${file}: 未声明的架构层`); }
+		const edges = [];
+		for (const dependency of dependencies(source, file)) {
+			if (dependency === 'vscode' && layer !== 'provider' && !entry) {
+				errors.push(`${file}: 只有 provider 可以依赖 vscode`);
+			}
+			if (!dependency.startsWith('.')) { continue; }
+			const base = path.posix.normalize(path.posix.join(path.posix.dirname(file), dependency));
+			const target = [base, `${base}.ts`, `${base}/index.ts`].find(candidate => files.has(candidate));
+			if (!target) { errors.push(`${file}: 无法解析 ${dependency}`); continue; }
+			const targetLayer = target.split('/')[0];
+			if (!entry && !allowed[layer]?.includes(targetLayer)) {
+				errors.push(`${file} → ${target}: 禁止反向/跨层依赖`);
+			}
+			edges.push(target);
+		}
+		graph.set(file, edges);
+	}
+	const visited = new Set();
+	const stack = [];
+	function visit(file) {
+		const index = stack.indexOf(file);
+		if (index >= 0) { errors.push(`循环依赖: ${[...stack.slice(index), file].join(' → ')}`); return; }
+		if (visited.has(file)) { return; }
+		stack.push(file);
+		for (const dependency of graph.get(file) ?? []) { visit(dependency); }
+		stack.pop();
+		visited.add(file);
+	}
+	for (const file of graph.keys()) { visit(file); }
+	return errors;
 }
 
 function main() {
-	const allowed = new Set(HOST_DEPENDENT);
-	const violations = [];
-
-	// 名单里的条目必须真实存在。少查这一条，删掉一个文件后它就会在名单里静默变成死条目，
-	// 而下面那个循环只遍历磁盘上的文件，永远看不见它。
-	for (const relative of HOST_DEPENDENT) {
-		if (!fs.existsSync(path.join(SRC, relative))) {
-			violations.push(`${relative}：名单里有它，但文件已不存在，请删掉这条`);
+	const root = path.resolve(__dirname, '../src');
+	const files = new Map();
+	function scan(directory) {
+		for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+			const full = path.join(directory, entry.name);
+			if (entry.isDirectory()) { if (entry.name !== 'test') { scan(full); } }
+			else if (entry.name.endsWith('.ts')) { files.set(path.relative(root, full).split(path.sep).join('/'), fs.readFileSync(full, 'utf8')); }
 		}
 	}
-
-	for (const file of listSourceFiles(SRC)) {
-		const relative = path.relative(SRC, file).split(path.sep).join('/');
-		const text = fs.readFileSync(file, 'utf8');
-		const importsVscode = RUNTIME_IMPORT.test(text);
-		const isAllowed = allowed.has(relative);
-
-		if (importsVscode && !isAllowed) {
-			violations.push(`${relative}：依赖了 VS Code 运行时，但不在名单里`);
-		}
-		if (!importsVscode && isAllowed) {
-			violations.push(`${relative}：名单里说它依赖宿主，实际已经不依赖了，请移出名单`);
-		}
-	}
-
-	if (violations.length === 0) {
-		console.log(`分层约束成立（${HOST_DEPENDENT.length} 个文件依赖宿主，其余保持纯粹）。`);
-		return;
-	}
-
-	console.error('分层约束被破坏：');
-	for (const violation of violations) {
-		console.error(`  - ${violation}`);
-	}
-	console.error('（名单在 scripts/check-layering.js 顶部；新增依赖宿主的文件时在那里登记。）');
-	process.exitCode = 1;
+	scan(root);
+	const errors = checkArchitecture(files);
+	if (errors.length) { console.error(errors.join('\n')); process.exitCode = 1; }
+	else { console.log(`架构检查通过：${files.size} 个模块，六层依赖方向与无环约束成立。`); }
 }
 
-main();
+module.exports = { checkArchitecture };
+if (require.main === module) { main(); }

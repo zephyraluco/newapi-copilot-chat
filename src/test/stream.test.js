@@ -3,7 +3,7 @@
 /**
  * provider/stream.ts：chunk → 中立响应部件的翻译。
  *
- * 用例集中在分片归并、引用块排版与截断判定。
+ * 用例集中在分片归并、思考展示与最终用量。
  */
 
 const { test } = require('node:test');
@@ -11,19 +11,14 @@ const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
-	stream: './src/provider/stream',
-	// 必须与 stream.ts 在同一次加载里：它靠 `instanceof SseTruncatedError` 判截断
-	sse: './src/client/sse',
+	stream: './src/protocol/stream',
 });
 
 const {
 	StreamTranslator,
 	extractStreamError,
 	tryParseToolArguments,
-	parseToolArguments,
-	decideStreamFailure,
 } = modules.stream;
-const { SseTruncatedError, SseIdleTimeoutError } = modules.sse;
 
 /** 造一个翻译器，并收集它发出的中立部件。 */
 function makeTranslator(options = {}) {
@@ -67,7 +62,6 @@ test('正文分片按到达顺序透传，并累计字符数', () => {
 		{ kind: 'text', text: '，世界' },
 	]);
 	assert.equal(summary.textLength, 5);
-	assert.equal(translator.emittedParts, 2);
 });
 
 test('空 delta、空 content 与没有 choices 的 chunk 都被忽略', () => {
@@ -229,7 +223,6 @@ test('工具调用：分片按 index 归并，参数拼完才上报', () => {
 	assert.deepEqual(parts, [
 		{ kind: 'toolCall', callId: 'call_1', name: 'read_file', input: { path: 'a' } },
 	]);
-	assert.equal(translator.emittedParts, 1);
 });
 
 test('工具调用：上游给 finish_reason 时立刻上报，不必等流结束', () => {
@@ -243,7 +236,6 @@ test('工具调用：上游给 finish_reason 时立刻上报，不必等流结�
 	translator.flush();
 	translator.flush();
 	assert.equal(parts.length, 1);
-	assert.equal(translator.emittedParts, 1);
 });
 
 test('工具调用：网关省略 index 时，续传分片接在同一次调用上', () => {
@@ -299,14 +291,8 @@ test('工具调用：缺少 id 时补一个可用的 callId', () => {
 	assert.match(parts[0].callId, /^call_0_/);
 });
 
-test('工具调用：流中断时丢掉参数不完整的调用，正常结束时用空对象上报', () => {
+test('工具调用：正常结束但参数无效时用空对象上报', () => {
 	const incomplete = { tool_calls: [callDelta(0, 'call_1', 'read_file', '{"half"')] };
-
-	const dropped = makeTranslator();
-	dropped.translator.handle(chunk(incomplete));
-	dropped.translator.flush({ dropIncompleteToolCalls: true });
-	assert.deepEqual(dropped.parts, []);
-	assert.match(dropped.logger.messages('warn').join(' '), /参数不完整/);
 
 	// 正常结束：上报空对象，让 VS Code 报出参数校验失败
 	const kept = makeTranslator();
@@ -326,7 +312,6 @@ test('用量取最后一个 chunk 里的值', () => {
 	translator.handle({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 } });
 	translator.handle({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });
 
-	assert.equal(translator.latestUsage.total_tokens, 15);
 
 	const summary = translator.flush();
 	assert.equal(summary.usage.total_tokens, 15);
@@ -395,33 +380,12 @@ test('tryParseToolArguments：坏 JSON 返回 undefined，由调用方决定怎�
 	assert.equal(logger.lines.length, 0);
 });
 
-test('parseToolArguments：解析失败时返回空对象并记错误', () => {
-	const logger = createLogger();
-
-	assert.deepEqual(parseToolArguments('{"a":1}', logger, 'read_file'), { a: 1 });
-	assert.deepEqual(parseToolArguments('不是 JSON', logger, 'read_file'), {});
-	assert.equal(logger.messages('error').length, 1);
-});
-
-/* -------------------------------------------------------------------------- */
-/* 失败处置                                                                    */
-/* -------------------------------------------------------------------------- */
-
-test('decideStreamFailure：只有「还没给用户看过内容」的截断才值得重发', () => {
-	const truncated = () => new SseTruncatedError(3);
-
-	// 什么都没发出：重发
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'retry');
-	// 已经流出一部分：冲刷已有内容后报错
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 1, attempt: 0, maxRetries: 2, cancelled: false }), 'fail-truncated');
-	// 重试次数用尽
-	assert.equal(decideStreamFailure({ error: truncated(), emittedParts: 0, attempt: 2, maxRetries: 2, cancelled: false }), 'fail');
-});
-
-test('decideStreamFailure：取消与非截断错误一律直接失败', () => {
-	const truncated = new SseTruncatedError(3);
-
-	assert.equal(decideStreamFailure({ error: truncated, emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: true }), 'fail');
-	assert.equal(decideStreamFailure({ error: new SseIdleTimeoutError(1_000), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'fail');
-	assert.equal(decideStreamFailure({ error: new Error('HTTP 400'), emittedParts: 0, attempt: 0, maxRetries: 2, cancelled: false }), 'fail');
+test('usage:null 不是有效用量，不覆盖最后一次有效快照', () => {
+	const { translator } = makeTranslator();
+	translator.handle({ choices: [], usage: { prompt_tokens: 10 } });
+	translator.handle({ choices: [], usage: null });
+	assert.equal(translator.flush().usage.prompt_tokens, 10);
+	const empty = makeTranslator();
+	empty.translator.handle({ choices: [], usage: null });
+	assert.equal(empty.translator.flush().usage, undefined);
 });

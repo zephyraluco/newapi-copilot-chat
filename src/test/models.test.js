@@ -16,7 +16,7 @@ const { modules } = load({
 	limits: './src/models/limits',
 	remoteHints: './src/models/remoteHints',
 	modelConfig: './src/models/modelConfig',
-	tooltip: './src/models/tooltip',
+	tooltip: './src/provider/tooltip',
 });
 
 const { parseModelDataset, installModelDataset, datasetKeysFor, matchModelDataset } = modules.dataset;
@@ -415,7 +415,7 @@ test('resolveModelConfig：完全没信息时给一份保守但可用的配置',
 	assert.equal(config.toolCalling, false);
 	assert.equal(config.name, 'unknown-model');
 	assert.equal(config.meta.provenance.contextWindow, 'default');
-	assert.equal(config.tooltip.length > 0, true);
+	assert.equal(buildModelTooltip(config).length > 0, true);
 });
 
 test('resolveModelConfig：网关给的 displayName / family / version 优先', () => {

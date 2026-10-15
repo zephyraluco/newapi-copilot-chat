@@ -17,3 +17,4 @@ vsc-extension-quickstart.md
 # .github/ 只是 CI 配置，与扩展运行时无关。
 scripts/**
 .github/**
+deepseek-v4-for-copilot/**

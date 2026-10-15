@@ -13,11 +13,13 @@ const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
 	messages: './src/provider/messages',
+	protocolMessages: './src/protocol/messages',
 	replay: './src/provider/replay',
 	thinking: './src/provider/thinking',
 });
 
-const { convertMessages, measureRequestText } = modules.messages;
+const { convertMessages } = modules.messages;
+const { measureRequestText } = modules.protocolMessages;
 const { createReplayMarkerPart, REPLAY_MARKER_MIME } = modules.replay;
 
 /** 默认替身不提供思考部件。 */
