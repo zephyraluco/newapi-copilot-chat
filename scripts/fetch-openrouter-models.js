@@ -15,12 +15,16 @@
  *   npm run models:openrouter
  *   node scripts/fetch-openrouter-models.js --out data/models.json
  *   node scripts/fetch-openrouter-models.js --min-context 32000 --compact
+ *   node scripts/fetch-openrouter-models.js --vendors deepseek,moonshotai
+ *   node scripts/fetch-openrouter-models.js --vendors all
  *
  * 参数：
  *   --out <path>        输出路径（默认 `data/openrouter-models.json`）
  *   --url <url>         数据源（默认 OpenRouter 的公开模型目录）
  *   --timeout <ms>      请求超时（默认 30000）
  *   --min-context <n>   丢弃上下文窗口小于该值的模型（默认 0，即不过滤）
+ *   --vendors <list>    只保留这些厂商的模型（逗号或空白分隔；`all` 表示不过滤）。
+ *                       默认 `DEFAULT_VENDOR_WHITELIST`
  *   --compact           输出压缩 JSON（默认带缩进，便于 diff 与人工核对）
  *   --help              显示帮助
  *
@@ -30,7 +34,7 @@
  *       "source": "https://openrouter.ai/api/v1/models",
  *       "generatedAt": "2026-09-15T10:20:30.000Z",
  *       "totalFetched": 445,      // 上游原始条目数
- *       "count": 343,             // 本文件中的模型数
+ *       "count": 97,              // 本文件中的模型数
  *       "dropped": { ... },       // 各条过滤规则丢弃的数量，便于审计
  *       "models": [
  *         {
@@ -68,7 +72,11 @@
  * 6. **归一化后去重**：剥掉厂商前缀与变体后缀后会撞号（`gpt-6-astra` 与
  *    `gpt-6-astra:batch`），必须去重；`~` 是 latest 别名标记，也一并剥掉，撞号时优先保留
  *    **不带 `~` 的规范条目**。
- * 7. **不按厂商过滤**：缩范围交给消费侧按 `id` 或 `vendor` 做。
+ * 7. **只收录白名单厂商**（`DEFAULT_VENDOR_WHITELIST`，可用 `--vendors` 覆盖）：范围在
+ *    **生成时**就收窄，随包数据表只含本扩展有厂商适配器的模型（见 `src/protocol/registry.ts`）。
+ *    匹配用**规范化厂商键**（只留字母数字、小写、前缀匹配），因此 `z-ai` 与 `Z.ai` 是同一个键，
+ *    写 `moonshot` 也能命中 `MoonshotAI`。这一步**先于**其它规则执行，`dropped.vendor`
+ *    只统计它丢弃的条目，其余计数都在白名单内统计。
  *
  * 无外部依赖：只用 Node 内置的 `fetch`（Node 18+）。退出码非 0 表示失败。
  */
@@ -86,6 +94,18 @@ const DEFAULT_OUT = path.join(__dirname, '..', 'data', 'openrouter-models.json')
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 30_000;
 
+/**
+ * 默认厂商白名单。
+ *
+ * 只收录本扩展有厂商适配器的厂商（`src/protocol/registry.ts`：DeepSeek / Qwen / GLM / Kimi /
+ * OpenAI）：其余厂商的模型没有专属请求改写，进这份表只会让随包文件变大。注意写的是**上游厂商
+ * slug**，不是适配器名——Kimi 的厂商是 `moonshotai`，GLM 的厂商是 `z-ai`。
+ *
+ * 取值经 `vendorKey` 规范化后作**前缀**匹配，因此 `z-ai` 与 `z.ai` 等价、`moonshot` 能命中
+ * `MoonshotAI`。改这里（或用 `--vendors`）之后要重跑 `npm run models:openrouter` 并提交数据表。
+ */
+const DEFAULT_VENDOR_WHITELIST = ['deepseek', 'qwen', 'z-ai', 'Anthropic', 'spacexai', 'openai', 'moonshotai', 'xiaomi','tencent', 'google'];
+
 /** 打印帮助。 */
 function printHelp() {
 	console.log(
@@ -96,14 +116,16 @@ function printHelp() {
 			'  --url <url>         数据源（默认 OpenRouter 的公开模型目录）',
 			'  --timeout <ms>      请求超时，默认 30000',
 			'  --min-context <n>   丢弃上下文窗口小于该值的模型，默认 0（不过滤）',
+			'  --vendors <list>    只保留这些厂商的模型，逗号或空白分隔；all 表示不过滤',
+			`                      默认 ${DEFAULT_VENDOR_WHITELIST.join(',')}`,
 			'  --compact           输出压缩 JSON（默认带缩进）',
 			'  --help              显示本帮助',
 			'',
 			'输出字段：id / vendor / displayName / contextWindow / maxOutputTokens /',
 			'          imageInput / toolCalling / reasoning / supportsReasoningEffort /',
 			'          defaultReasoningEffort / samplingParams',
-			'（id 已剥掉厂商前缀与变体后缀；丢弃变体与路由型伪模型、非对话模型、',
-			'  缺少上下文窗口与输出上限的模型；后四个字段仅在上游给出时才会出现）',
+			'（id 已剥掉厂商前缀与变体后缀；先按厂商白名单收窄，再丢弃变体与路由型伪模型、',
+			'  非对话模型、缺少上下文窗口与输出上限的模型；后四个字段仅在上游给出时才会出现）',
 		].join('\n'),
 	);
 }
@@ -120,6 +142,8 @@ function parseArgs(argv) {
 		url: DEFAULT_URL,
 		timeout: DEFAULT_TIMEOUT,
 		minContext: 0,
+		// 空数组 = 不过滤，这个约定由 isVendorAllowed 与 filterByVendor 共用
+		vendors: [...DEFAULT_VENDOR_WHITELIST],
 		compact: false,
 		help: false,
 	};
@@ -157,6 +181,9 @@ function parseArgs(argv) {
 				options.minContext = value;
 				break;
 			}
+			case '--vendors':
+				options.vendors = parseVendors(next());
+				break;
 			case '--compact':
 				options.compact = true;
 				break;
@@ -170,6 +197,40 @@ function parseArgs(argv) {
 	}
 
 	return options;
+}
+
+/**
+ * 解析 `--vendors` 的取值。
+ *
+ * 逗号或空白分隔，去重保序；`all` 表示不过滤（返回空数组）。条目必须含字母或数字——
+ * 匹配时标点与大小写都会被抹掉，写 `z-ai` 与 `z.ai` 是一回事，而只有标点的条目只会
+ * 静默匹配不到任何厂商，不如直接报错。
+ */
+function parseVendors(text) {
+	const trimmed = String(text).trim();
+	if (trimmed.length === 0) {
+		throw new Error('--vendors 需要一个厂商名单（逗号分隔），或 all 表示不过滤');
+	}
+	if (trimmed.toLowerCase() === 'all') {
+		return [];
+	}
+	const result = [];
+	for (const item of trimmed.split(/[,\s]+/)) {
+		const name = item.trim();
+		if (name.length === 0) {
+			continue;
+		}
+		if (vendorKey(name).length === 0) {
+			throw new Error(`--vendors 的取值 ${name} 不含字母或数字`);
+		}
+		if (!result.includes(name)) {
+			result.push(name);
+		}
+	}
+	if (result.length === 0) {
+		throw new Error('--vendors 需要一个厂商名单（逗号分隔），或 all 表示不过滤');
+	}
+	return result;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -286,6 +347,46 @@ function resolveDisplayName(model, vendor) {
 }
 
 /**
+ * 规范化厂商键：只留字母数字并转小写。
+ *
+ * 上游同一个厂商有多种写法（id 的厂商段 `z-ai`、`name` 的厂商前缀 `Z.ai`，别处还有 `Z-AI`），
+ * 抹平标点与大小写后都收敛成 `zai`，白名单因此只需要写一种。
+ */
+function vendorKey(value) {
+	return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** 取 OpenRouter id 里的厂商段（第一个 `/` 之前；`~` 是 latest 别名标记，先剥掉）。 */
+function vendorSlugOf(rawId) {
+	return String(rawId).replace(/^~/, '').split('/')[0].trim();
+}
+
+/**
+ * 判断条目是否来自白名单厂商。
+ *
+ * 两条线索都试：id 的厂商段（`moonshotai/kimi-k2.5`）与 `name` 的厂商前缀
+ * （`MoonshotAI: Kimi K2.5`）——后者能把 `z-ai` 这类 slug 还原成厂商自己的写法。
+ * 用前缀匹配，白名单因此可以写短名（`moonshot` 命中 `MoonshotAI`）。
+ *
+ * 空名单 = 不过滤（与 `filterByVendor` 的约定一致）。
+ */
+function isVendorAllowed(model, whitelist) {
+	const wanted = whitelist.map(vendorKey).filter(key => key.length > 0);
+	if (wanted.length === 0) {
+		return true;
+	}
+	const rawId = asNonEmptyString(model.id);
+	const name = asNonEmptyString(model.name);
+	const candidates = [
+		rawId === undefined ? '' : vendorKey(vendorSlugOf(rawId)),
+		name === undefined ? '' : vendorKey(name.split(':')[0]),
+	];
+	return wanted.some(entry =>
+		candidates.some(candidate => candidate.length > 0 && candidate.startsWith(entry)),
+	);
+}
+
+/**
  * 判断模型是否已过下线日期。日期无法解析时视为未过期（宁可保留）。
  *
  * **不把「有 expiration_date」当作「即将退役」**：上游这个字段不可靠，
@@ -303,6 +404,30 @@ function isExpired(model, now) {
 /* -------------------------------------------------------------------------- */
 /* 过滤                                                                        */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * 按白名单预过滤厂商。
+ *
+ * 单独成一步（而不是塞进 `convert`）是为了让 `dropped.vendor` 的含义保持单一：
+ * 「上游条目里厂商不在白名单」的数量，白名单内的条目再按其它规则逐条判定。
+ * 不是对象或缺 id 的条目直接放行，交给 `convert` 记成 `invalidEntry`。
+ * 返回 `{ list, droppedVendor }`：`list` 供后续规则继续处理。
+ */
+function filterByVendor(rawList, whitelist) {
+	if (whitelist.length === 0) {
+		return { list: rawList, droppedVendor: 0 };
+	}
+	const list = [];
+	let droppedVendor = 0;
+	for (const raw of rawList) {
+		if (!isRecord(raw) || asNonEmptyString(raw.id) === undefined || isVendorAllowed(raw, whitelist)) {
+			list.push(raw);
+		} else {
+			droppedVendor++;
+		}
+	}
+	return { list, droppedVendor };
+}
 
 /**
  * 把上游条目转成清单记录。
@@ -410,12 +535,13 @@ function convert(model, options, now) {
 /**
  * 执行完整过滤。
  *
- * 去重放在过滤之后：同名的变体条目已经在前面被丢掉，这里只需要处理
- * `~` 别名与规范条目撞号的情况（优先保留规范条目）。
+ * 先按厂商白名单收窄，再逐条判定；去重放在最后：同名的变体条目已经在前面被丢掉，
+ * 这里只需要处理 `~` 别名与规范条目撞号的情况（优先保留规范条目）。
  */
 function buildCatalog(rawList, options, now) {
 	const dropped = {
 		invalidEntry: 0,
+		vendor: 0,
 		variant: 0,
 		noTextInput: 0,
 		noTextOutput: 0,
@@ -427,7 +553,10 @@ function buildCatalog(rawList, options, now) {
 	};
 	const byId = new Map();
 
-	for (const raw of rawList) {
+	const { list, droppedVendor } = filterByVendor(rawList, options.vendors);
+	dropped.vendor = droppedVendor;
+
+	for (const raw of list) {
 		const result = convert(raw, options, now);
 		if (!result.ok) {
 			dropped[result.reason]++;
@@ -493,6 +622,7 @@ function extractList(payload) {
 function formatDropped(dropped) {
 	const labels = {
 		invalidEntry: '数据缺 id/结构异常',
+		vendor: '厂商不在白名单',
 		variant: '变体（:free / :batch）',
 		noTextInput: '不支持文本输入',
 		noTextOutput: '不支持文本输出',
@@ -519,6 +649,7 @@ async function main() {
 	const payload = await fetchJson(options.url, options.timeout);
 	const rawList = extractList(payload);
 	console.log(`  上游条目：${rawList.length}`);
+	console.log(`  厂商白名单：${options.vendors.length === 0 ? '不过滤' : options.vendors.join(', ')}`);
 
 	const { models, dropped } = buildCatalog(rawList, options, Date.now());
 	console.log(`  过滤后：${models.length}`);
@@ -533,6 +664,8 @@ async function main() {
 		generatedAt: new Date().toISOString(),
 		totalFetched: rawList.length,
 		count: models.length,
+		// 生效的白名单看 `dropped.vendor` 与运行日志：能用白名单外的厂商重新生成而表不变，
+		// 说明范围确实是靠白名单收窄的，不必再往产物里写一份配置副本
 		dropped,
 		models,
 	};
