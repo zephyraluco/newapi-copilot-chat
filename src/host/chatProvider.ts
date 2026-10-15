@@ -4,7 +4,7 @@
  *
  * 本类负责宿主侧编排：会话与缓存归 application，模型事实归 models，协议准备与翻译归 protocol，
  * 网络归 transport；本目录只处理宿主消息、配置和响应部件。
- * 流的消费与收尾在 `streamFlow.ts`，工具组预激活在 `preflight.ts`；只服务本文件的
+ * 流的消费与收尾在 `streamFlow.ts`；只服务本文件的
  * 请求体组装在 `request.ts`，模型信息映射与错误转换写在本文件末尾。
  *
  * VS Code 为每个配置组分别调用本 provider：发现模型时从 `options` 解析连接目标，
@@ -26,10 +26,8 @@ import { prepareChatRequest } from './request';
 import { resolveRequestHeaders } from './headers';
 import { buildModelConfigurationSchema } from '../protocol/modelConfiguration';
 import type { ModelConfigurationSchema } from '../protocol/modelConfiguration';
-import { runToolGroupPreflight } from './preflight';
 import type { ProviderSession, SessionRegistry } from '../application/session';
 import { reportReplayMarker, streamResponse } from './streamFlow';
-import type { StreamSummary } from '../protocol/stream';
 import {
 	createTarget,
 	describeTarget,
@@ -40,7 +38,6 @@ import {
 import type { ProviderTarget } from '../application/target';
 import { estimateTokens } from './tokenizer';
 import { calibrateCharsPerToken } from '../protocol/tokenizer';
-import { filterPreflightMessages } from './toolFlow';
 import { buildModelDetail, buildModelTooltip } from './tooltip';
 
 /**
@@ -85,8 +82,8 @@ export interface ChatProviderDeps {
 	readonly adapters: AdapterRegistry;
 	/** 取当前设置 */
 	getSettings(): NewApiSettings;
-	/** 上报用量，供状态栏悬浮提示统计 */
-	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, summary: StreamSummary): void;
+	/** Record successful responses for the status-bar totals. */
+	reportUsage?(targetLabel: string, modelId: string, usage: ChatUsage | undefined, toolCalls: number): void;
 }
 
 /** 最多为多少个模型保留校准后的估算比例（每模型一个，且不能无限增长）。 */
@@ -140,6 +137,8 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			return [];
 		}
 
+		// Keep invalid configurations visible to the passive status view as well.
+		const session = this.deps.sessions.resolve(target);
 		if (!isTargetUsable(target)) {
 			logger.warn(`配置不完整，暂不提供模型：${target.issues.join('；')}`);
 			if (!options.silent) {
@@ -148,8 +147,6 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			return [];
 		}
 
-		// 会话按目标缓存：同一目标的配置未变就直接复用，变了则重建
-		const session = this.deps.sessions.resolve(target);
 		try {
 			// 不把 CancellationToken 传给模型列表拉取：VS Code 会在 UI 更新后立即取消该 token，
 			// 而模型列表是共享且带缓存的资源，一次取消会连带取消其他调用方的请求。
@@ -161,7 +158,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 			logger.debug(`向 VS Code 提供 ${snapshot.models.length} 个模型（${describeTarget(target)}）`);
 			return snapshot.models.map(config => toModelInformation(config, target));
 		} catch (error) {
-			// 不向外抛异常：加载失败表现为「没有模型」，原因由状态栏告诉用户。
+			// 加载失败返回空列表，详情记入日志，状态栏通过黄色提示发现错误。
 			logger.error('获取模型列表失败', error);
 			return [];
 		}
@@ -209,20 +206,12 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 		const settings = this.deps.getSettings();
 		const config = model.config;
 
-		// 预激活控制流（伪调用与它们的结果）不能发给上游，无论设置是否开启都要过滤掉
-		const flowMessages = filterPreflightMessages(messages);
-		if (settings.request.stabilizeToolList
-			&& runToolGroupPreflight({ messages, tools: options.tools, progress, logger })) {
-			// 伪调用已上报：宿主执行后会带着展开完的工具列表重新发起
-			return;
-		}
-
 		const abort = fromCancellationToken(token);
 		try {
 			const prepared = prepareChatRequest({
 				config,
 				settings,
-				messages: flowMessages,
+				messages,
 				options,
 				adapters: this.deps.adapters,
 				logger,
@@ -239,7 +228,7 @@ export class NewApiChatProvider implements vscode.LanguageModelChatProvider<NewA
 				cancelled: () => token.isCancellationRequested,
 				logger,
 			});
-			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary);
+			this.deps.reportUsage?.(model.targetLabel, config.id, summary.usage, summary.toolCallCount);
 			reportReplayMarker(progress, summary, prepared.echoReasoningContent, config.id, logger);
 			if (!prepared.hasImages) {
 				this.calibrateCharsPerTokenFor(config.id, prepared.request, summary.usage?.prompt_tokens);

@@ -35,8 +35,6 @@ export function prepareChatRequest(input: {
 		stream: true,
 		max_tokens: config.maxOutputTokens,
 		...(tools ? { tools, tool_choice: 'auto' as const } : {}),
-		...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
-		...(settings.topP !== undefined ? { top_p: settings.topP } : {}),
 	};
 	for (const [key, value] of Object.entries(settings.extraBody)) {
 		if (!PROTECTED_REQUEST_KEYS.has(key) && value !== undefined) {

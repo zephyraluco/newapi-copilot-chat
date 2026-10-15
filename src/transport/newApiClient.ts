@@ -1,8 +1,8 @@
 /**
  * New API 客户端：与 New API 交互的唯一入口（上层只依赖这里的方法与返回类型）。
  *
- * - `GET  /api/status`           公开状态（探活、站点信息、版本）
  * - `GET  /v1/models`            模型列表
+ * - `GET  /api/status`           站点探活（独立于模型发现）
  * - `POST /v1/chat/completions`  对话补全（流式 / 非流式）
  */
 
@@ -18,7 +18,6 @@ import type {
 	ChatCompletionResponse,
 	NewApiModel,
 	NewApiModelListResponse,
-	NewApiStatusResponse,
 } from '../shared/types';
 import { HttpClient, HttpError, TransportError, joinUrl } from './http';
 import {
@@ -61,11 +60,8 @@ export interface NewApiClientOptions {
 	logger: Logger;
 }
 
-/** `/api/status` 的读取结果。该端点是 New API 自有扩展，可能被关闭，因此单独建模。 */
-export interface StatusFetchResult {
-	/** 端点是否可用 */
+export interface SiteProbeResult {
 	readonly available: boolean;
-	/** 不可用时的原因（已被脱敏） */
 	readonly reason?: string;
 }
 
@@ -88,6 +84,22 @@ export class NewApiClient {
 	}
 
 	whenIdle(): Promise<void> { return this.http.whenIdle(); }
+
+	/** A missing/failed status endpoint does not imply that model requests are unavailable. */
+	async getStatus(signal?: AbortSignal): Promise<SiteProbeResult> {
+		try {
+			const response = await this.http.requestText({
+				url: joinUrl(this.options.baseUrl, ENDPOINTS.status), method: 'GET', signal,
+			});
+			const parsed = safeJsonParse<unknown>(response.text);
+			if (!isRecord(parsed) || parsed.success === false || !isRecord(parsed.data)) {
+				return { available: false, reason: '响应不是 New API 的 /api/status 格式' };
+			}
+			return { available: true };
+		} catch (error) {
+			return { available: false, reason: describeError(error) };
+		}
+	}
 
 	/** 是否已配置 API Key（不返回密钥本身）。 */
 	get hasApiKey(): boolean {
@@ -129,30 +141,6 @@ export class NewApiClient {
 			}
 		}
 		return [...deduped.values()].sort((a, b) => a.id.localeCompare(b.id));
-	}
-
-	/* ---------------------------------------------------------------------- */
-	/* 站点状态                                                                */
-	/* ---------------------------------------------------------------------- */
-
-	/**
-	 * 读取站点状态。
-	 *
-	 * 该端点是 New API 自有扩展且无需鉴权，第三方网关通常没有它，因此失败时返回
-	 * `available: false` 而不抛异常。
-	 */
-	async getStatus(signal?: AbortSignal): Promise<StatusFetchResult> {
-		const url = joinUrl(this.options.baseUrl, ENDPOINTS.status);
-		try {
-			const response = await this.http.requestText({ url, method: 'GET', signal });
-			const parsed = safeJsonParse<NewApiStatusResponse>(response.text);
-			if (!isRecord(parsed) || !isRecord(parsed.data)) {
-				return { available: false, reason: '响应结构不是 New API 的 /api/status 格式' };
-			}
-			return { available: true };
-		} catch (error) {
-			return { available: false, reason: describeError(error) };
-		}
 	}
 
 	/* ---------------------------------------------------------------------- */

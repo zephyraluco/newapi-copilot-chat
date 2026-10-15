@@ -26,14 +26,10 @@ export const CONFIG_SECTION = EXTENSION_ID;
 
 /** 全部命令 ID。 */
 export const COMMANDS = {
-	/** 重新探测所有配置组并刷新模型列表 */
-	testConnection: `${EXTENSION_ID}.testConnection`,
 	/** 忽略缓存，重新拉取所有配置组的模型列表 */
 	refreshModels: `${EXTENSION_ID}.refreshModels`,
 	/** 打开本扩展的设置页（请求参数、状态栏等） */
 	openSettings: `${EXTENSION_ID}.openSettings`,
-	/** 清空本次会话的用量统计 */
-	resetUsage: `${EXTENSION_ID}.resetUsage`,
 } as const;
 
 /** VS Code 内置的「管理语言模型」界面：用户在这里配置站点与密钥。 */
@@ -41,7 +37,6 @@ export const MANAGE_MODELS_COMMAND = 'workbench.action.chat.manage';
 
 /** OpenAI 兼容端点（相对于 baseUrl）。 */
 export const ENDPOINTS = {
-	/** 公开状态端点：无需鉴权，用于探活与读取站点信息 */
 	status: '/api/status',
 	/** 模型列表 */
 	models: '/v1/models',
@@ -117,7 +112,6 @@ export const DEFAULTS = {
 	minInputTokens: 1_024,
 	/** 模型缓存有效期 */
 	modelCacheTtlMs: 5 * 60_000,
-	/** 状态栏轮询间隔 */
 	statusRefreshIntervalMs: 60_000,
 	/** 单次请求超时：非流式是整体超时，流式是「等响应头」的上限 */
 	requestTimeoutMs: 60_000,
@@ -132,9 +126,6 @@ export const DEFAULTS = {
 	/** 服务端 `Retry-After` 超过这个时长就不再重试 */
 	retryAfterMaxWaitMs: 30_000,
 } as const;
-
-/** 状态刷新间隔下限，避免用户把它配成 1 秒把网关打爆。 */
-export const MIN_STATUS_REFRESH_MS = 10_000;
 
 /** Token 估算参数（见 provider/tokenizer.ts）。 */
 export const TOKEN_ESTIMATION = {

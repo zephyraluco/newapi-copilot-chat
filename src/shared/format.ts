@@ -23,36 +23,6 @@ function trimTrailingZero(value: number): string {
 }
 
 /**
- * 把时间戳格式化成相对时间：`刚刚` / `3 分钟前` / `2 小时前` / `昨天`。
- *
- * @param timestamp 毫秒时间戳；`undefined` 表示从未发生。
- * @param now 当前时间
- */
-export function formatRelativeTime(timestamp: number | undefined, now = Date.now()): string {
-	if (timestamp === undefined || !Number.isFinite(timestamp)) {
-		return '从未';
-	}
-	const diff = Math.max(0, now - timestamp);
-	const seconds = Math.floor(diff / 1000);
-	if (seconds < 10) {
-		return '刚刚';
-	}
-	if (seconds < 60) {
-		return `${seconds} 秒前`;
-	}
-	const minutes = Math.floor(seconds / 60);
-	if (minutes < 60) {
-		return `${minutes} 分钟前`;
-	}
-	const hours = Math.floor(minutes / 60);
-	if (hours < 24) {
-		return `${hours} 小时前`;
-	}
-	const days = Math.floor(hours / 24);
-	return days === 1 ? '昨天' : `${days} 天前`;
-}
-
-/**
  * 转义 Markdown 中会被解释为语法的字符。
  */
 export function escapeMarkdown(text: string): string {

@@ -33,6 +33,31 @@ function prepare(messages, overrides = {}) {
 	});
 }
 
+test('工具组由模型正常调用：激活工具直接发送，不生成预激活伪调用', async () => {
+	const sent = [];
+	const parts = [];
+	const provider = new modules.provider.NewApiChatProvider({
+		logger, adapters: modules.registry.createDefaultAdapterRegistry(), getSettings: () => settings,
+		sessions: { onDidChange: () => ({ dispose() {} }), find: () => ({ client: {
+			async *streamChatCompletion(request) {
+				sent.push(request);
+				yield { choices: [{ delta: { tool_calls: [{ index: 0, id: 'model-call',
+					function: { name: 'activate_group', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] };
+			},
+		} }) },
+	});
+	try {
+		await provider.provideLanguageModelChatResponse({ config, targetKey: 'site', targetLabel: 'site' },
+			[user([text('use a tool')])], { tools: [{ name: 'activate_group', description: 'Activate' }] },
+			{ report: part => parts.push(part) },
+			{ isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0].tools[0].function.name, 'activate_group');
+		assert.equal(parts.length, 1);
+		assert.equal(parts[0].callId, 'model-call');
+	} finally { provider.dispose(); }
+});
+
 test('请求准备：辅助请求与默认强度按参考插件发送，协议字段不能被 extraBody 覆盖', async () => {
 	const { request } = await prepare([user([text('You are an expert in crafting pithy titles for chat sessions')])], {
 		settings: { request: { extraBody: { model: 'wrong', messages: [], temperature: 0.3 } } },
@@ -82,6 +107,21 @@ test('请求准备：图片位置保持不变，文本模型不发送图片字�
 	assert.equal(plain.hasImages, false);
 	assert.equal(plain.request.messages[0].content, 'beforeafter');
 	assert.equal(plain.request.tools, undefined);
+});
+
+test('采样参数统一来自 extraBody，未指定时省略，仍受模型能力约束', async () => {
+	const plainConfig = { ...config, id: 'plain-model', reasoning: false, samplingParams: undefined };
+	const messages = [user([text('hello')])];
+	const empty = await prepare(messages, { config: plainConfig });
+	assert.equal('temperature' in empty.request, false);
+	assert.equal('top_p' in empty.request, false);
+	const settings = { request: { extraBody: { temperature: 0.7, top_p: 0.9 } } };
+	const configured = await prepare(messages, { config: plainConfig, settings });
+	assert.equal(configured.request.temperature, 0.7);
+	assert.equal(configured.request.top_p, 0.9);
+	const restricted = await prepare(messages, { config: { ...plainConfig, samplingParams: 'never' }, settings });
+	assert.equal('temperature' in restricted.request, false);
+	assert.equal('top_p' in restricted.request, false);
 });
 
 test('请求头模板：会话、工作区、请求 ID 优先级和同次请求随机 ID 一致', () => {

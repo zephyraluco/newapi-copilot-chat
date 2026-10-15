@@ -1,5 +1,3 @@
-import type { LogLevelName } from './log';
-
 export interface ModelSettings {
 	readonly cacheTtlMs: number;
 	readonly defaultContextWindow: number;
@@ -11,10 +9,7 @@ export interface RequestSettings {
 	readonly streamIdleTimeoutMs: number;
 	readonly includeUsage: boolean;
 	readonly maxRetries: number;
-	readonly temperature: number | undefined;
-	readonly topP: number | undefined;
 	readonly includeReasoning: boolean;
-	readonly stabilizeToolList: boolean;
 	readonly extraBody: Readonly<Record<string, unknown>>;
 }
 export interface StatusSettings {
@@ -22,7 +17,6 @@ export interface StatusSettings {
 	readonly refreshIntervalMs: number;
 }
 export interface NewApiSettings {
-	readonly logLevel: LogLevelName;
 	readonly models: ModelSettings;
 	readonly request: RequestSettings;
 	readonly status: StatusSettings;
@@ -38,6 +32,5 @@ export function classifySettingsChange(previous: NewApiSettings, next: NewApiSet
 			|| previous.models.defaultMaxOutputTokens !== next.models.defaultMaxOutputTokens,
 		status: previous.status.showStatusBar !== next.status.showStatusBar
 			|| previous.status.refreshIntervalMs !== next.status.refreshIntervalMs,
-		logLevel: previous.logLevel !== next.logLevel,
 	};
 }

@@ -52,17 +52,6 @@ export interface NewApiModelListResponse {
 }
 
 /* -------------------------------------------------------------------------- */
-/* GET /api/status                                                             */
-/* -------------------------------------------------------------------------- */
-
-/** `GET /api/status` 响应。 */
-export interface NewApiStatusResponse {
-	success?: boolean;
-	message?: string;
-	data?: Record<string, unknown>;
-}
-
-/* -------------------------------------------------------------------------- */
 /* POST /v1/chat/completions —— 请求                                            */
 /* -------------------------------------------------------------------------- */
 

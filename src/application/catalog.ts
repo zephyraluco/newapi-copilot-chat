@@ -60,9 +60,9 @@ export class ModelCatalog {
 
 	constructor(private readonly deps: ModelCatalogDeps) { }
 
-	/** 当前快照；尚未成功加载过时为 `undefined`。 */
+	/** Latest discovery result, including an initial failure for the status view. */
 	get current(): ModelCatalogSnapshot | undefined {
-		return this.snapshot;
+		return this.snapshot ?? this.lastFailure?.snapshot;
 	}
 
 	/**
@@ -137,7 +137,6 @@ export class ModelCatalog {
 			const previous = this.snapshot;
 			this.snapshot = snapshot;
 			this.lastFailure = undefined;
-			// debug 级：状态刷新会周期性强制重拉，每次打同样一行没有信息量
 			logger.debug(
 				`模型列表已刷新：${built.configs.length}/${raw.length} 可用，` +
 				`耗时 ${Date.now() - startedAt}ms`,
@@ -155,8 +154,9 @@ export class ModelCatalog {
 			if (this.snapshot !== undefined) {
 				// 曾经成功过：保留旧数据（stale-while-error），只把错误标出来
 				const stale: ModelCatalogSnapshot = { ...this.snapshot, error: message, hint };
-				this.emitIfChanged(this.snapshot, stale);
+				const previous = this.snapshot;
 				this.snapshot = stale;
+				this.emitIfChanged(previous, stale);
 				return stale;
 			}
 
@@ -179,7 +179,7 @@ export class ModelCatalog {
 	 * 只在快照真的变了时触发事件。
 	 *
 	 * 事件链的终点是 `onDidChangeLanguageModelChatInformation`，VS Code 收到它就会重新拉模型列表；
-	 * 周期性状态刷新会走到这里，因此没变就不能触发。
+	 * 重复发现或手动刷新时，结果没变就不触发。
 	 */
 	private emitIfChanged(previous: ModelCatalogSnapshot | undefined, next: ModelCatalogSnapshot): void {
 		if (previous !== undefined && snapshotSignature(previous) === snapshotSignature(next)) {

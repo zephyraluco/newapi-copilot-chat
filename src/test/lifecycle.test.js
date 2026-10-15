@@ -2,13 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 const { modules } = load({
-	catalog: './src/application/catalog', status: './src/application/statusService',
-	session: './src/application/session', event: './src/shared/event',
+	catalog: './src/application/catalog', status: './src/application/modelStatus',
+	session: './src/application/session',
 });
 const logger = { ...createLogger(), child() { return this; } };
 const models = { cacheTtlMs: 300000, defaultContextWindow: 128000, defaultMaxOutputTokens: 8192 };
 const request = { timeoutMs: 5000, streamIdleTimeoutMs: 5000, includeUsage: true, maxRetries: 0 };
-const settings = { models, request, status: { showStatusBar: true, refreshIntervalMs: 60000 } };
 const deferred = () => {
 	let resolve;
 	const promise = new Promise(done => { resolve = done; });
@@ -50,86 +49,34 @@ test('目录变更：相同 ID 的显示名称和窗口变化均通知宿主', a
 	catalog.dispose();
 });
 
-function statusFixture(getModels) {
-	const event = new modules.event.EventEmitter();
-	let probeCalls = 0;
-	let signal;
-	const session = { target: { key: 'target', label: 'site', issues: [] },
-		catalog: { getModels, current: { models: [] } },
-		client: { getStatus: async input => { probeCalls++; signal = input; return { available: true }; } } };
-	const status = new modules.status.StatusService({ logger, getSettings: () => settings,
-		sessions: { list: () => [session], onDidChange: event.event } });
-	return { status, probes: () => probeCalls, signal: () => signal };
-}
-
-test('刷新调度：并发普通调用共享一个任务，强制刷新只升级一次', async () => {
-	const first = deferred();
-	const forces = [];
-	const fixture = statusFixture(async options => {
-		forces.push(options.force);
-		if (forces.length === 1) { await first.promise; }
-		return { models: [] };
-	});
-	try {
-		const a = fixture.status.refresh();
-		const b = fixture.status.refresh();
-		assert.equal(a, b);
-		await Promise.resolve();
-		const forced = fixture.status.refresh({ forceModels: true });
-		fixture.status.refresh({ forceModels: true });
-		first.resolve();
-		await forced;
-		assert.deepEqual(forces, [false, true]);
-		assert.equal(fixture.probes(), 2);
-	} finally { fixture.status.dispose(); }
-});
-
-test('状态释放：中止实际探测信号，不在释放后继续发事件', async () => {
-	const pending = deferred();
-	const fixture = statusFixture(async () => { await pending.promise; return { models: [] }; });
-	let events = 0;
-	fixture.status.onDidChange(() => events++);
-	const task = fixture.status.refresh();
-	await Promise.resolve();
-	assert.equal(fixture.signal().aborted, false);
-	fixture.status.dispose();
-	const count = events;
-	assert.equal(fixture.signal().aborted, true);
-	pending.resolve();
-	await task;
-	assert.equal(events, count);
-	await fixture.status.refresh();
-	assert.equal(fixture.probes(), 1);
-});
-
-test('刷新调度：运行期间配置变化不会吞掉新配置的强制刷新', async () => {
-	const gate = deferred();
+test('轻量状态：首次失败、恢复和缓存降级都在发现事件中立即可见', async () => {
+	let fail = true;
 	let calls = 0;
-	const { status } = statusFixture(async () => {
-		if (++calls === 1) { await gate.promise; }
-		return { models: [] };
-	});
+	const catalog = new modules.catalog.ModelCatalog({ logger, getSettings: () => models,
+		client: { hasApiKey: true, listModels: async () => {
+			calls++;
+			if (fail) { throw new Error('offline'); }
+			return [{ id: 'custom-model' }];
+		} } });
+	const session = { target: { key: 'site', label: 'site', issues: [] }, catalog };
+	const events = [];
+	catalog.onDidChange(() => events.push(modules.status.readModelStatus([session])));
 	try {
-		const task = status.refresh({ forceModels: true });
-		await Promise.resolve();
-		status.settingsChanged(false);
-		status.refresh({ forceModels: true });
-		gate.resolve();
-		await task;
-		assert.equal(calls, 2);
-	} finally { status.dispose(); }
-});
-
-test('状态用量：累计与重置保留，刷新失败不清空用量', async () => {
-	const { status } = statusFixture(async () => { throw new Error('offline'); });
-	try {
-		status.recordUsage('model', { prompt_tokens: 10, completion_tokens: 3 }, { toolCallCount: 2 });
-		await status.refresh();
-		assert.equal(status.state.usage.totalTokens, 13);
-		assert.equal(status.state.usage.toolCalls, 2);
-		status.resetUsage();
-		assert.equal(status.state.usage.requests, 0);
-	} finally { status.dispose(); }
+		assert.equal(modules.status.readModelStatus([session]).totalModels, 0);
+		assert.equal(calls, 0, '读取状态不会发起网络请求');
+		await catalog.getModels();
+		assert.match(events.at(-1).targets[0].error, /offline/);
+		fail = false;
+		await catalog.getModels({ force: true });
+		assert.equal(events.at(-1).totalModels, 1);
+		assert.equal(events.at(-1).targets[0].error, undefined);
+		fail = true;
+		await catalog.getModels({ force: true });
+		assert.equal(events.at(-1).totalModels, 1, '刷新失败保留已有模型');
+		assert.match(events.at(-1).targets[0].error, /offline/);
+		for (let i = 0; i < 5; i++) { modules.status.readModelStatus([session]); }
+		assert.equal(calls, 3);
+	} finally { catalog.dispose(); }
 });
 
 test('会话生命周期：配置变更立即替换客户端，停用也能中断退役中的旧流', async () => {

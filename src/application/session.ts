@@ -20,6 +20,7 @@ import type { ModelSettings, RequestSettings } from '../shared/settings';
 import type { Logger } from '../shared/log';
 import { ModelCatalog } from './catalog';
 import type { ProviderTarget } from './target';
+import { isTargetUsable } from './target';
 
 /** 一个连接目标对应的一整套运行时对象。 */
 export interface ProviderSession {
@@ -117,6 +118,13 @@ export class SessionRegistry {
 			session.invalidateCatalog();
 		}
 		this.emitter.fire();
+	}
+
+	/** Explicit refresh only; catalogs own caching and concurrent-request merging. */
+	async refreshModels(): Promise<void> {
+		if (this.disposed) { return; }
+		await Promise.all(this.list().filter(session => isTargetUsable(session.target))
+			.map(session => session.catalog.getModels({ force: true })));
 	}
 
 	/** Apply connection settings immediately; model metadata changes only invalidate catalogs. */
