@@ -18,11 +18,11 @@
  * 「数值被谁覆盖、被怎么校正」的出口是日志（debug 级）与 `meta.provenance`，不放进模型信息。
  */
 
-import { formatTokens } from '../shared/format';
-import { asNonEmptyString } from '../shared/json';
-import type { Logger } from '../shared/log';
-import type { ModelSettings } from '../shared/settings';
-import type { NewApiModel } from '../shared/types';
+import { formatTokens } from '../utils/format';
+import { asNonEmptyString } from '../utils/json';
+import type { Logger } from '../utils/log';
+import type { ModelSettings } from '../utils/settings';
+import type { NewApiModel } from '../utils/types';
 import { matchModelDataset } from './dataset';
 import type { ModelSamplingParams } from './dataset';
 import { isSignificantlyDifferent, reconcileLimits } from './limits';

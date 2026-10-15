@@ -4,12 +4,12 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const allowed = {
-	host: ['host', 'application', 'protocol', 'models', 'transport', 'shared'],
-	application: ['application', 'models', 'transport', 'protocol', 'shared'],
-	transport: ['transport', 'protocol', 'shared'],
-	protocol: ['protocol', 'models', 'shared'],
-	models: ['models', 'shared'],
-	shared: ['shared'],
+	provider: ['provider', 'application', 'protocol', 'models', 'transport', 'utils'],
+	application: ['application', 'models', 'transport', 'protocol', 'utils'],
+	transport: ['transport', 'protocol', 'utils'],
+	protocol: ['protocol', 'models', 'utils'],
+	models: ['models', 'utils'],
+	utils: ['utils'],
 };
 
 function dependencies(source, file) {
@@ -43,8 +43,8 @@ function checkArchitecture(files) {
 		if (!entry && !allowed[layer]) { errors.push(`${file}: 未声明的架构层`); }
 		const edges = [];
 		for (const dependency of dependencies(source, file)) {
-			if (dependency === 'vscode' && layer !== 'host' && !entry) {
-				errors.push(`${file}: 只有 host 可以依赖 vscode`);
+			if (dependency === 'vscode' && layer !== 'provider' && !entry) {
+				errors.push(`${file}: 只有 provider 可以依赖 vscode`);
 			}
 			if (!dependency.startsWith('.')) { continue; }
 			const base = path.posix.normalize(path.posix.join(path.posix.dirname(file), dependency));

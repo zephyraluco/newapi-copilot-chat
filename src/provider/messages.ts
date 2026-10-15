@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
-import type { Logger } from '../shared/log';
-import type { ChatToolDefinition } from '../shared/types';
+import type { Logger } from '../utils/log';
+import type { ChatToolDefinition } from '../utils/types';
 import { convertMessages as convertNormalizedMessages, type ConvertMessagesOptions } from '../protocol/messages';
 import { normalizeMessage } from './messageContent';
 

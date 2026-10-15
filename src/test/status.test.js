@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 const { modules } = load({ health: './src/application/siteHealth', usage: './src/application/usage',
-	event: './src/shared/event', client: './src/transport/newApiClient' });
+	event: './src/utils/event', client: './src/transport/newApiClient' });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
 	let resolve;

@@ -1,7 +1,7 @@
 /** OpenAI 新一代推理模型的 Chat Completions 兼容处理。 */
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../../shared/consts';
+import { DEFAULT_REASONING_EFFORT_FIELD } from '../../utils/consts';
 import type { ModelConfig } from '../../models/modelConfig';
-import type { ChatCompletionRequest } from '../../shared/types';
+import type { ChatCompletionRequest } from '../../utils/types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { stripSamplingParams } from '../samplingParams';
 

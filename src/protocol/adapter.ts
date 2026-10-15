@@ -9,9 +9,9 @@
  * 只有确实存在的差异才写成钩子；通用容错（例如各家不同的思维链字段名）由 `reasoning.ts` 统一处理。
  */
 
-import type { Logger } from '../shared/log';
+import type { Logger } from '../utils/log';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionRequest } from '../shared/types';
+import type { ChatCompletionRequest } from '../utils/types';
 
 /** 适配器运行上下文。每次请求构造一次，适配器内部应视为只读。 */
 export interface AdapterContext {
@@ -30,7 +30,7 @@ export interface ModelAdapter {
 	supports(model: ModelConfig): boolean;
 	/**
 	 * 历史里的助手消息是否要回填思考内容（`reasoning_content`）：打开后 provider 会把上次响应
-	 * 留下的思考文本写回 assistant 消息（见 `host/replay.ts`）。
+	 * 留下的思考文本写回 assistant 消息（见 `provider/replay.ts`）。
 	 * 只有确实要求这个字段的上游才该打开。
 	 */
 	readonly echoReasoningContent?: boolean;

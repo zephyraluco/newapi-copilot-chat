@@ -1,7 +1,7 @@
 import type * as vscode from 'vscode';
 import type { AdapterRegistry } from '../protocol/registry';
-import type { NewApiSettings } from '../shared/settings';
-import type { Logger } from '../shared/log';
+import type { NewApiSettings } from '../utils/settings';
+import type { Logger } from '../utils/log';
 import type { ModelConfig } from '../models/modelConfig';
 import { prepareChatRequest as prepareNormalizedRequest } from '../protocol/request';
 import { selectReasoningEffort } from '../protocol/modelConfiguration';

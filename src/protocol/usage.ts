@@ -1,5 +1,5 @@
-import type { ChatUsage } from '../shared/types';
-import { asNumber, isRecord } from '../shared/json';
+import type { ChatUsage } from '../utils/types';
+import { asNumber, isRecord } from '../utils/json';
 
 /** The complete numeric payload required by Copilot's context-window display. */
 export interface ReportedUsagePayload {

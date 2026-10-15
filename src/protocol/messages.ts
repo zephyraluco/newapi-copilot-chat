@@ -1,7 +1,7 @@
-import type { Message, MessagePart } from '../shared/messages';
-import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../shared/types';
-import type { Logger } from '../shared/log';
-import { safeJsonStringify } from '../shared/json';
+import type { Message, MessagePart } from '../utils/messages';
+import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../utils/types';
+import type { Logger } from '../utils/log';
+import { safeJsonStringify } from '../utils/json';
 import { splitCjkChars, type RequestTextMeasure } from './tokenizer';
 import { REASONING_ECHO_FIELD } from './reasoning';
 

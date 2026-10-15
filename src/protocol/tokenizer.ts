@@ -1,6 +1,6 @@
-import { TOKEN_ESTIMATION } from '../shared/consts';
-import type { Message, MessagePart } from '../shared/messages';
-import { safeJsonStringify } from '../shared/json';
+import { TOKEN_ESTIMATION } from '../utils/consts';
+import type { Message, MessagePart } from '../utils/messages';
+import { safeJsonStringify } from '../utils/json';
 
 const CJK_PATTERN = /[\u2e80-\u303f\u3040-\u30ff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/g;
 export interface RequestTextMeasure { readonly cjkChars: number; readonly otherChars: number }

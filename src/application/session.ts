@@ -14,10 +14,10 @@
  * 两条路都不中断在途请求。
  */
 
-import { EventEmitter } from '../shared/event';
+import { EventEmitter } from '../utils/event';
 import { NewApiClient } from '../transport/newApiClient';
-import type { ModelSettings, RequestSettings } from '../shared/settings';
-import type { Logger } from '../shared/log';
+import type { ModelSettings, RequestSettings } from '../utils/settings';
+import type { Logger } from '../utils/log';
 import { ModelCatalog } from './catalog';
 import type { ProviderTarget } from './target';
 import { isTargetUsable } from './target';

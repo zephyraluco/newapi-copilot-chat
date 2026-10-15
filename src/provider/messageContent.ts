@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import type { Message, MessagePart } from '../shared/messages';
-import { SUPPORTED_IMAGE_MIME_TYPES } from '../shared/consts';
+import type { Message, MessagePart } from '../utils/messages';
+import { SUPPORTED_IMAGE_MIME_TYPES } from '../utils/consts';
 import { isReplayMarkerPart, parseReplayMarker } from './replay';
 import { readThinkingText } from './thinking';
 

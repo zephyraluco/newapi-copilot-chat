@@ -15,11 +15,11 @@
  */
 
 import type { ModelConfig } from '../models/modelConfig';
-import { asNonEmptyString, isRecord } from '../shared/json';
+import { asNonEmptyString, isRecord } from '../utils/json';
 import {
 	DEFAULT_REASONING_EFFORT_FIELD,
 	REASONING_EFFORT_KEY,
-} from '../shared/consts';
+} from '../utils/consts';
 
 /**
  * 模型配置中的一项。

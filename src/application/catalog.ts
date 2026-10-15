@@ -6,11 +6,11 @@
  * 失败保留旧数据（stale-while-error）：刷新失败时返回上一次快照并附上错误。
  */
 
-import { EventEmitter } from '../shared/event';
+import { EventEmitter } from '../utils/event';
 import { describeError, describeFailureHint, type NewApiClient } from '../transport/newApiClient';
-import { safeJsonStringify } from '../shared/json';
-import type { Logger } from '../shared/log';
-import type { ModelSettings } from '../shared/settings';
+import { safeJsonStringify } from '../utils/json';
+import type { Logger } from '../utils/log';
+import type { ModelSettings } from '../utils/settings';
 import { buildModelConfigs, type ModelConfig } from '../models/modelConfig';
 
 /** 一次模型列表快照。 */

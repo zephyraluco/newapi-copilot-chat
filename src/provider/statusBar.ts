@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { STATUS_BAR_PRIORITY } from '../shared/consts';
-import { escapeMarkdown, formatTokens } from '../shared/format';
-import type { Logger } from '../shared/log';
+import { STATUS_BAR_PRIORITY } from '../utils/consts';
+import { escapeMarkdown, formatTokens } from '../utils/format';
+import type { Logger } from '../utils/log';
 import type { ModelStatus } from '../application/modelStatus';
 import type { UsageStats } from '../application/usage';
 import type { SiteHealth } from '../application/siteHealth';

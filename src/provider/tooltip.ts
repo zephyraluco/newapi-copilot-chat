@@ -10,7 +10,7 @@
  * 每项独占一行，且「键」与「值」各自成列对齐（见 `padLabel`）。
  */
 
-import { escapeMarkdown, formatTokens } from '../shared/format';
+import { escapeMarkdown, formatTokens } from '../utils/format';
 
 /** 构建 tooltip 所需的模型事实，由宿主模型信息映射传入。 */
 export interface ModelTooltipFacts {

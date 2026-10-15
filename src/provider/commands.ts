@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { COMMANDS, MANAGE_MODELS_COMMAND } from '../shared/consts';
+import { COMMANDS, MANAGE_MODELS_COMMAND } from '../utils/consts';
 import type { ModelStatus } from '../application/modelStatus';
 import type { Logger } from './logger';
 

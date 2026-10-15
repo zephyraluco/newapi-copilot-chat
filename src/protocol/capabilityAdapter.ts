@@ -7,12 +7,12 @@
  * 固定在供应商策略之后执行，因此它看到的是供应商改写之后的请求。
  */
 
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../shared/consts';
+import { DEFAULT_REASONING_EFFORT_FIELD } from '../utils/consts';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionRequest } from '../shared/types';
+import type { ChatCompletionRequest } from '../utils/types';
 import type { AdapterContext, ModelAdapter } from './adapter';
 import { stripSamplingParams } from './samplingParams';
-import { isRecord } from '../shared/json';
+import { isRecord } from '../utils/json';
 import { isThinkingDisabled } from './thinkingMode';
 
 export class ModelCapabilityAdapter implements ModelAdapter {

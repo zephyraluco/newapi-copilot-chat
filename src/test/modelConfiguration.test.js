@@ -12,7 +12,7 @@ const { load } = require('./helpers');
 
 const { modules } = load({
 	modelConfiguration: './src/protocol/modelConfiguration',
-	consts: './src/shared/consts',
+	consts: './src/utils/consts',
 });
 
 const {

@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { CONFIG_SECTION, DEFAULTS } from '../shared/consts';
-import { asBoolean, asNumber, isRecord } from '../shared/json';
-import type { Logger } from '../shared/log';
-import type { NewApiSettings } from '../shared/settings';
+import { CONFIG_SECTION, DEFAULTS } from '../utils/consts';
+import { asBoolean, asNumber, isRecord } from '../utils/json';
+import type { Logger } from '../utils/log';
+import type { NewApiSettings } from '../utils/settings';
 
 function positiveInt(value: unknown, fallback: number, minimum: number): number {
 	const number = asNumber(value);

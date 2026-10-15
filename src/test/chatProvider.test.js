@@ -17,7 +17,7 @@ const { load, createLogger } = require('./helpers');
 
 const logger = createLogger();
 const { modules } = load({
-	chatProvider: './src/host/chatProvider',
+	chatProvider: './src/provider/chatProvider',
 	modelConfig: './src/models/modelConfig',
 });
 const { NewApiChatProvider } = modules.chatProvider;

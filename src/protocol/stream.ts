@@ -9,10 +9,10 @@
  * 由上报层（`streamFlow.ts`）负责。
  */
 
-import { isRecord, safeJsonParse } from '../shared/json';
-import type { Logger } from '../shared/log';
+import { isRecord, safeJsonParse } from '../utils/json';
+import type { Logger } from '../utils/log';
 import { readReasoningText } from './reasoning';
-import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../shared/types';
+import type { ChatCompletionChunk, ChatToolCallDelta, ChatUsage } from '../utils/types';
 
 /**
  * 一个响应部件：本模块的输出契约。

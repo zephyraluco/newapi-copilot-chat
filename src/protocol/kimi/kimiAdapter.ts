@@ -10,9 +10,9 @@
  *    原样带回，由通用回放机制完成。
  */
 
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../../shared/consts';
+import { DEFAULT_REASONING_EFFORT_FIELD } from '../../utils/consts';
 import type { ModelConfig } from '../../models/modelConfig';
-import type { ChatCompletionRequest } from '../../shared/types';
+import type { ChatCompletionRequest } from '../../utils/types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { classifyRequest, shouldDisableThinking } from '../requestKind';
 import { isThinkingDisabled, readThinkingEffort } from '../thinkingMode';

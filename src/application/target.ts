@@ -10,9 +10,9 @@
  * 日志一律经 `redactSecret`。
  */
 
-import { isValidBaseUrl, normalizeBaseUrl } from '../shared/url';
-import { asNonEmptyString, isRecord } from '../shared/json';
-import type { Logger } from '../shared/log';
+import { isValidBaseUrl, normalizeBaseUrl } from '../utils/url';
+import { asNonEmptyString, isRecord } from '../utils/json';
+import type { Logger } from '../utils/log';
 
 /** 一个连接目标（对应 VS Code 里的一项配置组）。 */
 export interface ProviderTarget {

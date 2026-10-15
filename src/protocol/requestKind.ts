@@ -9,7 +9,7 @@
  * 这里是框架层：判据与厂商无关，`deepseek/` 与 `glm/` 等厂商适配器共用它来决定何时关闭思考。
  */
 
-import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../shared/types';
+import type { ChatContentPart, ChatRequestMessage, ChatToolDefinition } from '../utils/types';
 
 /** 一次请求的种类。 */
 export type ChatRequestKind =

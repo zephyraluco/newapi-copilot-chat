@@ -12,9 +12,9 @@ const { load } = require('./helpers');
 const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
-	tokenizer: './src/host/tokenizer',
+	tokenizer: './src/provider/tokenizer',
 	math: './src/protocol/tokenizer',
-	replay: './src/host/replay',
+	replay: './src/provider/replay',
 });
 
 const { estimateMessageTokens, estimateTokens } = modules.tokenizer;
@@ -164,7 +164,7 @@ test('estimateMessageTokens：回放标记的思考内容要计入，且只算�
 
 	// 思考部件与标记装的是同一段文本：分别累加会把上下文算成两倍
 	const withThinking = load(
-		{ tokenizer: './src/host/tokenizer', replay: './src/host/replay' },
+		{ tokenizer: './src/provider/tokenizer', replay: './src/provider/replay' },
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);
 	const both = {
@@ -192,7 +192,7 @@ test('estimateMessageTokens：字符串部件与认不出的部件都有兜底',
 
 test('estimateMessageTokens：思考部件按内容计', () => {
 	const withThinking = load(
-		{ tokenizer: './src/host/tokenizer' },
+		{ tokenizer: './src/provider/tokenizer' },
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);
 

@@ -1,5 +1,5 @@
-import { EventEmitter } from '../shared/event';
-import type { Logger } from '../shared/log';
+import { EventEmitter } from '../utils/event';
+import type { Logger } from '../utils/log';
 import { describeError, type SiteProbeResult } from '../transport/newApiClient';
 import type { SessionRegistry } from './session';
 import { isTargetUsable } from './target';

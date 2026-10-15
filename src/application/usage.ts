@@ -1,6 +1,6 @@
-import { EventEmitter } from '../shared/event';
-import { asNumber, isRecord } from '../shared/json';
-import type { ChatUsage } from '../shared/types';
+import { EventEmitter } from '../utils/event';
+import { asNumber, isRecord } from '../utils/json';
+import type { ChatUsage } from '../utils/types';
 import { buildReportedUsage } from '../protocol/usage';
 
 export interface UsageStats {

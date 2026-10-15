@@ -6,13 +6,13 @@ const { load, createLogger, collect } = require('./helpers');
 const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
-	request: './src/host/request',
-	headers: './src/host/headers',
+	request: './src/provider/request',
+	headers: './src/provider/headers',
 	registry: './src/protocol/registry',
-	replay: './src/host/replay',
-	flow: './src/host/streamFlow',
+	replay: './src/provider/replay',
+	flow: './src/provider/streamFlow',
 	client: './src/transport/newApiClient',
-	provider: './src/host/chatProvider',
+	provider: './src/provider/chatProvider',
 }, { vscode: createVscodeStub({ thinkingPart: true }) });
 
 const logger = { ...createLogger(), child() { return this; } };

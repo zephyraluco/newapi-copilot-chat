@@ -6,14 +6,14 @@
 
 ## 宿主适配与中立消息
 
-`host/messageContent.ts` 是宿主部件解码的唯一入口。文本、图片、工具调用/结果、原生思考和回放
-统一为 `shared/messages.ts` 的判别式联合。未知控制部件被忽略。
+`provider/messageContent.ts` 是宿主部件解码的唯一入口。文本、图片、工具调用/结果、原生思考和回放
+统一为 `utils/messages.ts` 的判别式联合。未知控制部件被忽略。
 
 `protocol/messages.ts` 构造线协议消息，`protocol/tokenizer.ts` 估算同一中立消息。
 它们不导入 VS Code，也不读取用户设置。图片只在发送请求时编码，估算使用固定图片开销。
 工具结果带原始 callId 独立发送；用户图文保持顺序。
 
-`host/request.ts` 解析宿主模型配置，`protocol/request.ts` 合并输出上限、采样、额外请求体和
+`provider/request.ts` 解析宿主模型配置，`protocol/request.ts` 合并输出上限、采样、额外请求体和
 有效思考强度。用户选择优先，未改变时使用模型数据表默认值。
 
 ## 固定供应商策略

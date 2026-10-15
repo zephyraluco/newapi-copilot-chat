@@ -5,7 +5,7 @@
  * `capabilityAdapter.ts` 按**数据**（数据表能力位）。
  */
 
-import type { ChatCompletionRequest } from '../shared/types';
+import type { ChatCompletionRequest } from '../utils/types';
 
 /** 采样参数：推理模型会直接拒绝它们，而不是忽略。 */
 export const SAMPLING_PARAM_FIELDS = ['temperature', 'top_p', 'logprobs', 'top_logprobs'] as const;

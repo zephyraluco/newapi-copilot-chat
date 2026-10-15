@@ -3,7 +3,7 @@
  * 不含业务语义（业务在 `newApiClient.ts`）。
  */
 
-import { DEFAULTS } from '../shared/consts';
+import { DEFAULTS } from '../utils/consts';
 import {
 	describeErrorCause,
 	getNetworkErrorCauseInfo,
@@ -11,9 +11,9 @@ import {
 	getNetworkErrorMessage,
 	hostOfUrl,
 } from './errors';
-import { asNonEmptyString, isRecord, safeJsonParse, truncate } from '../shared/json';
-import type { Logger } from '../shared/log';
-import type { ApiErrorBody } from '../shared/types';
+import { asNonEmptyString, isRecord, safeJsonParse, truncate } from '../utils/json';
+import type { Logger } from '../utils/log';
+import type { ApiErrorBody } from '../utils/types';
 
 /* -------------------------------------------------------------------------- */
 /* URL                                                                         */

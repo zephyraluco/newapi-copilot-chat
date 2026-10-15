@@ -16,7 +16,7 @@
  *   取决于站点与它的上游。
  */
 
-import { asBoolean, asNonEmptyString, asPositiveNumber, asStringArray, isRecord } from '../shared/json';
+import { asBoolean, asNonEmptyString, asPositiveNumber, asStringArray, isRecord } from '../utils/json';
 
 /** 数据表所在目录（相对于扩展根目录）。 */
 export const MODEL_DATASET_DIR = 'data';

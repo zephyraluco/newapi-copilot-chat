@@ -1,6 +1,6 @@
 /** Chat Completions 思考选择的共享语义；具体字段形状仍由厂商适配器决定。 */
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../shared/consts';
-import type { ChatCompletionRequest } from '../shared/types';
+import { DEFAULT_REASONING_EFFORT_FIELD } from '../utils/consts';
+import type { ChatCompletionRequest } from '../utils/types';
 import type { AdapterContext } from './adapter';
 
 export function readThinkingEffort(request: ChatCompletionRequest, context: AdapterContext): string | undefined {

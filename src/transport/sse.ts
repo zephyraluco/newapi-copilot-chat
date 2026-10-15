@@ -3,9 +3,9 @@
  * 不解释业务字段（业务字段在 `newApiClient.ts`）。
  */
 
-import { SSE_DONE } from '../shared/consts';
-import { safeJsonParse } from '../shared/json';
-import type { Logger } from '../shared/log';
+import { SSE_DONE } from '../utils/consts';
+import { safeJsonParse } from '../utils/json';
+import type { Logger } from '../utils/log';
 
 /** 一个 SSE 事件。 */
 export interface SseEvent {

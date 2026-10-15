@@ -9,9 +9,9 @@
  * `reasoning_effort` 的取值不做翻译，档位本来就来自数据表。
  */
 
-import { DEFAULT_REASONING_EFFORT_FIELD, DEFAULT_THINKING_FIELD } from '../../shared/consts';
+import { DEFAULT_REASONING_EFFORT_FIELD, DEFAULT_THINKING_FIELD } from '../../utils/consts';
 import type { ModelConfig } from '../../models/modelConfig';
-import type { ChatCompletionRequest } from '../../shared/types';
+import type { ChatCompletionRequest } from '../../utils/types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { isThinkingDisabled, readThinkingEffort } from '../thinkingMode';
 

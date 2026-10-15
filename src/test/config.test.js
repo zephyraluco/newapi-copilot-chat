@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers');
 
-const { modules } = load({ config: './src/shared/settings' });
+const { modules } = load({ config: './src/utils/settings' });
 const { classifySettingsChange } = modules.config;
 
 /** 一份完整的设置。 */
@@ -101,7 +101,7 @@ test('配置读取不再访问旧日志及采样设置，extraBody 保留采样�
 		reads.push(key);
 		return key === 'request.extraBody' ? { temperature: 0.7, top_p: 0.9 } : undefined;
 	} }) };
-	const loaded = load({ hostConfig: './src/host/config' }, { vscode });
+	const loaded = load({ hostConfig: './src/provider/config' }, { vscode });
 	const value = loaded.modules.hostConfig.readSettings();
 	assert.equal('logLevel' in value, false);
 	assert.equal('temperature' in value.request, false);

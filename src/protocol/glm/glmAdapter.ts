@@ -13,9 +13,9 @@
  * 行为不随站点变化：New API 是网关，模型后面接的是哪个上游无法从地址判断。
  */
 
-import { DEFAULT_REASONING_EFFORT_FIELD } from '../../shared/consts';
+import { DEFAULT_REASONING_EFFORT_FIELD } from '../../utils/consts';
 import type { ModelConfig } from '../../models/modelConfig';
-import type { ChatCompletionRequest } from '../../shared/types';
+import type { ChatCompletionRequest } from '../../utils/types';
 import type { AdapterContext, ModelAdapter } from '../adapter';
 import { classifyRequest, shouldDisableThinking } from '../requestKind';
 import { isThinkingDisabled, readThinkingEffort } from '../thinkingMode';

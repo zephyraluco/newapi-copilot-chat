@@ -1,6 +1,6 @@
 import type { ModelConfig } from '../models/modelConfig';
 import type { AdapterContext, ModelAdapter } from './adapter';
-import type { ChatCompletionRequest } from '../shared/types';
+import type { ChatCompletionRequest } from '../utils/types';
 import { ModelCapabilityAdapter } from './capabilityAdapter';
 import { DeepSeekAdapter } from './deepseek/deepseekAdapter';
 import { OpenAIAdapter } from './openai/openaiAdapter';

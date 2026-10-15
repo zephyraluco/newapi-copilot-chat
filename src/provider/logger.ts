@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { OUTPUT_CHANNEL_NAME } from '../shared/consts';
+import { OUTPUT_CHANNEL_NAME } from '../utils/consts';
 import { describeErrorCause } from '../transport/errors';
-import { safeJsonStringify, truncate } from '../shared/json';
-import { redactText } from '../shared/log';
+import { safeJsonStringify, truncate } from '../utils/json';
+import { redactText } from '../utils/log';
 
 type LogMethod = 'error' | 'warn' | 'info' | 'debug' | 'trace';
 

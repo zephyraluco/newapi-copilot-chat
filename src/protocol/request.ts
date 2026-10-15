@@ -1,10 +1,10 @@
 import type { AdapterRegistry } from './registry';
-import type { RequestSettings } from '../shared/settings';
-import type { Message } from '../shared/messages';
-import { DEFAULT_REASONING_EFFORT_FIELD, PROTECTED_REQUEST_KEYS } from '../shared/consts';
-import type { Logger } from '../shared/log';
+import type { RequestSettings } from '../utils/settings';
+import type { Message } from '../utils/messages';
+import { DEFAULT_REASONING_EFFORT_FIELD, PROTECTED_REQUEST_KEYS } from '../utils/consts';
+import type { Logger } from '../utils/log';
 import type { ModelConfig } from '../models/modelConfig';
-import type { ChatCompletionRequest, ChatToolDefinition } from '../shared/types';
+import type { ChatCompletionRequest, ChatToolDefinition } from '../utils/types';
 import { convertMessages } from './messages';
 
 /** Resolve the complete wire request once, before starting network I/O. */

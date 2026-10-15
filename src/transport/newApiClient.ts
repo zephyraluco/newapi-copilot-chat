@@ -6,11 +6,11 @@
  * - `POST /v1/chat/completions`  对话补全（流式 / 非流式）
  */
 
-import { ENDPOINTS, SSE_CONTENT_TYPE, runtimeInfo } from '../shared/consts';
+import { ENDPOINTS, SSE_CONTENT_TYPE, runtimeInfo } from '../utils/consts';
 import { describeErrorCause } from './errors';
-import { asNonEmptyString, isRecord, safeJsonParse, safeJsonStringify, truncate } from '../shared/json';
-import type { Logger } from '../shared/log';
-import { redactText } from '../shared/log';
+import { asNonEmptyString, isRecord, safeJsonParse, safeJsonStringify, truncate } from '../utils/json';
+import type { Logger } from '../utils/log';
+import { redactText } from '../utils/log';
 import { readReasoningText } from '../protocol/reasoning';
 import type {
 	ChatCompletionChunk,
@@ -18,7 +18,7 @@ import type {
 	ChatCompletionResponse,
 	NewApiModel,
 	NewApiModelListResponse,
-} from '../shared/types';
+} from '../utils/types';
 import { HttpClient, HttpError, TransportError, joinUrl } from './http';
 import {
 	SseIdleTimeoutError,

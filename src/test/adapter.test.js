@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
-	consts: './src/shared/consts',
+	consts: './src/utils/consts',
 	registry: './src/protocol/registry',
 	deepseek: './src/protocol/deepseek/deepseekAdapter',
 	requestKind: './src/protocol/requestKind',

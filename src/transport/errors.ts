@@ -7,7 +7,7 @@
  * `describeErrorCause` 给日志（整条链与诊断字段）。认不出的码照原样展示，解释退化成通用建议。
  */
 
-import { isRecord } from '../shared/json';
+import { isRecord } from '../utils/json';
 
 /* -------------------------------------------------------------------------- */
 /* 错误链                                                                      */

@@ -16,7 +16,7 @@ test('日志级别由原生输出通道控制，动态切换无需配置事件�
 		};
 	}
 	vscode.window.createOutputChannel = (_name, options) => { assert.equal(options.log, true); return channel; };
-	const { modules } = load({ logger: './src/host/logger' }, { vscode });
+	const { modules } = load({ logger: './src/provider/logger' }, { vscode });
 	const service = new modules.logger.LoggerService();
 	const logger = new modules.logger.Logger(service, 'test').child('request');
 	logger.debug('hidden');
@@ -36,7 +36,7 @@ test('日志格式保留错误原因链，并对消息、附加对象和堆栈�
 	const vscode = createVscodeStub();
 	const output = [];
 	vscode.window.createOutputChannel = () => ({ error: value => output.push(value), dispose() {} });
-	const { modules } = load({ logger: './src/host/logger' }, { vscode });
+	const { modules } = load({ logger: './src/provider/logger' }, { vscode });
 	const service = new modules.logger.LoggerService();
 	const logger = new modules.logger.Logger(service, 'test');
 	const key = 'sk-123456789abcdefghijklmnop';

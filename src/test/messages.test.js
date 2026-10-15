@@ -12,10 +12,10 @@ const { load, createLogger } = require('./helpers');
 const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
-	messages: './src/host/messages',
+	messages: './src/provider/messages',
 	protocolMessages: './src/protocol/messages',
-	replay: './src/host/replay',
-	thinking: './src/host/thinking',
+	replay: './src/provider/replay',
+	thinking: './src/provider/thinking',
 });
 
 const { convertMessages } = modules.messages;
@@ -273,8 +273,8 @@ test('打开回填时，思考内容写进 reasoning_content', () => {
 test('标记缺失时退回宿主给的思考部件', () => {
 	const withThinking = load(
 		{
-			messages: './src/host/messages',
-			replay: './src/host/replay',
+			messages: './src/provider/messages',
+			replay: './src/provider/replay',
 		},
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);
@@ -292,8 +292,8 @@ test('标记缺失时退回宿主给的思考部件', () => {
 test('关掉回填时思考内容既不当正文也不写进请求', () => {
 	const withThinking = load(
 		{
-			messages: './src/host/messages',
-			replay: './src/host/replay',
+			messages: './src/provider/messages',
+			replay: './src/provider/replay',
 		},
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);

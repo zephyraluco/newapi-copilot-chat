@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import type { ChatCompletionChunk, ChatCompletionRequest } from '../shared/types';
-import { USAGE_DATA_MIME_TYPE } from '../shared/consts';
-import type { Logger } from '../shared/log';
+import type { ChatCompletionChunk, ChatCompletionRequest } from '../utils/types';
+import { USAGE_DATA_MIME_TYPE } from '../utils/consts';
+import type { Logger } from '../utils/log';
 import { buildReportedUsage } from '../protocol/usage';
 import { createReplayMarkerPart } from './replay';
 import { StreamTranslator, extractStreamError } from '../protocol/stream';

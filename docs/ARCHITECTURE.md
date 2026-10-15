@@ -9,29 +9,29 @@
 ```text
 src/
   extension.ts          唯一装配入口、配置变化协调
-  host/                 VS Code API、部件解码、Provider、设置、命令和展示
+  provider/             VS Code API、部件解码、Provider、设置、命令和展示
   application/          多站点会话、目录缓存、模型快照、独立探活与累计用量
   transport/            HTTP、SSE、端点调用、网络错误
   protocol/             纯请求准备、厂商策略、响应翻译、token 与 usage
   models/               模型数据表、远端元数据、能力与窗口整合
-  shared/               中立消息、线协议类型、设置类型、日志端口和纯工具
+  utils/                中立消息、线协议类型、设置类型、日志端口和纯工具
   test/                 Node 测试与宿主替身
 ```
 
 依赖方向：
 
 ```text
-extension → host / application / protocol / models / shared
-host → application / transport / protocol / models / shared
-application → transport / protocol / models / shared
-transport → protocol / shared
-protocol → models / shared
-models → shared
+extension → provider / application / protocol / models / utils
+provider → application / transport / protocol / models / utils
+application → transport / protocol / models / utils
+transport → protocol / utils
+protocol → models / utils
+models → utils
 ```
 
-同层模块允许单向引用，全部模块禁止形成环。只有 `host/` 和入口可以导入 `vscode`，类型导入也遵守边界。
+同层模块允许单向引用，全部模块禁止形成环。只有 `provider/` 和入口可以导入 `vscode`，类型导入也遵守边界。
 `transport` 使用 `protocol/reasoning` 将非流式网关响应归一化，协议层不会反向调用网络。
-`shared/log.ts` 是结构化日志端口，真正的输出通道由 `host/logger.ts` 创建。
+`utils/log.ts` 是结构化日志端口，真正的输出通道由 `provider/logger.ts` 创建。
 日志级别完全由 VS Code 原生通道控制，扩展只做作用域、格式化和脱敏，没有第二层过滤或日志级别配置。
 
 `npm run check-layering` 使用 TypeScript AST 检查导入、重导出、动态导入、require、类型边和循环依赖，
@@ -41,16 +41,16 @@ models → shared
 
 ```text
 Copilot 消息 / 选项
-  → host/chatProvider：站点定位、取消桥接
-  → host/messageContent：解码为 shared/messages 中立消息
-  → host/request：解析宿主选项与工具 schema
+  → provider/chatProvider：站点定位、取消桥接
+  → provider/messageContent：解码为 utils/messages 中立消息
+  → provider/request：解析宿主选项与工具 schema
   → protocol/request：生成完整请求、执行固定厂商策略与能力约束
-  → host/headers：解析本次调用的请求头模板
+  → provider/headers：解析本次调用的请求头模板
   → transport/newApiClient：一次 POST /v1/chat/completions
   → transport/sse：逐事件读取
   → protocol/stream：正文、思考、工具分片归并
-  → host/streamFlow：构造 VS Code 部件、回传最终 usage
-  → host/chatProvider：保存推理回放标记、校准 token、上报成功响应的用量
+  → provider/streamFlow：构造 VS Code 部件、回传最终 usage
+  → provider/chatProvider：保存推理回放标记、校准 token、上报成功响应的用量
 ```
 
 - 聊天只发送一次，HTTP 拒绝和断流直接报错，不自动删除字段或重放。
@@ -58,10 +58,10 @@ Copilot 消息 / 选项
 - `temperature` 和 `top_p` 统一从 `request.extraBody` 读取，没有独立设置或重复的采样解析；厂商协议与能力约束仍会按需移除不支持的字段。
 - 工具定义按模型能力提供，零参数工具补空对象 schema，工具选择使用 `auto`。
 - 中立消息保留原始图片字节；只有请求编码才生成 base64。token 估算不编码图片。
-- 请求转换与 token 估算共用 `host/messageContent.ts`，不再各自识别宿主部件。
+- 请求转换与 token 估算共用 `provider/messageContent.ts`，不再各自识别宿主部件。
 - 推理历史优先采用有效回放标记，其次原生思考部件，缺失时回填空字符串。
 - 思考展示独立于回填：默认显示，宿主支持时用原生部件，否则使用引用块。
-- `stateful_marker` 是非展示元数据，不发送为正文。标记格式由 `host/replay.ts` 负责。
+- `stateful_marker` 是非展示元数据，不发送为正文。标记格式由 `provider/replay.ts` 负责。
 - 工具按 index 拼接函数名和 JSON 参数，收到 stop/tool_calls 收尾时上报，否则正常结束时冲刷。
 - usage 取最后一个有效对象，null 不覆盖已有快照，正常结束只回传一次。
 - 取消或失败不冲刷未完成工具、不写成功回放标记。
@@ -70,7 +70,7 @@ Copilot 消息 / 选项
 
 ## 3. 多站点与生命周期
 
-`application/target.ts` 校验站点和密钥，URL 规范化来自 `shared/url.ts`，不依赖宿主设置读取。
+`application/target.ts` 校验站点和密钥，URL 规范化来自 `utils/url.ts`，不依赖宿主设置读取。
 模型信息只携带目标指纹与标签，不携带 API Key。
 
 `application/session.ts` 为每个配置组持有 client + catalog。会话签名包含目标身份及客户端构造参数。
@@ -98,12 +98,12 @@ Copilot 消息 / 选项
 模型事实合并顺序：网关扩展字段 → 随包数据表 → 设置默认值。窗口由 `limits.ts` 校正，
 保持输入/输出与上下文自洽。思考档位来自数据表，不编造上游未声明的枚举。
 数据表通过 `npm run models:openrouter` 生成，激活时载入；缺失或损坏则清空并使用兜底。
-tooltip 和模型副标题在 `host/tooltip.ts` 生成，`ModelConfig` 不保存展示 Markdown。
+tooltip 和模型副标题在 `provider/tooltip.ts` 生成，`ModelConfig` 不保存展示 Markdown。
 
 ## 5. 按需发现、探活与累计用量
 
 `application/modelStatus.ts` 是读取现有会话和目录快照的纯函数，没有缓存、定时器或网络请求。
-`host/statusBar.ts` 只渲染快照，分别订阅模型、探活和用量事件，不负责网络或累计计算。
+`provider/statusBar.ts` 只渲染快照，分别订阅模型、探活和用量事件，不负责网络或累计计算。
 
 - 激活扩展装配模块、载入本地数据、渲染状态栏并启动探活定时器；没有已知站点时不会发网络请求。
 - 宿主请求模型发现时按 TTL 读取目录；过期在访问时刷新，不安排后台任务。
@@ -128,7 +128,7 @@ tooltip 和模型副标题在 `host/tooltip.ts` 生成，`ModelConfig` 不保存
 - 清理响应头超时不会解绑调用方/客户端释放信号，等待流数据时也能停止。
 - SSE 支持跨分块 UTF-8、CRLF、心跳、无结尾换行的残留事件。
 - 已解析出数据却缺 DONE/finish_reason 时视为截断。
-- 网络错误分类留在 transport；转换为 LanguageModelError 属于 host。
+- 网络错误分类留在 transport；转换为 LanguageModelError 属于 provider。
 
 ## 7. 验证与扩展
 
@@ -141,6 +141,6 @@ npm run compile     类型、lint、扩展打包构建
 
 新增供应商：修改 `protocol/<supplier>/` 与固定策略表，补最终请求测试。
 新增元数据：修改模型数据层与生成脚本。
-新增宿主展示：只修改 host。
-新增用户设置：声明 package.json → host/config 读取 → shared/settings 类型/影响分类 → 对应消费者。
+新增宿主展示：只修改 provider。
+新增用户设置：声明 package.json → provider/config 读取 → utils/settings 类型/影响分类 → 对应消费者。
 共享工具必须有实际消费者；不要为潜在扩展增加动态注册、空包装或第二套状态来源。

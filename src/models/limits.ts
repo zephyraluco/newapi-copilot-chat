@@ -6,8 +6,8 @@
  * `reconcileLimits` 是纯函数、不碰 logger，只把说明作为返回值交出去。
  */
 
-import { DEFAULTS } from '../shared/consts';
-import { formatTokens } from '../shared/format';
+import { DEFAULTS } from '../utils/consts';
+import { formatTokens } from '../utils/format';
 
 /** 输出上限的最小值。 */
 export const MIN_OUTPUT_TOKENS = 256;

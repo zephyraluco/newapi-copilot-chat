@@ -16,7 +16,7 @@ const { modules } = load({
 	limits: './src/models/limits',
 	remoteHints: './src/models/remoteHints',
 	modelConfig: './src/models/modelConfig',
-	tooltip: './src/host/tooltip',
+	tooltip: './src/provider/tooltip',
 });
 
 const { parseModelDataset, installModelDataset, datasetKeysFor, matchModelDataset } = modules.dataset;
