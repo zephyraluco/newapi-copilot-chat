@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers');
 
-const { modules } = load({ config: './src/config' });
+const { modules } = load({ config: './src/shared/settings' });
 const { classifySettingsChange } = modules.config;
 
 /** 一份完整的设置。 */

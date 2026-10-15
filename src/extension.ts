@@ -2,7 +2,7 @@
  * 扩展入口：装配模块并注册命令，只做接线。
  *
  * ```
- *   VS Code 的配置组 ──▶ ProviderTarget（runtime/target.ts）
+ *   VS Code 的配置组 ──▶ ProviderTarget（application/target.ts）
  *                             │
  *                             ▼
  *   SessionRegistry ──▶ ModelCatalog ──拉取并整合──▶ ModelConfig[]
@@ -15,17 +15,18 @@
 
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
-import { createDefaultAdapterRegistry } from './adapter/registry';
-import { refreshAndNotify, registerCommands, type CommandDeps } from './commands';
-import { ConfigService, classifySettingsChange } from './config';
-import { CONFIG_SECTION, VENDOR_ID, initRuntimeInfo, runtimeInfo } from './consts';
-import { safeJsonParse } from './json';
-import { Logger, LoggerService, parseLogLevelName } from './logger';
+import { createDefaultAdapterRegistry } from './protocol/registry';
+import { refreshAndNotify, registerCommands, type CommandDeps } from './host/commands';
+import { ConfigService } from './host/config';
+import { classifySettingsChange } from './shared/settings';
+import { CONFIG_SECTION, VENDOR_ID, initRuntimeInfo, runtimeInfo } from './shared/consts';
+import { safeJsonParse } from './shared/json';
+import { Logger, LoggerService, parseLogLevelName } from './host/logger';
 import { MODEL_DATASET_DIR, MODEL_DATASET_FILE, installModelDataset } from './models/dataset';
-import { NewApiChatProvider } from './provider/chatProvider';
-import { SessionRegistry } from './runtime/session';
-import { NewApiStatusBar } from './status/statusBar';
-import { StatusService } from './status/statusService';
+import { NewApiChatProvider } from './host/chatProvider';
+import { SessionRegistry } from './application/session';
+import { NewApiStatusBar } from './host/statusBar';
+import { StatusService } from './application/statusService';
 
 /** 模型数据表文件的绝对路径。 */
 function datasetFile(context: vscode.ExtensionContext): string {
@@ -91,7 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	loadModelDataset(context, logger);
 
-	const adapters = createDefaultAdapterRegistry(logger.child('adapter'));
+	const adapters = createDefaultAdapterRegistry();
 	const sessions = new SessionRegistry({
 		logger: logger.child('session'),
 		getModelSettings: () => config.settings.models,
@@ -100,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	const statusService = new StatusService({
 		logger: logger.child('status'),
-		config,
+		getSettings: () => config.settings,
 		sessions,
 	});
 
@@ -110,8 +111,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		sessions,
 		adapters,
 		getSettings: () => config.settings,
-		reportUsage: (targetLabel, modelId, usage, summary) =>
-			statusService.recordUsage(targetLabel, modelId, usage, summary),
+		reportUsage: (_targetLabel, modelId, usage, summary) =>
+			statusService.recordUsage(modelId, usage, summary),
 	});
 
 	const statusBar = new NewApiStatusBar(logger.child('statusbar'));
@@ -144,6 +145,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (scope.logLevel) {
 			loggerService.setLevel(settings.logLevel);
 		}
+		sessions.configure(scope.client, scope.models);
+		statusService.settingsChanged(scope.status);
 		// 只有会影响模型列表（或连接身份）的变化才让宿主重新发现模型。
 		if (scope.models || scope.client) {
 			void refreshAndNotify(commands, true);

@@ -134,13 +134,13 @@ Newer OpenAI reasoning models (GPT-5.4+, GPT-5.6, GPT-6 Astra and Codex variants
 
 支持思考的模型会在模型选择器里出现**思考强度**控件，选择后扩展把 `reasoning_effort` 写进请求体：
 
-- **默认不发送**：控件预选数据表里的 `defaultReasoningEffort`，但这个值不会被发出去（站点本来就在用它），只有改成别的档位才加 `reasoning_effort`
-- 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由适配器层改写——见 `src/adapter/`
+- **显式使用有效档位**：控件预选数据表里的 `defaultReasoningEffort`，请求准备使用用户选择或该默认值；厂商策略负责转换思考开关，关闭思考时按协议省略强度字段。
+- 字段名固定为 `reasoning_effort`；站点若用别的叫法（例如 `reasoning.effort`）或需要嵌套形态，由协议层改写——见 `src/protocol/`
 - **有些模型不显示这个控件**：带工具调用时强度会被上游强制成某个固定值（例如 GPT-6 Sol/Luna 只能是 `none`），而 Agent 模式的请求总是带工具——显示一个选得了却不起作用的选项比不显示更糟
 
 ## 厂商适配
 
-通用层统一处理模型发现、配置组、消息/工具转换、流式响应、取消与用量；厂商差异集中在 `src/adapter/`：
+通用层统一处理模型发现、配置组、消息/工具转换、流式响应、取消与用量；厂商差异集中在 `src/protocol/`：
 
 | 厂商 | 适配行为 |
 | --- | --- |

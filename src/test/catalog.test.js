@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * models/catalog.ts：快照变化事件。宿主收到事件后会重新拉一遍模型列表，
+ * application/catalog.ts：快照变化事件。宿主收到事件后会重新拉一遍模型列表，
  * 因此「没变就不触发」是要求。
  */
 
@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 
-const { modules } = load({ catalog: './src/models/catalog' });
+const { modules } = load({ catalog: './src/application/catalog' });
 const { ModelCatalog } = modules.catalog;
 
 /** 造一个模型列表由外部控制的目录。 */
@@ -25,7 +25,7 @@ function makeCatalog(initialModels) {
 	};
 	const catalog = new ModelCatalog({
 		logger: createLogger(),
-		getClient: () => client,
+		client,
 		// 缓存有效期设为 0，强制每次调用都走网络
 		getSettings: () => ({ cacheTtlMs: 0, defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 }),
 	});
@@ -72,7 +72,7 @@ test('模型列表变了才触发事件', async () => {
 test('从未成功过时，只在错误说明变化后触发', async () => {
 	const failing = new ModelCatalog({
 		logger: createLogger(),
-		getClient: () => ({ hasApiKey: true, async listModels() { throw new Error('boom'); } }),
+		client: { hasApiKey: true, async listModels() { throw new Error('boom'); } },
 		getSettings: () => ({ cacheTtlMs: 0, defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 }),
 	});
 	let fires = 0;
@@ -88,7 +88,7 @@ test('成功之后错误消失也算变化', async () => {
 	let failing = true;
 	const catalog = new ModelCatalog({
 		logger: createLogger(),
-		getClient: () => ({
+		client: {
 			hasApiKey: true,
 			async listModels() {
 				if (failing) {
@@ -96,7 +96,7 @@ test('成功之后错误消失也算变化', async () => {
 				}
 				return [{ id: 'a' }];
 			},
-		}),
+		},
 		getSettings: () => ({ cacheTtlMs: 0, defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 }),
 	});
 	let fires = 0;

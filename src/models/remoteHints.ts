@@ -12,8 +12,8 @@
  * 本模块是纯数据转换、不依赖 `vscode`。
  */
 
-import { asBoolean, asStringArray, isRecord, pickBoolean, pickNumber, pickRecord, pickString } from '../json';
-import type { NewApiModel } from '../types';
+import { asBoolean, asStringArray, isRecord, pickBoolean, pickNumber, pickRecord, pickString } from '../shared/json';
+import type { NewApiModel } from '../shared/types';
 
 /**
  * 从网关返回值里能提取到的信息。

@@ -1,0 +1,112 @@
+/**
+ * 用量的读出与翻译：把「一次响应的 `usage`」翻译成可累加的 `UsageDelta`（供状态栏统计），
+ * 以及回传给 Copilot 的 `ReportedUsagePayload`（供会话信息里的上下文窗口显示）。只做算术，不碰 UI。
+ *
+ * 需要吸收的差异：
+ *
+ * 1. 缓存命中的字段名不统一：OpenAI / New API 放在 `prompt_tokens_details.cached_tokens`，
+ *    DeepSeek 用 `prompt_cache_hit_tokens`。
+ * 2. 分项与总量可能缺一个：只给 `total_tokens` 时按分项之和补齐，反之亦然。
+ * 3. 有的网关根本不返回 `usage`，因此 `reportsCache` 与 `totalTokens === 0` 一起用于区分
+ *    「没报告」与「报告了 0」。
+ */
+
+import type { ChatUsage } from '../shared/types';
+import { asNumber, isRecord } from '../shared/json';
+
+/** 一次响应能提供的可累加计数（缺失一律按 0）。 */
+export interface UsageDelta {
+	readonly promptTokens: number;
+	readonly completionTokens: number;
+	readonly totalTokens: number;
+	/** 命中前缀缓存的输入 token 数 */
+	readonly cachedTokens: number;
+	/** 思维链 token 数 */
+	readonly reasoningTokens: number;
+	/** 这次响应是否带了缓存字段（用于区分「没有缓存」与「上游没报告缓存」） */
+	readonly reportsCache: boolean;
+}
+
+/** 空增量：没有 `usage` 时用它。 */
+export const EMPTY_USAGE_DELTA: UsageDelta = {
+	promptTokens: 0,
+	completionTokens: 0,
+	totalTokens: 0,
+	cachedTokens: 0,
+	reasoningTokens: 0,
+	reportsCache: false,
+};
+
+/** 读出一次响应的用量增量。 */
+export function readUsageDelta(usage: ChatUsage | undefined): UsageDelta {
+	if (usage === undefined) {
+		return EMPTY_USAGE_DELTA;
+	}
+
+	const promptTokens = asNumber(usage.prompt_tokens) ?? 0;
+	const completionTokens = asNumber(usage.completion_tokens) ?? 0;
+	// 总量与分项互为兜底
+	const totalTokens = asNumber(usage.total_tokens) ?? promptTokens + completionTokens;
+	const cached = readCachedTokens(usage);
+
+	return {
+		promptTokens,
+		completionTokens,
+		totalTokens,
+		// 命中数不该超过输入总量，钳一下
+		cachedTokens: Math.min(cached ?? 0, promptTokens),
+		reasoningTokens: readReasoningTokens(usage),
+		reportsCache: cached !== undefined,
+	};
+}
+
+/**
+ * 回传给 Copilot 的用量载荷（OpenAI 的字段名）。
+ *
+ * Copilot 的校验器要求 `prompt_tokens` / `completion_tokens` / `total_tokens` 都是数字，
+ * 任一字段缺失或不是数字则整块载荷被丢弃。因此这里始终补齐三个数字。
+ */
+export interface ReportedUsagePayload {
+	readonly prompt_tokens: number;
+	readonly completion_tokens: number;
+	readonly total_tokens: number;
+	readonly prompt_tokens_details: { readonly cached_tokens: number };
+	readonly completion_tokens_details?: { readonly reasoning_tokens: number };
+}
+
+/**
+ * 把上游的 `usage` 转成 Copilot 认识的载荷；上游没给用量时返回 `undefined`。
+ */
+export function buildReportedUsage(usage: ChatUsage | undefined): ReportedUsagePayload | undefined {
+	if (usage === undefined) {
+		return undefined;
+	}
+	const delta = readUsageDelta(usage);
+	return {
+		prompt_tokens: delta.promptTokens,
+		completion_tokens: delta.completionTokens,
+		total_tokens: delta.totalTokens,
+		prompt_tokens_details: { cached_tokens: delta.cachedTokens },
+		...(delta.reasoningTokens > 0
+			? { completion_tokens_details: { reasoning_tokens: delta.reasoningTokens } }
+			: {}),
+	};
+}
+
+/** 命中数：OpenAI 风格与 DeepSeek 风格都认；字段完全不存在时返回 `undefined`。 */
+function readCachedTokens(usage: ChatUsage): number | undefined {
+	const details = isRecord(usage.prompt_tokens_details)
+		? asNumber(usage.prompt_tokens_details.cached_tokens)
+		: undefined;
+	// DeepSeek 风格：命中与未命中两个数
+	const deepSeekStyle = asNumber(usage.prompt_cache_hit_tokens);
+	return details ?? deepSeekStyle;
+}
+
+/** 思维链 token：优先看明细，其次看顶层字段。 */
+function readReasoningTokens(usage: ChatUsage): number {
+	const details = isRecord(usage.completion_tokens_details)
+		? asNumber(usage.completion_tokens_details.reasoning_tokens)
+		: undefined;
+	return details ?? asNumber(usage.reasoning_tokens) ?? 0;
+}

@@ -121,8 +121,8 @@ The chat pipeline follows `deepseek-v4-for-copilot`: prepare the request once, P
 
 Models that support reasoning get a **reasoning effort** control in the model picker; the choice is written into the request body as `reasoning_effort`:
 
-- **Not sent by default**: the control pre-selects the dataset's `defaultReasoningEffort`, but that value is never sent (the site is already using it); only a different choice adds `reasoning_effort`
-- The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the adapter layer — see `src/adapter/`
+- **Explicit effective effort**: the control pre-selects the dataset's `defaultReasoningEffort`; request preparation uses the user selection or that default. Vendor rules translate the thinking switch and omit the effort field when thinking is disabled.
+- The field name is fixed to `reasoning_effort`; a site using another name (for example `reasoning.effort`) or a nested shape is handled by the protocol layer — see `src/protocol/`
 - **Some models do not show the control**: with tool calls present the upstream forces a fixed value (GPT-6 Sol/Luna only accept `none`), and agent-mode requests always carry tools — showing an option that can never take effect is worse than not showing it
 
 ## Where the configuration comes from
@@ -178,7 +178,7 @@ The design and implementation borrow from two similar extensions:
 
 ## Provider adaptation design
 
-Model discovery, configuration groups, message/tool conversion, streaming, cancellation, and usage share one provider pipeline. Vendor-specific request rules live in `src/adapter/`:
+Model discovery, configuration groups, message/tool conversion, streaming, cancellation, and usage share one provider pipeline. Vendor-specific request rules live in `src/protocol/`:
 
 | Vendor | Adaptation |
 | --- | --- |

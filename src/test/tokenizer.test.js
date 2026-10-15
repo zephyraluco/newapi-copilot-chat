@@ -12,11 +12,13 @@ const { load } = require('./helpers');
 const { createVscodeStub } = require('./fakes');
 
 const { modules, vscode } = load({
-	tokenizer: './src/provider/tokenizer',
-	replay: './src/provider/replay',
+	tokenizer: './src/host/tokenizer',
+	math: './src/protocol/tokenizer',
+	replay: './src/host/replay',
 });
 
-const { estimateTextTokens, calibrateCharsPerToken, estimateMessageTokens, estimateTokens } = modules.tokenizer;
+const { estimateMessageTokens, estimateTokens } = modules.tokenizer;
+const { estimateTextTokens, calibrateCharsPerToken } = modules.math;
 const { createReplayMarkerPart } = modules.replay;
 
 const text = value => new vscode.LanguageModelTextPart(value);
@@ -162,7 +164,7 @@ test('estimateMessageTokens：回放标记的思考内容要计入，且只算�
 
 	// 思考部件与标记装的是同一段文本：分别累加会把上下文算成两倍
 	const withThinking = load(
-		{ tokenizer: './src/provider/tokenizer', replay: './src/provider/replay' },
+		{ tokenizer: './src/host/tokenizer', replay: './src/host/replay' },
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);
 	const both = {
@@ -173,6 +175,12 @@ test('estimateMessageTokens：回放标记的思考内容要计入，且只算�
 		],
 	};
 	assert.equal(withThinking.modules.tokenizer.estimateMessageTokens(both), 4 + 2);
+	const different = {
+		role: 2,
+		content: [new withThinking.vscode.LanguageModelThinkingPart('短'),
+			withThinking.modules.replay.createReplayMarkerPart('实际回填的推理')],
+	};
+	assert.equal(withThinking.modules.tokenizer.estimateMessageTokens(different), 4 + 7);
 });
 
 test('estimateMessageTokens：字符串部件与认不出的部件都有兜底', () => {
@@ -184,7 +192,7 @@ test('estimateMessageTokens：字符串部件与认不出的部件都有兜底',
 
 test('estimateMessageTokens：思考部件按内容计', () => {
 	const withThinking = load(
-		{ tokenizer: './src/provider/tokenizer' },
+		{ tokenizer: './src/host/tokenizer' },
 		{ vscode: createVscodeStub({ thinkingPart: true }) },
 	);
 

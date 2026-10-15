@@ -11,13 +11,13 @@ const assert = require('node:assert/strict');
 const { load, createLogger } = require('./helpers');
 
 const { modules } = load({
-	consts: './src/consts',
-	registry: './src/adapter/registry',
-	deepseek: './src/adapter/deepseek/deepseekAdapter',
-	requestKind: './src/adapter/requestKind',
-	capability: './src/adapter/capabilityAdapter',
-	openaiReasoning: './src/adapter/openai/openaiAdapter',
-	reasoning: './src/reasoning',
+	consts: './src/shared/consts',
+	registry: './src/protocol/registry',
+	deepseek: './src/protocol/deepseek/deepseekAdapter',
+	requestKind: './src/protocol/requestKind',
+	capability: './src/protocol/capabilityAdapter',
+	openaiReasoning: './src/protocol/openai/openaiAdapter',
+	reasoning: './src/protocol/reasoning',
 });
 
 const { AdapterRegistry, createDefaultAdapterRegistry } = modules.registry;
@@ -143,35 +143,20 @@ test('shouldDisableThinking：只对「产出是一行短文本」的辅助请�
 
 const silentLogger = createLogger();
 
-test('AdapterRegistry：重复 id 被忽略并留下警告', () => {
-	const registry = new AdapterRegistry();
-	const logger = createLogger();
-	registry.register(new DeepSeekAdapter(), logger);
-	registry.register(new DeepSeekAdapter(), logger);
+test('AdapterRegistry：全部命中项按固定声明顺序执行', () => {
+	const low = { id: 'low', supports: () => true, transformRequest: request => request };
+	const high = { id: 'high', supports: () => true, transformRequest: request => request };
+	const never = { id: 'never', supports: () => false, transformRequest: request => request };
 
-	assert.equal(registry.resolveAll(model('deepseek-chat')).length, 1);
-	assert.equal(logger.messages('warn').length, 1);
-	assert.match(logger.messages('warn')[0], /deepseek/);
-});
-
-test('AdapterRegistry：resolveAll 返回全部命中项，高优先级排在前面', () => {
-	const registry = new AdapterRegistry();
-	const low = { id: 'low', priority: 1, supports: () => true, transformRequest: request => request };
-	const high = { id: 'high', priority: 10, supports: () => true, transformRequest: request => request };
-	const never = { id: 'never', priority: 100, supports: () => false, transformRequest: request => request };
-
-	// 注册顺序与优先级顺序相反，用来确认排序真的生效
-	registry.register(low, silentLogger);
-	registry.register(never, silentLogger);
-	registry.register(high, silentLogger);
+	// 顺序只来自声明，未命中的策略不执行。
+	const registry = new AdapterRegistry([high, never, low]);
 
 	// 全部命中项都要返回：差异是按「一个协议特性」拆的，一个模型常常同时命中多条
 	assert.deepEqual(registry.resolveAll(model('anything')).map(adapter => adapter.id), ['high', 'low']);
 });
 
 test('AdapterRegistry：没有匹配项时返回空适配链并原样透传请求', async () => {
-	const registry = new AdapterRegistry();
-	registry.register({ id: 'picky', priority: 1, supports: () => false, transformRequest: request => request }, silentLogger);
+	const registry = new AdapterRegistry([{ id: 'picky', supports: () => false, transformRequest: request => request }]);
 
 	assert.deepEqual(registry.resolveAll(model('anything')), []);
 	const request = { model: 'anything', messages: [{ role: 'user', content: 'hi' }] };
@@ -736,11 +721,9 @@ test('适配链：未知与非思考模型不猜测原生开关，厂商匹配�
 	assert.equal('reasoning_effort' in matched, false);
 });
 
-test('适配链：异步改写结果继续传给下一个适配器', async () => {
-	const registry = new AdapterRegistry();
-	registry.register({ id: 'first', priority: 100, supports: () => true,
-		transformRequest: async request => ({ ...request, reasoning_effort: 'none' }) });
-	registry.register(new ModelCapabilityAdapter());
+test('适配链：返回的新请求继续传给能力约束', async () => {
+	const registry = new AdapterRegistry([{ id: 'first', supports: () => true,
+		transformRequest: request => ({ ...request, reasoning_effort: 'none' }) }, new ModelCapabilityAdapter()]);
 	const result = await registry.transformRequest({ model: 'custom', messages: [], temperature: 0.2 }, {
 		model: { ...model('custom'), samplingParams: 'when-thinking-off' }, logger: createLogger(),
 	});

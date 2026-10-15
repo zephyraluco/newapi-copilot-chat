@@ -11,8 +11,8 @@ const assert = require('node:assert/strict');
 const { load } = require('./helpers');
 
 const { modules } = load({
-	modelConfiguration: './src/provider/modelConfiguration',
-	consts: './src/consts',
+	modelConfiguration: './src/protocol/modelConfiguration',
+	consts: './src/shared/consts',
 });
 
 const {
