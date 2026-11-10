@@ -172,8 +172,10 @@ function createVscodeStub(options = {}) {
 
 	if (options.thinkingPart === true) {
 		stub.LanguageModelThinkingPart = class LanguageModelThinkingPart {
-			constructor(value) {
+			constructor(value, id, metadata) {
 				this.value = value;
+				this.id = id;
+				this.metadata = metadata;
 			}
 		};
 	}

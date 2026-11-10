@@ -61,6 +61,8 @@ Copilot 消息 / 选项
 - 请求转换与 token 估算共用 `provider/messageContent.ts`，不再各自识别宿主部件。
 - 推理历史优先采用有效回放标记，其次原生思考部件，缺失时回填空字符串。
 - 思考展示独立于回填：默认显示，宿主支持时用原生部件，否则使用引用块。
+- 原生思考部件按 `id` 归组：同一段思考的分片共用一个 `id`（否则界面上会碎成一串「Thought for Ns」），
+  转到正文或工具调用、以及流结束时再补 `vscode_reasoning_done` 标记收口。
 - `stateful_marker` 是非展示元数据，不发送为正文。标记格式由 `provider/replay.ts` 负责。
 - 工具按 index 拼接函数名和 JSON 参数，收到 stop/tool_calls 收尾时上报，否则正常结束时冲刷。
 - usage 取最后一个有效对象，null 不覆盖已有快照，正常结束只回传一次。
