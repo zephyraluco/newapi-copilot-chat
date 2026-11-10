@@ -18,7 +18,7 @@ const { modules } = load({
 const { installModelDataset } = modules.dataset;
 const { resolveModelConfig } = modules.modelConfig;
 
-const dataset = require('../../data/openrouter-models.json');
+const dataset = require('../../data/models.json');
 
 const settings = { defaultContextWindow: 128_000, defaultMaxOutputTokens: 8_192 };
 

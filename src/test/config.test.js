@@ -109,5 +109,5 @@ test('配置读取不再访问旧日志及采样设置，extraBody 保留采样�
 	assert.deepEqual(value.request.extraBody, { temperature: 0.7, top_p: 0.9 });
 	for (const key of ['logLevel', 'request.temperature', 'request.topP']) { assert.equal(reads.includes(key), false); }
 	assert.equal(value.models.cacheTtlMs, 300000);
-	assert.equal(value.status.refreshIntervalMs, 60000);
+	assert.equal(value.status.refreshIntervalMs, 30000);
 });

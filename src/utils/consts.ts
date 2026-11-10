@@ -30,6 +30,8 @@ export const COMMANDS = {
 	refreshModels: `${EXTENSION_ID}.refreshModels`,
 	/** 打开本扩展的设置页（请求参数、状态栏等） */
 	openSettings: `${EXTENSION_ID}.openSettings`,
+	/** 在编辑器里打开随包附带的模型数据表 */
+	editModelDataset: `${EXTENSION_ID}.editModelDataset`,
 } as const;
 
 /** VS Code 内置的「管理语言模型」界面：用户在这里配置站点与密钥。 */
@@ -112,11 +114,11 @@ export const DEFAULTS = {
 	minInputTokens: 1_024,
 	/** 模型缓存有效期 */
 	modelCacheTtlMs: 5 * 60_000,
-	statusRefreshIntervalMs: 60_000,
+	statusRefreshIntervalMs: 30_000,
 	/** 单次请求超时：非流式是整体超时，流式是「等响应头」的上限 */
-	requestTimeoutMs: 60_000,
+	requestTimeoutMs: 30_000,
 	/** 流式响应两个数据块之间的静默超时 */
-	streamIdleTimeoutMs: 60_000,
+	streamIdleTimeoutMs: 30_000,
 	/** 失败重试次数（不含首次尝试） */
 	maxRetries: 2,
 	/** 重试退避基数 */

@@ -22,7 +22,7 @@ import { asBoolean, asNonEmptyString, asPositiveNumber, asStringArray, isRecord 
 export const MODEL_DATASET_DIR = 'data';
 
 /** 数据表文件名。 */
-export const MODEL_DATASET_FILE = 'openrouter-models.json';
+export const MODEL_DATASET_FILE = 'models.json';
 
 /**
  * 采样参数（`temperature` / `top_p` / …）在 Chat Completions 里的接受情况。

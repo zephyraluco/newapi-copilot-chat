@@ -6,6 +6,8 @@ import type { Logger } from './logger';
 export interface CommandDeps {
 	readonly logger: Logger;
 	readonly extensionId: string;
+	/** 随包附带的模型数据表文件 */
+	readonly datasetUri: vscode.Uri;
 	getState(): ModelStatus;
 	refreshModels(): Promise<void>;
 	notifyModelsChanged(): void;
@@ -16,7 +18,20 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
 		vscode.commands.registerCommand(COMMANDS.refreshModels, () => refreshModels(deps)),
 		vscode.commands.registerCommand(COMMANDS.openSettings, () =>
 			vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${deps.extensionId}`)),
+		vscode.commands.registerCommand(COMMANDS.editModelDataset, () => editModelDataset(deps)),
 	];
+}
+
+/** 在编辑器里打开模型数据表；文件缺失或不可读时给出提示。 */
+async function editModelDataset(deps: CommandDeps): Promise<void> {
+	try {
+		const document = await vscode.workspace.openTextDocument(deps.datasetUri);
+		await vscode.window.showTextDocument(document, { preview: false });
+	} catch (error) {
+		deps.logger.error('打开模型数据表失败', error);
+		await vscode.window.showErrorMessage(
+			`打开模型数据表失败：${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 async function refreshModels(deps: CommandDeps): Promise<void> {

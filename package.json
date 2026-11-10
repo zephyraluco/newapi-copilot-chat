@@ -73,6 +73,11 @@
         "command": "newapi-copilot-chat.openSettings",
         "title": "打开设置",
         "category": "New API"
+      },
+      {
+        "command": "newapi-copilot-chat.editModelDataset",
+        "title": "编辑模型数据表",
+        "category": "New API"
       }
     ],
     "configuration": {
@@ -101,14 +106,14 @@
         },
         "newapi-copilot-chat.request.timeoutMs": {
           "type": "number",
-          "default": 60000,
+          "default": 30000,
           "minimum": 5000,
           "markdownDescription": "请求超时（毫秒）。\n\n非流式请求是整体超时；流式请求是**等响应头**的上限——响应头到达之后由 `request.streamIdleTimeoutMs` 接管。",
           "order": 20
         },
         "newapi-copilot-chat.request.streamIdleTimeoutMs": {
           "type": "number",
-          "default": 60000,
+          "default": 30000,
           "minimum": 5000,
           "markdownDescription": "流式响应中**两个数据块之间的静默超时**（毫秒）：连续这么久没有收到新数据就中断请求。\n\n它和 `request.timeoutMs` 分开，是因为两者的合理取值差得很远：一个长回答只要在持续吐字就不该被杀，而连不上站点时又不该等太久。缓冲型网关上长思考的模型可能长时间不吐字节，遇到这种情况可以调大这里。",
           "order": 21
@@ -155,7 +160,7 @@
         },
         "newapi-copilot-chat.status.refreshInterval": {
           "type": "number",
-          "default": 60000,
+          "default": 30000,
           "minimum": 10000,
           "markdownDescription": "站点 /api/status 探活间隔（毫秒），最小 10000。只刷新探活结果，不强制刷新模型列表。",
           "order": 31

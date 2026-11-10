@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 抓取 OpenRouter 的公开模型目录，生成扩展随包发布的模型数据表
- * （`data/openrouter-models.json`，由 `src/models/dataset.ts` 载入并按模型 ID 查表）。
+ * （`data/models.json`，由 `src/models/dataset.ts` 载入并按模型 ID 查表）。
  *
  * New API 的 `/v1/models` 只有 `id` / `object` / `created` / `owned_by`，不含窗口与能力位，
  * 而 OpenRouter 的公开目录提供了这些事实：
@@ -19,7 +19,7 @@
  *   node scripts/fetch-openrouter-models.js --vendors all
  *
  * 参数：
- *   --out <path>        输出路径（默认 `data/openrouter-models.json`）
+ *   --out <path>        输出路径（默认 `data/models.json`）
  *   --url <url>         数据源（默认 OpenRouter 的公开模型目录）
  *   --timeout <ms>      请求超时（默认 30000）
  *   --min-context <n>   丢弃上下文窗口小于该值的模型（默认 0，即不过滤）
@@ -89,7 +89,7 @@ const path = require('node:path');
 const DEFAULT_URL = 'https://openrouter.ai/api/v1/models';
 
 /** 默认输出路径：仓库根的 `data/` 下，与 `scripts/` 平级。 */
-const DEFAULT_OUT = path.join(__dirname, '..', 'data', 'openrouter-models.json');
+const DEFAULT_OUT = path.join(__dirname, '..', 'data', 'models.json');
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 30_000;
@@ -112,7 +112,7 @@ function printHelp() {
 		[
 			'用法：node scripts/fetch-openrouter-models.js [选项]',
 			'',
-			'  --out <path>        输出路径（默认 data/openrouter-models.json）',
+			'  --out <path>        输出路径（默认 data/models.json）',
 			'  --url <url>         数据源（默认 OpenRouter 的公开模型目录）',
 			'  --timeout <ms>      请求超时，默认 30000',
 			'  --min-context <n>   丢弃上下文窗口小于该值的模型，默认 0（不过滤）',

@@ -29,9 +29,14 @@ import { readModelStatus } from './application/modelStatus';
 import { SiteHealthService } from './application/siteHealth';
 import { UsageTracker } from './application/usage';
 
+/** 模型数据表文件的位置。 */
+function datasetUri(context: vscode.ExtensionContext): vscode.Uri {
+	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE);
+}
+
 /** 模型数据表文件的绝对路径。 */
 function datasetFile(context: vscode.ExtensionContext): string {
-	return vscode.Uri.joinPath(context.extensionUri, MODEL_DATASET_DIR, MODEL_DATASET_FILE).fsPath;
+	return datasetUri(context).fsPath;
 }
 
 /**
@@ -109,6 +114,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const commands: CommandDeps = {
 		logger: logger.child('commands'),
 		extensionId: context.extension.id,
+		datasetUri: datasetUri(context),
 		getState: () => readModelStatus(sessions.list()),
 		refreshModels: () => sessions.refreshModels(),
 		notifyModelsChanged: () => provider.notifyModelsChanged(),

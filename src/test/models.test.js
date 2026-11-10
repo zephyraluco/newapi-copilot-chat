@@ -83,7 +83,7 @@ test('parseModelDataset：缺失的能力字段收敛成 false，思考能力保
 
 test('随包数据表能整份解析，且没有条目被丢弃', () => {
 	// 丢条目的数据表就是静默降级
-	const raw = require(path.join(__dirname, '..', '..', 'data', 'openrouter-models.json'));
+	const raw = require(path.join(__dirname, '..', '..', 'data', 'models.json'));
 	const parsed = parseModelDataset(raw);
 
 	assert.ok(parsed.entries.length > 0);

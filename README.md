@@ -146,6 +146,7 @@ Command titles currently ship in Chinese; the palette shows them as listed below
 | --- | --- |
 | `New API: 刷新模型列表` | Ignore the cache and re-fetch every group |
 | `New API: 打开设置` | Open this extension's settings page (request parameters, status bar, and so on) |
+| `New API: 编辑模型数据表` | Open `data/models.json` in the editor; reload the window after saving |
 
 To configure a site and its key, use **Manage Models** in the model picker, or **Manage Language Models** from the Command Palette.
 

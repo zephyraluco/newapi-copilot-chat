@@ -36,7 +36,9 @@ test('模型按需发现、独立探活和状态栏用量在扩展中正确接�
 	vscode.workspace = {
 		getConfiguration: () => ({ get: key => values.get(key) }),
 		onDidChangeConfiguration: listener => { changed = listener; return { dispose() {} }; },
+		openTextDocument: async uri => { openedPath = uri.fsPath; return { uri }; },
 	};
+	vscode.window.showTextDocument = async document => { shownPath = document.uri.fsPath; return {}; };
 	vscode.commands = {
 		registerCommand: (id, callback) => { commands.set(id, callback); return { dispose() {} }; },
 	};
@@ -51,6 +53,8 @@ test('模型按需发现、独立探活和状态栏用量在扩展中正确接�
 	let fail = false;
 	let probeFail = false;
 	let includeUsage = true;
+	let openedPath;
+	let shownPath;
 	let tick;
 	let timerCount = 0;
 	let clearedTimers = 0;
@@ -77,8 +81,12 @@ test('模型按需发现、独立探活和状态栏用量在扩展中正确接�
 		assert.equal(requests.length, 0);
 		assert.equal(timerCount, 1);
 		assert.deepEqual([...commands.keys()].sort(), [
-			'newapi-copilot-chat.openSettings', 'newapi-copilot-chat.refreshModels',
+			'newapi-copilot-chat.editModelDataset', 'newapi-copilot-chat.openSettings', 'newapi-copilot-chat.refreshModels',
 		]);
+		await commands.get('newapi-copilot-chat.editModelDataset')();
+		const datasetPath = path.join(ROOT, 'data', 'models.json');
+		assert.equal(openedPath, datasetPath);
+		assert.equal(shownPath, datasetPath, '打开数据表后再在前台显示');
 		const options = { silent: true, group: 'site', configuration: { baseUrl: 'https://example.com', apiKey: 'secret' } };
 		const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
 		const discovered = await provider.provideLanguageModelChatInformation(options, token);
@@ -131,7 +139,7 @@ test('模型按需发现、独立探活和状态栏用量在扩展中正确接�
 		changed({ affectsConfiguration: () => true });
 		assert.equal(item.visible, true);
 		assert.equal(timerCount, 1, '切换状态栏不重启探活定时器');
-		values.set('status.refreshInterval', 30000);
+		values.set('status.refreshInterval', 40000);
 		changed({ affectsConfiguration: () => true });
 		assert.equal(timerCount, 2);
 		assert.equal(clearedTimers, 1);
@@ -164,11 +172,11 @@ test('模型按需发现、独立探活和状态栏用量在扩展中正确接�
 
 test('贡献点只暴露保留的命令与设置', () => {
 	assert.deepEqual(manifest.contributes.commands.map(command => command.command).sort(), [
-		'newapi-copilot-chat.openSettings', 'newapi-copilot-chat.refreshModels',
+		'newapi-copilot-chat.editModelDataset', 'newapi-copilot-chat.openSettings', 'newapi-copilot-chat.refreshModels',
 	]);
 	const properties = manifest.contributes.configuration.properties;
 	assert.equal(properties['newapi-copilot-chat.request.stabilizeToolList'], undefined);
-	assert.equal(properties['newapi-copilot-chat.status.refreshInterval'].default, 60000);
+	assert.equal(properties['newapi-copilot-chat.status.refreshInterval'].default, 30000);
 	assert.ok(properties['newapi-copilot-chat.request.includeUsage']);
 	for (const key of ['logLevel', 'request.temperature', 'request.topP']) {
 		assert.equal(properties[`newapi-copilot-chat.${key}`], undefined);
